@@ -103,13 +103,19 @@ function Logo({ size = 'sidebar' }) {
       </div>
     );
   }
+  // The logo uses navy lettering, so it sits on a white rounded panel to stay
+  // legible against the dark navy app background.
   return (
-    <img
-      src={LOGO_SRC}
-      alt="Club America"
-      onError={() => setFailed(true)}
-      className={`object-contain ${big ? 'mx-auto max-h-40 w-auto' : 'max-h-16 w-auto'}`}
-    />
+    <div className={big ? 'flex justify-center' : ''}>
+      <div className="bg-white rounded-xl p-3 inline-block shadow-lg">
+        <img
+          src={LOGO_SRC}
+          alt="Club America at Park City High School"
+          onError={() => setFailed(true)}
+          className={`object-contain ${big ? 'max-h-40 w-auto' : 'max-h-16 w-auto'}`}
+        />
+      </div>
+    </div>
   );
 }
 
