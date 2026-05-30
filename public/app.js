@@ -416,7 +416,7 @@ function TaskPage({ me, userId, users, refreshSignal }) {
     <div className="max-w-5xl">
       <div className="flex items-end justify-between mb-6 flex-wrap gap-2">
         <div>
-          <h1 className="font-display text-5xl text-cream leading-none">
+          <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">
             {isSelf ? 'My Tasks' : user.displayName}
           </h1>
           <div className="text-cream/50 mt-1">{user.title || roleLabel(user.role)} · @{user.username}</div>
@@ -466,7 +466,7 @@ function Approvals({ onChanged, refreshSignal }) {
 
   return (
     <div className="max-w-3xl">
-      <h1 className="font-display text-5xl text-cream mb-6">Pending Approvals</h1>
+      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-6">Pending Approvals</h1>
       {items.length === 0 && <div className="text-cream/40">Nothing waiting on you. 🎉</div>}
       <div className="space-y-3">
         {items.map((t) => (
@@ -508,7 +508,7 @@ function OrgNode({ title, name, tone = 'gold', children }) {
 function OrgChart() {
   return (
     <div>
-      <h1 className="font-display text-5xl text-cream mb-2">Org Chart</h1>
+      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Org Chart</h1>
       <p className="text-cream/50 mb-8">Club America — 2025–26 Board</p>
 
       <div className="flex flex-col items-center gap-5 pb-10">
@@ -592,7 +592,7 @@ function AdminPanel({ users, reload }) {
 
   return (
     <div className="max-w-5xl">
-      <h1 className="font-display text-5xl text-cream mb-6">Admin Panel</h1>
+      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-6">Admin Panel</h1>
 
       <form onSubmit={addUser} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-8 grid sm:grid-cols-2 gap-4">
         <div className="sm:col-span-2 font-display text-2xl text-gold">Add a Board Member</div>
@@ -669,7 +669,7 @@ function AdminPanel({ users, reload }) {
 // ---------------------------------------------------------------------------
 // Sidebar + Layout
 // ---------------------------------------------------------------------------
-function Sidebar({ me, reports, approvalsCount, view, setView, onLogout }) {
+function Sidebar({ me, reports, approvalsCount, view, setView, onLogout, open, onClose }) {
   const [reportsOpen, setReportsOpen] = useState(true);
   const isManager = me.role === 'manager' || me.role === 'admin';
 
@@ -683,9 +683,19 @@ function Sidebar({ me, reports, approvalsCount, view, setView, onLogout }) {
   );
 
   return (
-    <aside className="w-64 shrink-0 bg-navy2 border-r border-cream/10 flex flex-col h-screen sticky top-0">
-      <div className="p-4 border-b border-cream/10">
+    <React.Fragment>
+      {/* Dim overlay behind the drawer on small screens */}
+      <div
+        onClick={onClose}
+        className={`fixed inset-0 bg-black/60 z-30 lg:hidden transition-opacity ${open ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+      />
+      <aside
+        className={`w-72 max-w-[85vw] lg:w-64 shrink-0 bg-navy2 border-r border-cream/10 flex flex-col h-screen fixed lg:sticky top-0 left-0 z-40 transform transition-transform duration-200 ${
+          open ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
+      >
+      <div className="p-4 border-b border-cream/10 flex items-start justify-between gap-2">
         <Logo size="sidebar" />
+        <button onClick={onClose} aria-label="Close menu" className="lg:hidden text-cream/60 hover:text-cream text-3xl leading-none -mt-1">×</button>
       </div>
 
       <nav className="flex-1 overflow-y-auto p-3 space-y-1">
@@ -735,7 +745,8 @@ function Sidebar({ me, reports, approvalsCount, view, setView, onLogout }) {
           <button onClick={onLogout} className="text-xs text-red/80 hover:text-red ml-auto">Log out</button>
         </div>
       </div>
-    </aside>
+      </aside>
+    </React.Fragment>
   );
 }
 
@@ -743,6 +754,7 @@ function App() {
   const [me, setMe] = useState(null);
   const [booted, setBooted] = useState(false);
   const [view, setView] = useState({ type: 'mytasks' });
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [users, setUsers] = useState([]);
   const [reports, setReports] = useState([]);
   const [approvalsCount, setApprovalsCount] = useState(0);
@@ -800,11 +812,23 @@ function App() {
   else if (view.type === 'admin') content = <AdminPanel users={users} reload={bump} />;
   else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); setView({ type: 'mytasks' }); }} />;
 
+  // Navigating from the sidebar also closes the mobile drawer.
+  const navigate = (v) => { setView(v); setSidebarOpen(false); };
+
   return (
-    <div className="flex">
+    <div className="lg:flex">
       <Sidebar me={me} reports={reports} approvalsCount={approvalsCount}
-        view={view} setView={setView} onLogout={logout} />
-      <main className="flex-1 p-8 overflow-x-hidden">{content}</main>
+        view={view} setView={navigate} onLogout={logout}
+        open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <div className="flex-1 min-w-0">
+        {/* Mobile top bar with hamburger — hidden on desktop */}
+        <header className="lg:hidden sticky top-0 z-20 flex items-center gap-3 bg-navy2/95 backdrop-blur border-b border-cream/10 px-4 py-3">
+          <button onClick={() => setSidebarOpen(true)} aria-label="Open menu"
+            className="text-cream text-2xl leading-none w-8 h-8 flex items-center justify-center rounded hover:bg-navy3">☰</button>
+          <span className="font-display text-2xl text-red leading-none">CLUB AMERICA</span>
+        </header>
+        <main className="p-4 sm:p-6 lg:p-8 overflow-x-hidden">{content}</main>
+      </div>
     </div>
   );
 }
