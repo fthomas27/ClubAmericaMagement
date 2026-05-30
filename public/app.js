@@ -86,6 +86,34 @@ const inputCls =
   'w-full bg-navy border border-cream/20 rounded-md px-3 py-2 text-cream placeholder-cream/30 focus:outline-none focus:border-gold';
 
 // ---------------------------------------------------------------------------
+// Logo — drop your image at public/logo.png (or .svg) and it shows automatically.
+// If the file is missing, it falls back to the styled CLUB AMERICA wordmark.
+// ---------------------------------------------------------------------------
+const LOGO_SRC = '/logo.png';
+
+function Logo({ size = 'sidebar' }) {
+  const [failed, setFailed] = useState(false);
+  const big = size === 'login';
+
+  if (failed) {
+    return (
+      <div className={big ? 'text-center' : ''}>
+        <div className={`font-display text-red leading-none ${big ? 'text-6xl' : 'text-3xl'}`}>CLUB AMERICA</div>
+        <div className={`font-display text-gold ${big ? 'text-2xl tracking-[0.3em] mt-1' : 'text-sm tracking-[0.25em]'}`}>BOARD PORTAL</div>
+      </div>
+    );
+  }
+  return (
+    <img
+      src={LOGO_SRC}
+      alt="Club America"
+      onError={() => setFailed(true)}
+      className={`object-contain ${big ? 'mx-auto max-h-40 w-auto' : 'max-h-16 w-auto'}`}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Login + forced password change
 // ---------------------------------------------------------------------------
 function Login({ onLogin }) {
@@ -112,9 +140,8 @@ function Login({ onLogin }) {
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="font-display text-6xl text-red leading-none">CLUB AMERICA</div>
-          <div className="font-display text-2xl text-gold tracking-[0.3em] mt-1">BOARD PORTAL</div>
+        <div className="mb-8">
+          <Logo size="login" />
         </div>
         <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4">
           <Field label="Username">
@@ -614,8 +641,7 @@ function Sidebar({ me, reports, approvalsCount, view, setView, onLogout }) {
   return (
     <aside className="w-64 shrink-0 bg-navy2 border-r border-cream/10 flex flex-col h-screen sticky top-0">
       <div className="p-4 border-b border-cream/10">
-        <div className="font-display text-3xl text-red leading-none">CLUB AMERICA</div>
-        <div className="font-display text-sm text-gold tracking-[0.25em]">BOARD PORTAL</div>
+        <Logo size="sidebar" />
       </div>
 
       <nav className="flex-1 overflow-y-auto p-3 space-y-1">
