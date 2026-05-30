@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Club America — Home (Preview)</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Kaushan+Script&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: {
+        colors: { navy:'#0A1628', navy2:'#0F1E33', navy3:'#16294A', red:'#CC1C2E', gold:'#C9A84C', cream:'#F5F0E8', brandnavy:'#1A4E6E' },
+        fontFamily: { display:['"Bebas Neue"','sans-serif'], body:['"DM Sans"','sans-serif'], script:['"Kaushan Script"','cursive'] },
+      } },
+    };
+  </script>
+  <style>
+    body { background:#0A1628; color:#F5F0E8; font-family:"DM Sans",sans-serif; }
+    .hero-glow { background: radial-gradient(900px 400px at 50% -10%, rgba(204,28,46,0.25), transparent 60%); }
+  </style>
+</head>
+<body class="min-h-screen">
+  <!-- Preview banner -->
+  <div class="bg-gold text-navy text-center text-sm font-semibold py-1.5 px-4">
+    PREVIEW — this is a mockup of the public homepage. Edits here are saved only in your browser.
+  </div>
+
+  <div class="hero-glow">
+    <!-- Top bar -->
+    <header class="max-w-5xl mx-auto px-4 sm:px-6 pt-6 flex items-center justify-between gap-3">
+      <div class="bg-white rounded-xl px-3 py-2 shadow-lg">
+        <div class="text-center leading-none">
+          <div class="font-script text-brandnavy text-xl sm:text-2xl leading-none">Club</div>
+          <div class="font-script text-red text-3xl sm:text-4xl leading-[0.9] -mt-1">America <span class="align-middle">★</span></div>
+          <div class="font-display text-brandnavy tracking-wider text-[10px] sm:text-xs mt-1">AT PARK CITY HIGH SCHOOL</div>
+        </div>
+      </div>
+      <a href="#" onclick="return false" class="bg-red hover:bg-red/85 text-cream text-sm px-4 py-2 rounded-md transition-colors">Board Portal Login →</a>
+    </header>
+
+    <!-- Hero -->
+    <section class="max-w-5xl mx-auto px-4 sm:px-6 pt-10 pb-8 text-center">
+      <h1 class="font-display text-6xl sm:text-8xl text-cream leading-none">CLUB AMERICA</h1>
+      <p class="text-gold font-display text-2xl sm:text-3xl tracking-[0.25em] mt-1">PARK CITY HIGH SCHOOL</p>
+      <p class="text-cream/70 max-w-2xl mx-auto mt-4">
+        Faith, freedom, and community. Join us at our next meeting and tune into the Club America podcast.
+      </p>
+    </section>
+  </div>
+
+  <main class="max-w-5xl mx-auto px-4 sm:px-6 pb-16 space-y-8">
+    <!-- Next meeting + Podcast -->
+    <div class="grid md:grid-cols-2 gap-6">
+      <!-- Next Meeting -->
+      <section class="bg-navy2 border border-gold/30 rounded-2xl p-6">
+        <div class="flex items-center justify-between">
+          <h2 class="font-display text-3xl text-gold">Next Meeting</h2>
+          <span class="text-red">📍</span>
+        </div>
+        <div class="mt-4 space-y-3">
+          <div>
+            <div class="text-xs uppercase tracking-wider text-cream/50">Date</div>
+            <div id="m-date" class="text-2xl text-cream font-medium"></div>
+          </div>
+          <div>
+            <div class="text-xs uppercase tracking-wider text-cream/50">Time</div>
+            <div id="m-time" class="text-2xl text-cream font-medium"></div>
+          </div>
+          <div>
+            <div class="text-xs uppercase tracking-wider text-cream/50">Location</div>
+            <div id="m-loc" class="text-2xl text-cream font-medium"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Podcast -->
+      <section class="bg-navy2 border border-red/30 rounded-2xl p-6">
+        <div class="flex items-center justify-between">
+          <h2 class="font-display text-3xl text-red">The Podcast</h2>
+          <span>🎙️</span>
+        </div>
+        <div id="pod-embed" class="mt-4 aspect-video w-full rounded-lg overflow-hidden bg-navy3"></div>
+        <a id="pod-link" href="#" target="_blank" rel="noopener"
+           class="mt-4 inline-block bg-gold hover:bg-gold/85 text-navy font-semibold text-sm px-4 py-2 rounded-md transition-colors">
+          ▶ Watch on YouTube
+        </a>
+      </section>
+    </div>
+
+    <!-- Digital Presence Manager controls -->
+    <section class="bg-navy2 border border-cream/10 rounded-2xl p-6">
+      <div class="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h2 class="font-display text-2xl text-cream">Digital Presence Manager Controls</h2>
+          <p class="text-cream/50 text-sm">Only the Digital Presence Manager (and President/VP) can edit this page.</p>
+        </div>
+        <button id="edit-toggle" class="bg-transparent border border-gold text-gold hover:bg-gold hover:text-navy text-sm px-4 py-2 rounded-md transition-colors">
+          Edit page
+        </button>
+      </div>
+
+      <form id="edit-form" class="hidden mt-5 grid sm:grid-cols-2 gap-4">
+        <label class="block">
+          <span class="block text-xs uppercase tracking-wider text-cream/60 mb-1">Meeting date</span>
+          <input id="f-date" class="w-full bg-navy border border-cream/20 rounded-md px-3 py-2 text-cream focus:outline-none focus:border-gold" placeholder="e.g. Thursday, June 5" />
+        </label>
+        <label class="block">
+          <span class="block text-xs uppercase tracking-wider text-cream/60 mb-1">Meeting time</span>
+          <input id="f-time" class="w-full bg-navy border border-cream/20 rounded-md px-3 py-2 text-cream focus:outline-none focus:border-gold" placeholder="e.g. 3:30 PM" />
+        </label>
+        <label class="block sm:col-span-2">
+          <span class="block text-xs uppercase tracking-wider text-cream/60 mb-1">Meeting location</span>
+          <input id="f-loc" class="w-full bg-navy border border-cream/20 rounded-md px-3 py-2 text-cream focus:outline-none focus:border-gold" placeholder="e.g. Room 214" />
+        </label>
+        <label class="block sm:col-span-2">
+          <span class="block text-xs uppercase tracking-wider text-cream/60 mb-1">Podcast link (YouTube video or page URL)</span>
+          <input id="f-pod" class="w-full bg-navy border border-cream/20 rounded-md px-3 py-2 text-cream focus:outline-none focus:border-gold" placeholder="https://www.youtube.com/watch?v=..." />
+        </label>
+        <div class="sm:col-span-2 flex gap-2">
+          <button type="submit" class="bg-gold hover:bg-gold/85 text-navy font-semibold text-sm px-4 py-2 rounded-md">Save</button>
+          <button type="button" id="edit-cancel" class="border border-cream/25 hover:border-gold text-cream text-sm px-4 py-2 rounded-md">Cancel</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <footer class="border-t border-cream/10 py-6 text-center text-cream/40 text-sm">
+    Club America at Park City High School · Powered by TPUSA
+  </footer>
+
+  <script>
+    const KEY = 'ca_home_preview';
+    const DEFAULTS = {
+      date: 'Thursday, June 12, 2026',
+      time: '3:30 PM',
+      loc: 'Room 214 (PCHS)',
+      pod: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    };
+
+    function load() {
+      try { return { ...DEFAULTS, ...(JSON.parse(localStorage.getItem(KEY)) || {}) }; }
+      catch (_) { return { ...DEFAULTS }; }
+    }
+    function save(data) { localStorage.setItem(KEY, JSON.stringify(data)); }
+
+    // Pull a YouTube video id from common URL shapes; null if it's just a page/channel.
+    function ytId(url) {
+      if (!url) return null;
+      const m = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|live\/)|youtu\.be\/)([\w-]{11})/);
+      return m ? m[1] : null;
+    }
+
+    function render() {
+      const d = load();
+      document.getElementById('m-date').textContent = d.date || '—';
+      document.getElementById('m-time').textContent = d.time || '—';
+      document.getElementById('m-loc').textContent = d.loc || '—';
+
+      const id = ytId(d.pod);
+      const embed = document.getElementById('pod-embed');
+      const link = document.getElementById('pod-link');
+      if (id) {
+        embed.innerHTML = '<iframe class="w-full h-full" src="https://www.youtube.com/embed/' + id +
+          '" title="Club America Podcast" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>';
+      } else {
+        embed.innerHTML = '<div class="w-full h-full flex items-center justify-center text-cream/40 text-sm px-4 text-center">' +
+          (d.pod ? 'Linked page (no inline preview)' : 'No podcast linked yet') + '</div>';
+      }
+      link.href = d.pod || '#';
+      link.classList.toggle('hidden', !d.pod);
+    }
+
+    // Edit panel wiring
+    const form = document.getElementById('edit-form');
+    document.getElementById('edit-toggle').addEventListener('click', () => {
+      const d = load();
+      document.getElementById('f-date').value = d.date || '';
+      document.getElementById('f-time').value = d.time || '';
+      document.getElementById('f-loc').value = d.loc || '';
+      document.getElementById('f-pod').value = d.pod || '';
+      form.classList.toggle('hidden');
+    });
+    document.getElementById('edit-cancel').addEventListener('click', () => form.classList.add('hidden'));
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      save({
+        date: document.getElementById('f-date').value.trim(),
+        time: document.getElementById('f-time').value.trim(),
+        loc: document.getElementById('f-loc').value.trim(),
+        pod: document.getElementById('f-pod').value.trim(),
+      });
+      form.classList.add('hidden');
+      render();
+    });
+
+    render();
+  </script>
+</body>
+</html>

@@ -299,6 +299,12 @@ app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
 
 // ---- Static frontend --------------------------------------------------------
 app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// Standalone homepage preview (not yet wired into the SPA). Visit /home.
+app.get('/home', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'home-preview.html'));
+});
+
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
