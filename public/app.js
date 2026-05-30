@@ -86,6 +86,78 @@ const inputCls =
   'w-full bg-navy border border-cream/20 rounded-md px-3 py-2 text-cream placeholder-cream/30 focus:outline-none focus:border-gold';
 
 // ---------------------------------------------------------------------------
+// Logo
+// Drop your official artwork at public/logo.png and it shows automatically,
+// overriding everything below. Until that file exists, we render a faithful
+// recreation of the Club America wordmark using the brand colors and fonts.
+// ---------------------------------------------------------------------------
+const LOGO_SRC = '/logo.png';
+const BRAND_NAVY = '#1A4E6E';
+const BRAND_RED = '#CC1C2E';
+
+// CSS recreation of the logo (script "Club America" + star + tagline).
+function LogoMark({ big }) {
+  return (
+    <div className="text-center leading-none select-none">
+      <div className="relative inline-block">
+        <span
+          className="block"
+          style={{ fontFamily: '"Kaushan Script", cursive', color: BRAND_NAVY, fontSize: big ? '40px' : '20px', lineHeight: 1 }}
+        >
+          Club
+        </span>
+        <span
+          className="block"
+          style={{ fontFamily: '"Kaushan Script", cursive', color: BRAND_RED, fontSize: big ? '64px' : '30px', lineHeight: 0.9, marginTop: big ? '-6px' : '-3px' }}
+        >
+          America
+        </span>
+        <span
+          aria-hidden="true"
+          style={{ position: 'absolute', top: big ? '-6px' : '-3px', right: big ? '-22px' : '-12px', color: BRAND_RED, fontSize: big ? '34px' : '17px' }}
+        >
+          ★
+        </span>
+      </div>
+      <div
+        style={{ fontFamily: '"Bebas Neue", sans-serif', color: BRAND_NAVY, letterSpacing: '0.08em', fontSize: big ? '22px' : '11px', marginTop: big ? '6px' : '3px' }}
+      >
+        AT PARK CITY HIGH SCHOOL
+      </div>
+      <div
+        style={{ fontFamily: '"DM Sans", sans-serif', color: BRAND_RED, fontWeight: 700, fontSize: big ? '11px' : '7px', letterSpacing: '0.05em', marginTop: big ? '6px' : '2px' }}
+      >
+        POWERED BY TPUSA
+      </div>
+    </div>
+  );
+}
+
+function Logo({ size = 'sidebar' }) {
+  const [failed, setFailed] = useState(false);
+  const big = size === 'login';
+
+  // The artwork uses navy lettering, so it sits on a white rounded panel to
+  // stay legible against the dark navy app background.
+  return (
+    <div className={big ? 'flex justify-center' : ''}>
+      <div className="bg-white rounded-xl p-3 inline-block shadow-lg">
+        {failed ? (
+          <LogoMark big={big} />
+        ) : (
+          <img
+            src={LOGO_SRC}
+            alt="Club America at Park City High School"
+            onError={() => setFailed(true)}
+            className={`object-contain ${big ? 'max-h-40 w-auto' : 'max-h-16 w-auto'}`}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Login + forced password change
 // ---------------------------------------------------------------------------
 function Login({ onLogin }) {
@@ -112,9 +184,8 @@ function Login({ onLogin }) {
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="font-display text-6xl text-red leading-none">CLUB AMERICA</div>
-          <div className="font-display text-2xl text-gold tracking-[0.3em] mt-1">BOARD PORTAL</div>
+        <div className="mb-8">
+          <Logo size="login" />
         </div>
         <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4">
           <Field label="Username">
@@ -614,8 +685,7 @@ function Sidebar({ me, reports, approvalsCount, view, setView, onLogout }) {
   return (
     <aside className="w-64 shrink-0 bg-navy2 border-r border-cream/10 flex flex-col h-screen sticky top-0">
       <div className="p-4 border-b border-cream/10">
-        <div className="font-display text-3xl text-red leading-none">CLUB AMERICA</div>
-        <div className="font-display text-sm text-gold tracking-[0.25em]">BOARD PORTAL</div>
+        <Logo size="sidebar" />
       </div>
 
       <nav className="flex-1 overflow-y-auto p-3 space-y-1">
