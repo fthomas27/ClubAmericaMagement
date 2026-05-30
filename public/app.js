@@ -86,34 +86,72 @@ const inputCls =
   'w-full bg-navy border border-cream/20 rounded-md px-3 py-2 text-cream placeholder-cream/30 focus:outline-none focus:border-gold';
 
 // ---------------------------------------------------------------------------
-// Logo — drop your image at public/logo.png (or .svg) and it shows automatically.
-// If the file is missing, it falls back to the styled CLUB AMERICA wordmark.
+// Logo
+// Drop your official artwork at public/logo.png and it shows automatically,
+// overriding everything below. Until that file exists, we render a faithful
+// recreation of the Club America wordmark using the brand colors and fonts.
 // ---------------------------------------------------------------------------
 const LOGO_SRC = '/logo.png';
+const BRAND_NAVY = '#1A4E6E';
+const BRAND_RED = '#CC1C2E';
+
+// CSS recreation of the logo (script "Club America" + star + tagline).
+function LogoMark({ big }) {
+  return (
+    <div className="text-center leading-none select-none">
+      <div className="relative inline-block">
+        <span
+          className="block"
+          style={{ fontFamily: '"Kaushan Script", cursive', color: BRAND_NAVY, fontSize: big ? '40px' : '20px', lineHeight: 1 }}
+        >
+          Club
+        </span>
+        <span
+          className="block"
+          style={{ fontFamily: '"Kaushan Script", cursive', color: BRAND_RED, fontSize: big ? '64px' : '30px', lineHeight: 0.9, marginTop: big ? '-6px' : '-3px' }}
+        >
+          America
+        </span>
+        <span
+          aria-hidden="true"
+          style={{ position: 'absolute', top: big ? '-6px' : '-3px', right: big ? '-22px' : '-12px', color: BRAND_RED, fontSize: big ? '34px' : '17px' }}
+        >
+          ★
+        </span>
+      </div>
+      <div
+        style={{ fontFamily: '"Bebas Neue", sans-serif', color: BRAND_NAVY, letterSpacing: '0.08em', fontSize: big ? '22px' : '11px', marginTop: big ? '6px' : '3px' }}
+      >
+        AT PARK CITY HIGH SCHOOL
+      </div>
+      <div
+        style={{ fontFamily: '"DM Sans", sans-serif', color: BRAND_RED, fontWeight: 700, fontSize: big ? '11px' : '7px', letterSpacing: '0.05em', marginTop: big ? '6px' : '2px' }}
+      >
+        POWERED BY TPUSA
+      </div>
+    </div>
+  );
+}
 
 function Logo({ size = 'sidebar' }) {
   const [failed, setFailed] = useState(false);
   const big = size === 'login';
 
-  if (failed) {
-    return (
-      <div className={big ? 'text-center' : ''}>
-        <div className={`font-display text-red leading-none ${big ? 'text-6xl' : 'text-3xl'}`}>CLUB AMERICA</div>
-        <div className={`font-display text-gold ${big ? 'text-2xl tracking-[0.3em] mt-1' : 'text-sm tracking-[0.25em]'}`}>BOARD PORTAL</div>
-      </div>
-    );
-  }
-  // The logo uses navy lettering, so it sits on a white rounded panel to stay
-  // legible against the dark navy app background.
+  // The artwork uses navy lettering, so it sits on a white rounded panel to
+  // stay legible against the dark navy app background.
   return (
     <div className={big ? 'flex justify-center' : ''}>
       <div className="bg-white rounded-xl p-3 inline-block shadow-lg">
-        <img
-          src={LOGO_SRC}
-          alt="Club America at Park City High School"
-          onError={() => setFailed(true)}
-          className={`object-contain ${big ? 'max-h-40 w-auto' : 'max-h-16 w-auto'}`}
-        />
+        {failed ? (
+          <LogoMark big={big} />
+        ) : (
+          <img
+            src={LOGO_SRC}
+            alt="Club America at Park City High School"
+            onError={() => setFailed(true)}
+            className={`object-contain ${big ? 'max-h-40 w-auto' : 'max-h-16 w-auto'}`}
+          />
+        )}
       </div>
     </div>
   );
