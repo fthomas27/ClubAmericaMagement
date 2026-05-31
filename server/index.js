@@ -3,6 +3,16 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 
+// Keep a single stray error from taking the whole process down (which makes the
+// host restart the app — the "crash then reboot and load" loop). We log it and
+// stay up; Express request errors are already handled per-route below.
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled promise rejection:', err);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+});
+
 const { db, init, seed } = require('./db');
 const { fetchUpcoming } = require('./calendar');
 const {
@@ -352,6 +362,14 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 // The SPA handles client-side routes (/, /home, etc.).
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+});
+
+// Catch-all error handler: turn a thrown route error into a 500 instead of
+// letting it bubble up and crash the process.
+app.use((err, req, res, next) => {
+  console.error('Request error:', err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'Something went wrong' });
 });
 
 const PORT = process.env.PORT || 3000;

@@ -59,6 +59,25 @@ Host-specific setup:
 The app auto-creates the `DB_PATH` directory on startup, so you only need the
 volume mounted and the env var set.
 
+### Install command on hosts
+
+Use the modern install flag for production builds:
+
+```
+npm install --omit=dev
+```
+
+Older guides (and some hosts) use `npm install --production` or set
+`NODE_ENV=production`, which makes npm print:
+
+```
+npm warn config production Use `--omit=dev` instead.
+```
+
+That message is a harmless deprecation warning — it does **not** crash the app.
+This repo ships an `.npmrc` with `omit=dev`, so a plain `npm install` already
+does the right thing without the warning.
+
 ---
 
 ## How Login Works
