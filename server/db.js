@@ -132,8 +132,8 @@ function seed() {
     for (const u of SEED_USERS) {
       if (u.manager) setManager.run(byUsername[u.manager], u.username);
     }
-    // The Digital Presence Manager controls the public homepage.
-    db.prepare("UPDATE users SET canEditHome = 1 WHERE username = 'dhays'").run();
+    // The President, VP, and Digital Presence Manager can edit the website.
+    db.prepare("UPDATE users SET canEditHome = 1 WHERE username IN ('fthomas', 'deddy', 'dhays')").run();
   });
   tx();
   return true;
