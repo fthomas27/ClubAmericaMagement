@@ -150,7 +150,7 @@ function Logo({ size = 'sidebar' }) {
             alt="Club America at Park City High School"
             onError={() => setFailed(true)}
             className={`object-contain ${big ? 'max-h-40 w-auto' : 'max-h-16 w-auto'}`}
-          />
+          )}
         )}
       </div>
     </div>
@@ -279,7 +279,7 @@ function TaskCard({ task, canEdit, onChange, onDelete }) {
       <div className="flex items-center flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-cream/50">
         {task.dueDate && <span>Due {task.dueDate}</span>}
         <span>Assigned by <span className="text-gold/80">{task.assignedByName}</span></span>
-        {task.approvalStatus === 'pending' && <Badge tone="red">Pending approval</Badge>}
+        {task.approvalStatus === 'pending' && <Badge tone="red">Pending approval</Badge>
       </div>
       {canEdit && task.approvalStatus === 'approved' && (
         <div className="flex items-center gap-2 mt-3">
@@ -445,8 +445,8 @@ function TaskPage({ me, userId, users, refreshSignal }) {
                 <TaskCard key={t.id} task={t} canEdit={true} onChange={changeTask} onDelete={deleteTask} />
               ))}
             </div>
-          </div>
-        ))}
+        </div>
+      ))}
       </div>
     </div>
   );
@@ -521,26 +521,21 @@ function OrgChart() {
         <div className="w-px h-5 bg-cream/20" />
         <OrgNode title="Vice President" name="Derek Eddy" tone="red" />
         <div className="w-px h-5 bg-cream/20" />
-
         <div className="flex flex-wrap justify-center gap-6">
           <OrgNode title="Chair Public Eng." name="Max Flachsmann">
             <OrgNode title="Public Engagement" name="Ledger Moffat" tone="slate" />
           </OrgNode>
-
           <OrgNode title="CFO" name="Hudson Fossey">
             <OrgNode title="Fundraising & Vol." name="Will Haladin" tone="slate" />
           </OrgNode>
-
           <OrgNode title="Secretary" name="Campbell" tone="slate" />
           <OrgNode title="Hospitality" name="Andrew Perillo" tone="slate" />
           <OrgNode title="Swag Manager" name="Audrey Fox" tone="slate" />
-
           <OrgNode title="Digital Presence" name="Dane Hays">
             <OrgNode title="Content Editor" name="Jacob Kindt" tone="slate" />
             <OrgNode title="Historian" name="Sosie Gavin" tone="slate" />
           </OrgNode>
         </div>
-
         <div className="w-full mt-6">
           <div className="font-display text-2xl text-gold text-center mb-3">Grade Representatives</div>
           <div className="flex flex-wrap justify-center gap-3">
@@ -560,18 +555,25 @@ function OrgChart() {
 function PodcastToggle() {
   const [enabled, setEnabled] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    api('/home/settings').then((d) => setEnabled(!!d.home.podcastEnabled)).catch(() => {});
+    setError('');
+    api('/home/settings')
+      .then((d) => setEnabled(!!d.home.podcastEnabled))
+      .catch((err) => setError(err.message || 'Failed to load settings'));
   }, []);
 
   async function toggle() {
     if (enabled === null || busy) return;
     setBusy(true);
+    setError('');
     try {
       const d = await api('/home', { method: 'PUT', body: { podcastEnabled: !enabled } });
       setEnabled(!!d.home.podcastEnabled);
-    } catch (_) {} finally { setBusy(false); }
+    } catch (err) {
+      setError(err.message || 'Failed to save toggle');
+    } finally { setBusy(false); }
   }
 
   return (
@@ -595,6 +597,7 @@ function PodcastToggle() {
           <span className={`absolute top-1 left-1 w-6 h-6 rounded-full bg-white transition-transform ${enabled ? 'translate-x-6' : ''}`} />
         </button>
       </div>
+      {error && <div className="text-red text-sm mt-2">{error}</div>}
     </div>
   );
 }
@@ -799,8 +802,7 @@ function PodcastCard({ home }) {
             ) : (
               <div className="text-cream/40 text-sm px-4 text-center">
                 {home.podcastUrl ? 'Linked page (no inline preview)' : 'No podcast linked yet'}
-              </div>
-            )}
+            </div>
           </div>
           {home.podcastUrl && (
             <a href={home.podcastUrl} target="_blank" rel="noopener"
@@ -834,9 +836,12 @@ function HomeEditor({ onSaved }) {
     setError('');
     try {
       const d = await api('/home', { method: 'PUT', body: {
-        meetingDate: form.meetingDate, meetingTime: form.meetingTime,
-        meetingLocation: form.meetingLocation, podcastUrl: form.podcastUrl,
+        meetingDate: form.meetingDate,
+        meetingTime: form.meetingTime,
+        meetingLocation: form.meetingLocation,
+        podcastUrl: form.podcastUrl,
         calendarUrl: form.calendarUrl,
+        podcastEnabled: form.podcastEnabled,   // ← FIX: always send current value
       }});
       onSaved(d.home);
       setSaved(true);
