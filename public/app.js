@@ -312,7 +312,6 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
     setError('');
     if (forced && !photo) { setError('Please add a professional headshot.'); return; }
     if (forced && bio.trim().length < 40) { setError('Please write a short intro — a sentence or two about yourself.'); return; }
-    if (forced && !email.trim()) { setError('Please add an email so you get notified about tasks and approvals.'); return; }
     setLoading(true);
     try {
       const d = await api('/me/profile', { method: 'PUT', body: { photo, bio, email } });
@@ -340,7 +339,7 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
         </label>
       </div>
 
-      <Field label="Email (for task & approval notifications)">
+      <Field label="Email (optional — for personal email notifications)">
         <input type="email" className={inputCls} value={email}
           onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
       </Field>

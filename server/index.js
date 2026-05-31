@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 
 const { db, init, seed } = require('./db');
 const { fetchUpcoming } = require('./calendar');
-const { notify } = require('./email');
+const notify = require('./notify');
 const {
   signToken,
   publicUser,
@@ -137,12 +137,7 @@ app.post('/api/submissions', (req, res) => {
   } else {
     recipients = db.prepare("SELECT email FROM users WHERE role = 'admin'").all();
   }
-  const label = type === 'board' ? 'board application' : 'club-join request';
-  for (const r of recipients) {
-    notify(r.email, `New ${label}`,
-      `New ${label}`,
-      `<b>${name}</b>${grade ? ' (grade ' + grade + ')' : ''} submitted a ${label}.<br/>Email: ${email}${message ? '<br/>Message: ' + message : ''}<br/><br/>See it in the Get Involved inbox.`);
-  }
+  notify.newSubmission({ type, name, grade, email, message, recipientEmails: recipients.map((r) => r.email).filter(Boolean) });
 
   res.status(201).json({ ok: true });
 });
@@ -327,16 +322,13 @@ app.post('/api/tasks', (req, res) => {
   if (!isSelf) {
     const taskName = String(name).trim();
     if (approvalStatus === 'approved') {
-      // Assigned directly (by an admin) — tell the assignee.
-      notify(owner.email, 'New task assigned to you',
-        'You have a new task',
-        `<b>${req.user.displayName}</b> assigned you a task: <b>${taskName}</b>.`);
+      notify.taskAssigned({ assigneeName: owner.displayName, assigneeEmail: owner.email, assignerName: req.user.displayName, taskName });
     } else if (approverId) {
-      // Pending — tell the approver they have something to review.
       const approver = getUser(approverId);
-      notify(approver && approver.email, 'A task needs your approval',
-        'Task awaiting your approval',
-        `<b>${req.user.displayName}</b> wants to assign <b>${owner.displayName}</b> the task <b>${taskName}</b>. Approve it in Pending Approvals.`);
+      notify.taskNeedsApproval({
+        approverName: approver && approver.displayName, approverEmail: approver && approver.email,
+        requesterName: req.user.displayName, ownerName: owner.displayName, taskName,
+      });
     }
   }
 
@@ -402,9 +394,11 @@ app.post('/api/tasks/:id/approve', (req, res) => {
   // Now that it's approved, the assignee should know about their new task.
   const owner = getUser(task.userId);
   const assigner = task.assignedById ? getUser(task.assignedById) : null;
-  notify(owner && owner.email, 'New task assigned to you',
-    'You have a new task',
-    `${assigner ? '<b>' + assigner.displayName + '</b> assigned' : 'You were assigned'} the task <b>${task.name}</b> (approved by ${req.user.displayName}).`);
+  notify.taskAssigned({
+    assigneeName: owner.displayName, assigneeEmail: owner.email,
+    assignerName: (assigner ? assigner.displayName : 'A board member') + ` (approved by ${req.user.displayName})`,
+    taskName: task.name,
+  });
   res.json({ task: taskWithNames(getTask(task.id)) });
 });
 
