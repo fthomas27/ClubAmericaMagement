@@ -61,6 +61,29 @@ volume mounted and the env var set.
 
 ---
 
+## Environment Variables
+
+| Variable | Purpose |
+|---|---|
+| `JWT_SECRET` | **Set this in production.** A strong random string that signs login sessions. Without it the app warns and uses an insecure default (sessions could be forged). |
+| `DB_PATH` | Where the SQLite file lives (see above). Auto-detected on Railway via its volume. |
+| `RESEND_API_KEY` | Enables **email notifications** via [Resend](https://resend.com). Without it, notifications are simply skipped (the app still works). |
+| `MAIL_FROM` | The sender address for emails, e.g. `Club America <noreply@yourdomain.org>`. Defaults to Resend's test sender. |
+| `APP_URL` | Public URL of the app (used for the "Open Club America" button in emails). |
+| `PORT` | Port to listen on (Railway sets this automatically). |
+
+### Email notifications
+When `RESEND_API_KEY` is set, the app emails:
+- the **assignee** when a task is assigned to them (or approved),
+- the **approver** when a task needs their sign-off,
+- the routed board members (that grade's reps + President/VP) when a **Get Involved** form is submitted.
+
+Board members add their notification email on the profile setup screen (right
+after first login) or under **Edit profile**; admins can also set it in the
+Admin Panel.
+
+---
+
 ## How Login Works
 
 - **Username** = first initial + last name, all lowercase (Finley Thomas → `fthomas`).

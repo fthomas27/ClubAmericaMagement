@@ -29,6 +29,7 @@ function init() {
       passwordHash TEXT NOT NULL,
       role         TEXT NOT NULL DEFAULT 'member',  -- admin | manager | member
       title        TEXT NOT NULL DEFAULT '',
+      email        TEXT NOT NULL DEFAULT '',     -- for notifications
       managerId    INTEGER REFERENCES users(id) ON DELETE SET NULL,
       firstLogin   INTEGER NOT NULL DEFAULT 1,
       canEditHome  INTEGER NOT NULL DEFAULT 0,
@@ -95,6 +96,9 @@ function init() {
   }
   if (!cols.includes('profileComplete')) {
     db.exec("ALTER TABLE users ADD COLUMN profileComplete INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!cols.includes('email')) {
+    db.exec("ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''");
   }
   // Migrations for newer site_settings columns.
   const siteCols = db.prepare("PRAGMA table_info(site_settings)").all().map((c) => c.name);

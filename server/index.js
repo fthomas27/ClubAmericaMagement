@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 
 const { db, init, seed } = require('./db');
 const { fetchUpcoming } = require('./calendar');
+const { notify } = require('./email');
 const {
   signToken,
   publicUser,
@@ -17,6 +18,7 @@ init();
 const seeded = seed();
 
 const app = express();
+app.set('trust proxy', 1); // behind Railway's proxy
 app.use(cors());
 app.use(express.json({ limit: '6mb' })); // profile photos travel as data URLs
 
@@ -125,6 +127,23 @@ app.post('/api/submissions', (req, res) => {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'Please enter a valid email' });
   db.prepare('INSERT INTO submissions (type, name, email, grade, message) VALUES (?, ?, ?, ?, ?)')
     .run(type, name, email, grade, message);
+
+  // Notify the board members this submission is routed to:
+  //  - club-join → that grade's grade reps + admins (President/VP)
+  //  - board application → admins only
+  let recipients;
+  if (type === 'club' && grade) {
+    recipients = db.prepare("SELECT email FROM users WHERE role = 'admin' OR grade = ?").all(grade);
+  } else {
+    recipients = db.prepare("SELECT email FROM users WHERE role = 'admin'").all();
+  }
+  const label = type === 'board' ? 'board application' : 'club-join request';
+  for (const r of recipients) {
+    notify(r.email, `New ${label}`,
+      `New ${label}`,
+      `<b>${name}</b>${grade ? ' (grade ' + grade + ')' : ''} submitted a ${label}.<br/>Email: ${email}${message ? '<br/>Message: ' + message : ''}<br/><br/>See it in the Get Involved inbox.`);
+  }
+
   res.status(201).json({ ok: true });
 });
 
@@ -133,20 +152,22 @@ app.use('/api', authenticate, requirePasswordChanged);
 
 // ---- Own profile (photo + intro bio) ----------------------------------------
 app.get('/api/me/profile', (req, res) => {
-  const row = db.prepare('SELECT photo, bio, profileComplete FROM users WHERE id = ?').get(req.user.id);
-  res.json({ photo: row.photo || '', bio: row.bio || '', profileComplete: !!row.profileComplete });
+  const row = db.prepare('SELECT photo, bio, email, profileComplete FROM users WHERE id = ?').get(req.user.id);
+  res.json({ photo: row.photo || '', bio: row.bio || '', email: row.email || '', profileComplete: !!row.profileComplete });
 });
 
 app.put('/api/me/profile', (req, res) => {
-  let { photo, bio } = req.body || {};
+  let { photo, bio, email } = req.body || {};
   photo = typeof photo === 'string' ? photo : '';
   bio = String(bio || '').trim().slice(0, 4000);
+  email = String(email || '').trim().slice(0, 200);
   if (photo && !/^data:image\/(png|jpe?g|webp);base64,/.test(photo)) {
     return res.status(400).json({ error: 'Photo must be an image' });
   }
   if (photo.length > 6 * 1024 * 1024) return res.status(400).json({ error: 'Photo is too large' });
-  db.prepare('UPDATE users SET photo = COALESCE(?, photo), bio = ?, profileComplete = 1 WHERE id = ?')
-    .run(photo === undefined ? null : photo, bio, req.user.id);
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'Please enter a valid email' });
+  db.prepare('UPDATE users SET photo = COALESCE(?, photo), bio = ?, email = ?, profileComplete = 1 WHERE id = ?')
+    .run(photo === undefined ? null : photo, bio, email, req.user.id);
   res.json({ user: publicUser(getUser(req.user.id)) });
 });
 
@@ -302,6 +323,23 @@ app.post('/api/tasks', (req, res) => {
               VALUES (?, ?, ?, ?, 'Not Started', ?, ?, ?)`)
     .run(ownerId, String(name).trim(), description || '', dueDate || null, req.user.id, approvalStatus, approverId);
 
+  // Notifications
+  if (!isSelf) {
+    const taskName = String(name).trim();
+    if (approvalStatus === 'approved') {
+      // Assigned directly (by an admin) — tell the assignee.
+      notify(owner.email, 'New task assigned to you',
+        'You have a new task',
+        `<b>${req.user.displayName}</b> assigned you a task: <b>${taskName}</b>.`);
+    } else if (approverId) {
+      // Pending — tell the approver they have something to review.
+      const approver = getUser(approverId);
+      notify(approver && approver.email, 'A task needs your approval',
+        'Task awaiting your approval',
+        `<b>${req.user.displayName}</b> wants to assign <b>${owner.displayName}</b> the task <b>${taskName}</b>. Approve it in Pending Approvals.`);
+    }
+  }
+
   res.status(201).json({ task: taskWithNames(getTask(info.lastInsertRowid)) });
 });
 
@@ -361,6 +399,12 @@ app.post('/api/tasks/:id/approve', (req, res) => {
   if (task.approvalStatus !== 'pending') return res.status(400).json({ error: 'Task is not pending' });
   if (!canApprove(req.user, task)) return res.status(403).json({ error: 'Not allowed to approve' });
   db.prepare("UPDATE tasks SET approvalStatus = 'approved' WHERE id = ?").run(task.id);
+  // Now that it's approved, the assignee should know about their new task.
+  const owner = getUser(task.userId);
+  const assigner = task.assignedById ? getUser(task.assignedById) : null;
+  notify(owner && owner.email, 'New task assigned to you',
+    'You have a new task',
+    `${assigner ? '<b>' + assigner.displayName + '</b> assigned' : 'You were assigned'} the task <b>${task.name}</b> (approved by ${req.user.displayName}).`);
   res.json({ task: taskWithNames(getTask(task.id)) });
 });
 
@@ -375,9 +419,10 @@ app.post('/api/tasks/:id/reject', (req, res) => {
 
 // ---- Admin Panel ------------------------------------------------------------
 app.post('/api/admin/users', requireAdmin, (req, res) => {
-  let { firstName, lastName, role, title, managerId, grade } = req.body || {};
+  let { firstName, lastName, role, title, managerId, grade, email } = req.body || {};
   firstName = (firstName || '').trim();
   lastName = (lastName || '').trim();
+  email = String(email || '').trim().slice(0, 200);
   if (!firstName) return res.status(400).json({ error: 'First name required' });
   role = ROLES.includes(role) ? role : 'member';
   grade = String(grade || '').trim().slice(0, 40);
@@ -390,9 +435,9 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
   }
   const displayName = lastName ? `${firstName} ${lastName}` : firstName;
   const info = db
-    .prepare(`INSERT INTO users (username, firstName, lastName, displayName, passwordHash, role, title, managerId, grade, firstLogin)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
-    .run(username, firstName, lastName, displayName, bcrypt.hashSync(username, 10), role, title || '', managerId || null, grade);
+    .prepare(`INSERT INTO users (username, firstName, lastName, displayName, passwordHash, role, title, managerId, grade, email, firstLogin)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
+    .run(username, firstName, lastName, displayName, bcrypt.hashSync(username, 10), role, title || '', managerId || null, grade, email);
 
   if (managerId) refreshRole(Number(managerId));
   res.status(201).json({ user: publicUser(getUser(info.lastInsertRowid)), defaultPassword: username });
@@ -401,15 +446,15 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
 app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
   const user = getUser(Number(req.params.id));
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { role, title, managerId, grade } = req.body || {};
+  const { role, title, managerId, grade, email } = req.body || {};
   const prevManager = user.managerId;
 
   const newRole = ROLES.includes(role) ? role : user.role;
   const newManagerId = managerId === undefined ? user.managerId : (managerId || null);
   if (newManagerId === user.id) return res.status(400).json({ error: 'A user cannot manage themselves' });
 
-  db.prepare('UPDATE users SET role = ?, title = COALESCE(?, title), managerId = ?, grade = COALESCE(?, grade) WHERE id = ?')
-    .run(newRole, title ?? null, newManagerId, grade ?? null, user.id);
+  db.prepare('UPDATE users SET role = ?, title = COALESCE(?, title), managerId = ?, grade = COALESCE(?, grade), email = COALESCE(?, email) WHERE id = ?')
+    .run(newRole, title ?? null, newManagerId, grade ?? null, email ?? null, user.id);
 
   // Recompute manager flags for affected supervisors.
   if (prevManager) refreshRole(prevManager);

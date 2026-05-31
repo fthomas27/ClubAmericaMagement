@@ -288,11 +288,12 @@ function resizeImage(file, max, cb) {
 function ProfileSetup({ me, forced, onDone, onSkip }) {
   const [photo, setPhoto] = useState('');
   const [bio, setBio] = useState('');
+  const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    api('/me/profile').then((d) => { setPhoto(d.photo || ''); setBio(d.bio || ''); }).catch(() => {});
+    api('/me/profile').then((d) => { setPhoto(d.photo || ''); setBio(d.bio || ''); setEmail(d.email || ''); }).catch(() => {});
   }, []);
 
   function onFile(e) {
@@ -311,9 +312,10 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
     setError('');
     if (forced && !photo) { setError('Please add a professional headshot.'); return; }
     if (forced && bio.trim().length < 40) { setError('Please write a short intro — a sentence or two about yourself.'); return; }
+    if (forced && !email.trim()) { setError('Please add an email so you get notified about tasks and approvals.'); return; }
     setLoading(true);
     try {
-      const d = await api('/me/profile', { method: 'PUT', body: { photo, bio } });
+      const d = await api('/me/profile', { method: 'PUT', body: { photo, bio, email } });
       onDone(d.user);
     } catch (err) { setError(err.message); } finally { setLoading(false); }
   }
@@ -337,6 +339,11 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
           <div className="text-xs text-cream/40 mt-1">A clear, professional headshot.</div>
         </label>
       </div>
+
+      <Field label="Email (for task & approval notifications)">
+        <input type="email" className={inputCls} value={email}
+          onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
+      </Field>
 
       <Field label="Introduce yourself (a paragraph or two)">
         <textarea className={inputCls + ' min-h-[140px] resize-y'} value={bio}
@@ -646,12 +653,12 @@ function OrgNode({ title, name, tone = 'gold', children }) {
   const ring = tone === 'red' ? 'border-red' : tone === 'gold' ? 'border-gold' : 'border-cream/30';
   return (
     <div className="flex flex-col items-center">
-      <div className={`bg-navy2 border-2 ${ring} rounded-lg px-4 py-2 text-center min-w-[160px] shadow-lg`}>
-        <div className="font-display text-lg text-gold leading-tight">{title}</div>
-        {name && <div className="text-sm text-cream/80">{name}</div>}
+      <div className={`bg-navy2 border-2 ${ring} rounded-lg px-3 sm:px-4 py-2 text-center min-w-[120px] sm:min-w-[160px] shadow-lg`}>
+        <div className="font-display text-base sm:text-lg text-gold leading-tight">{title}</div>
+        {name && <div className="text-xs sm:text-sm text-cream/80">{name}</div>}
       </div>
       {children && <div className="w-px h-5 bg-cream/20" />}
-      {children && <div className="flex flex-wrap justify-center gap-4">{children}</div>}
+      {children && <div className="flex flex-wrap justify-center gap-3 sm:gap-4">{children}</div>}
     </div>
   );
 }
@@ -662,7 +669,8 @@ function OrgChart() {
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Org Chart</h1>
       <p className="text-cream/50 mb-8">Club America — 2025–26 Board</p>
 
-      <div className="flex flex-col items-center gap-5 pb-10">
+      <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+      <div className="flex flex-col items-center gap-5 pb-10 min-w-max sm:min-w-0 mx-auto">
         <OrgNode title="President" name="Finley Thomas" tone="red" />
         <div className="w-px h-5 bg-cream/20" />
         <OrgNode title="Vice President" name="Derek Eddy" tone="red" />
@@ -695,6 +703,7 @@ function OrgChart() {
             ))}
           </div>
         </div>
+      </div>
       </div>
     </div>
   );
@@ -752,6 +761,7 @@ function AdminPanel({ users, reload }) {
   const [role, setRole] = useState('member');
   const [managerId, setManagerId] = useState('');
   const [grade, setGrade] = useState('');
+  const [email, setEmail] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
 
@@ -760,10 +770,10 @@ function AdminPanel({ users, reload }) {
     setError(''); setNotice('');
     try {
       const d = await api('/admin/users', { method: 'POST', body: {
-        firstName: first, lastName: last, title, role, managerId: managerId ? Number(managerId) : null, grade,
+        firstName: first, lastName: last, title, role, managerId: managerId ? Number(managerId) : null, grade, email,
       }});
       setNotice(`Added ${d.user.displayName} — username "${d.user.username}", default password "${d.defaultPassword}".`);
-      setFirst(''); setLast(''); setTitle(''); setRole('member'); setManagerId(''); setGrade('');
+      setFirst(''); setLast(''); setTitle(''); setRole('member'); setManagerId(''); setGrade(''); setEmail('');
       reload();
     } catch (err) { setError(err.message); }
   }
@@ -814,6 +824,7 @@ function AdminPanel({ users, reload }) {
             {GRADES.map((g) => <option key={g} value={g}>{gradeOption(g)}</option>)}
           </select>
         </Field>
+        <Field label="Email (for notifications)"><input type="email" className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="optional" /></Field>
         <div className="sm:col-span-2 flex items-center gap-3">
           <Button type="submit" variant="gold">Add Member</Button>
           <span className="text-xs text-cream/40">Username & default password are generated as first-initial + last name.</span>
