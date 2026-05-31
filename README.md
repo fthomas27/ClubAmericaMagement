@@ -48,8 +48,9 @@ Host-specific setup:
 
 - **Render:** add a **Disk** (Settings → Disks), mount path e.g. `/var/data`,
   then set the env var `DB_PATH=/var/data/clubamerica.db`.
-- **Railway:** add a **Volume**, mount it at e.g. `/data`, then set
-  `DB_PATH=/data/clubamerica.db`.
+- **Railway:** just add a **Volume** to the service (any mount path) — the app
+  detects Railway's volume automatically and stores the database there. No env
+  var needed. (You can still set `DB_PATH` to override.)
 - **Fly.io:** `fly volumes create data`, mount at `/data` in `fly.toml`, set
   `DB_PATH=/data/clubamerica.db`.
 - **Heroku / Vercel / Netlify:** these have **no persistent disk** for SQLite —
