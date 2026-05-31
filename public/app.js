@@ -288,12 +288,11 @@ function resizeImage(file, max, cb) {
 function ProfileSetup({ me, forced, onDone, onSkip }) {
   const [photo, setPhoto] = useState('');
   const [bio, setBio] = useState('');
-  const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    api('/me/profile').then((d) => { setPhoto(d.photo || ''); setBio(d.bio || ''); setEmail(d.email || ''); }).catch(() => {});
+    api('/me/profile').then((d) => { setPhoto(d.photo || ''); setBio(d.bio || ''); }).catch(() => {});
   }, []);
 
   function onFile(e) {
@@ -314,7 +313,7 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
     if (forced && bio.trim().length < 40) { setError('Please write a short intro — a sentence or two about yourself.'); return; }
     setLoading(true);
     try {
-      const d = await api('/me/profile', { method: 'PUT', body: { photo, bio, email } });
+      const d = await api('/me/profile', { method: 'PUT', body: { photo, bio } });
       onDone(d.user);
     } catch (err) { setError(err.message); } finally { setLoading(false); }
   }
@@ -338,11 +337,6 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
           <div className="text-xs text-cream/40 mt-1">A clear, professional headshot.</div>
         </label>
       </div>
-
-      <Field label="Email (optional — for personal email notifications)">
-        <input type="email" className={inputCls} value={email}
-          onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
-      </Field>
 
       <Field label="Introduce yourself (a paragraph or two)">
         <textarea className={inputCls + ' min-h-[140px] resize-y'} value={bio}
@@ -760,7 +754,6 @@ function AdminPanel({ users, reload }) {
   const [role, setRole] = useState('member');
   const [managerId, setManagerId] = useState('');
   const [grade, setGrade] = useState('');
-  const [email, setEmail] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
 
@@ -769,10 +762,10 @@ function AdminPanel({ users, reload }) {
     setError(''); setNotice('');
     try {
       const d = await api('/admin/users', { method: 'POST', body: {
-        firstName: first, lastName: last, title, role, managerId: managerId ? Number(managerId) : null, grade, email,
+        firstName: first, lastName: last, title, role, managerId: managerId ? Number(managerId) : null, grade,
       }});
       setNotice(`Added ${d.user.displayName} — username "${d.user.username}", default password "${d.defaultPassword}".`);
-      setFirst(''); setLast(''); setTitle(''); setRole('member'); setManagerId(''); setGrade(''); setEmail('');
+      setFirst(''); setLast(''); setTitle(''); setRole('member'); setManagerId(''); setGrade('');
       reload();
     } catch (err) { setError(err.message); }
   }
@@ -823,7 +816,6 @@ function AdminPanel({ users, reload }) {
             {GRADES.map((g) => <option key={g} value={g}>{gradeOption(g)}</option>)}
           </select>
         </Field>
-        <Field label="Email (for notifications)"><input type="email" className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="optional" /></Field>
         <div className="sm:col-span-2 flex items-center gap-3">
           <Button type="submit" variant="gold">Add Member</Button>
           <span className="text-xs text-cream/40">Username & default password are generated as first-initial + last name.</span>

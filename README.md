@@ -67,27 +67,7 @@ volume mounted and the env var set.
 |---|---|
 | `JWT_SECRET` | **Set this in production.** A strong random string that signs login sessions. Without it the app warns and uses an insecure default (sessions could be forged). |
 | `DB_PATH` | Where the SQLite file lives (see above). Auto-detected on Railway via its volume. |
-| `SLACK_WEBHOOK_URL` | Enables **Slack notifications** — the easiest option. Messages post to the channel the webhook points at. |
-| `RESEND_API_KEY` | *(Optional)* also send **email** notifications via [Resend](https://resend.com) to members who have an email saved. |
-| `MAIL_FROM` | *(Email only)* sender address, e.g. `Club America <noreply@yourdomain.org>`. |
-| `APP_URL` | Public URL of the app (appended to notification messages). |
 | `PORT` | Port to listen on (Railway sets this automatically). |
-
-### Notifications
-The app notifies on three events:
-- a task is **assigned** (or approved) → the assignee,
-- a task **needs approval** → the approver,
-- a **Get Involved** form is submitted → that grade's reps + President/VP.
-
-**Slack (recommended, simplest):** in Slack, create an **Incoming Webhook**
-(Slack → Apps → "Incoming Webhooks" → add to a channel → copy the URL), then set
-`SLACK_WEBHOOK_URL`. That's it — every notification posts to that channel. No
-per-person setup, no domain verification.
-
-**Email (optional):** set `RESEND_API_KEY` to *also* email individuals. Members
-add their email on the profile-setup screen or under **Edit profile**; admins can
-set it in the Admin Panel. If neither is configured, notifications are skipped
-and the app runs fine.
 
 ---
 
