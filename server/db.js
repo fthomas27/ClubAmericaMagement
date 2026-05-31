@@ -1,8 +1,19 @@
 const path = require('path');
+const fs = require('fs');
 const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'clubamerica.db');
+// Choose where the SQLite file lives, in priority order:
+//  1. DB_PATH if explicitly set.
+//  2. A Railway volume, if one is attached (RAILWAY_VOLUME_MOUNT_PATH is provided
+//     automatically) — so just attaching a volume makes data persist.
+//  3. The local file next to the code (fine for dev; ephemeral on most hosts).
+const DB_PATH =
+  process.env.DB_PATH ||
+  (process.env.RAILWAY_VOLUME_MOUNT_PATH
+    ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'clubamerica.db')
+    : path.join(__dirname, 'clubamerica.db'));
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
