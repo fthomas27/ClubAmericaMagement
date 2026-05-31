@@ -4,6 +4,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 
 const { db, init, seed } = require('./db');
+const { fetchUpcoming } = require('./calendar');
 const {
   signToken,
   publicUser,
@@ -91,14 +92,26 @@ app.get('/api/me', authenticate, (req, res) => {
 
 // ---- Public homepage content (no auth) --------------------------------------
 function getHome() {
-  return db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, updatedAt FROM site_settings WHERE id = 1').get();
+  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, updatedAt FROM site_settings WHERE id = 1').get();
+  return { ...row, podcastEnabled: !!row.podcastEnabled };
 }
-app.get('/api/home', (req, res) => {
-  res.json({ home: getHome() });
+app.get('/api/home', async (req, res) => {
+  const home = getHome();
+  let events = [];
+  try { events = await fetchUpcoming(home.calendarUrl, 3); } catch (_) {}
+  // Don't leak the raw calendar URL to the public payload.
+  const { calendarUrl, ...publicHome } = home;
+  res.json({ home: { ...publicHome, calendarConfigured: !!calendarUrl }, events });
 });
 
 // Everything past this point requires a changed password.
 app.use('/api', authenticate, requirePasswordChanged);
+
+// The full settings (including the calendar URL) for authorized editors.
+app.get('/api/home/settings', (req, res) => {
+  if (!canEditHome(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  res.json({ home: getHome() });
+});
 
 // Update homepage content — Digital Presence Manager (canEditHome) or admins.
 function canEditHome(user) {
@@ -106,12 +119,15 @@ function canEditHome(user) {
 }
 app.put('/api/home', (req, res) => {
   if (!canEditHome(req.user)) return res.status(403).json({ error: 'Only the Digital Presence Manager can edit the homepage' });
-  const { meetingDate, meetingTime, meetingLocation, podcastUrl } = req.body || {};
+  const { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl } = req.body || {};
+  const podcastEnabledVal = podcastEnabled === undefined ? null : (podcastEnabled ? 1 : 0);
   db.prepare(`UPDATE site_settings SET
        meetingDate = COALESCE(?, meetingDate),
        meetingTime = COALESCE(?, meetingTime),
        meetingLocation = COALESCE(?, meetingLocation),
        podcastUrl = COALESCE(?, podcastUrl),
+       podcastEnabled = COALESCE(?, podcastEnabled),
+       calendarUrl = COALESCE(?, calendarUrl),
        updatedAt = datetime('now')
      WHERE id = 1`)
     .run(
@@ -119,6 +135,8 @@ app.put('/api/home', (req, res) => {
       meetingTime ?? null,
       meetingLocation ?? null,
       podcastUrl ?? null,
+      podcastEnabledVal,
+      calendarUrl ?? null,
     );
   res.json({ home: getHome() });
 });

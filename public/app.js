@@ -557,6 +557,48 @@ function OrgChart() {
 // ---------------------------------------------------------------------------
 // Admin Panel
 // ---------------------------------------------------------------------------
+function PodcastToggle() {
+  const [enabled, setEnabled] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api('/home/settings').then((d) => setEnabled(!!d.home.podcastEnabled)).catch(() => {});
+  }, []);
+
+  async function toggle() {
+    if (enabled === null || busy) return;
+    setBusy(true);
+    try {
+      const d = await api('/home', { method: 'PUT', body: { podcastEnabled: !enabled } });
+      setEnabled(!!d.home.podcastEnabled);
+    } catch (_) {} finally { setBusy(false); }
+  }
+
+  return (
+    <div className="bg-navy2 border border-cream/10 rounded-xl p-5 mb-8">
+      <div className="font-display text-2xl text-gold mb-1">Homepage</div>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <div className="text-cream">Podcast section</div>
+          <div className="text-cream/50 text-sm">
+            {enabled === null ? 'Loading…'
+              : enabled ? 'Visible on the homepage.'
+              : 'Hidden — shows an "Under Construction" message instead.'}
+          </div>
+        </div>
+        <button
+          onClick={toggle}
+          disabled={enabled === null || busy}
+          aria-pressed={!!enabled}
+          className={`relative w-14 h-8 rounded-full transition-colors disabled:opacity-50 ${enabled ? 'bg-emerald-500' : 'bg-cream/20'}`}
+        >
+          <span className={`absolute top-1 left-1 w-6 h-6 rounded-full bg-white transition-transform ${enabled ? 'translate-x-6' : ''}`} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AdminPanel({ users, reload }) {
   const [first, setFirst] = useState('');
   const [last, setLast] = useState('');
@@ -598,6 +640,8 @@ function AdminPanel({ users, reload }) {
   return (
     <div className="max-w-5xl">
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-6">Admin Panel</h1>
+
+      <PodcastToggle />
 
       <form onSubmit={addUser} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-8 grid sm:grid-cols-2 gap-4">
         <div className="sm:col-span-2 font-display text-2xl text-gold">Add a Board Member</div>
@@ -681,26 +725,51 @@ function ytId(url) {
   return m ? m[1] : null;
 }
 
-function MeetingCard({ home }) {
-  const rows = [
-    ['Date', home.meetingDate],
-    ['Time', home.meetingTime],
-    ['Location', home.meetingLocation],
-  ];
+function fmtEvent(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  // If the time is exactly midnight local, treat it as an all-day event.
+  const allDay = d.getHours() === 0 && d.getMinutes() === 0;
+  const date = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  if (allDay) return date;
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return `${date} · ${time}`;
+}
+
+// Shows the next few calendar events when a calendar is connected; otherwise
+// falls back to the manually-entered "Next Meeting" details.
+function MeetingCard({ home, events }) {
+  const hasEvents = events && events.length > 0;
   return (
     <section className="bg-navy2 border border-gold/30 rounded-2xl p-6">
       <div className="flex items-center justify-between">
-        <h2 className="font-display text-3xl text-gold">Next Meeting</h2>
-        <span className="text-red text-xl">📍</span>
+        <h2 className="font-display text-3xl text-gold">{hasEvents ? 'Upcoming Events' : 'Next Meeting'}</h2>
+        <span className="text-red text-xl">📅</span>
       </div>
-      <div className="mt-4 space-y-3">
-        {rows.map(([label, val]) => (
-          <div key={label}>
-            <div className="text-xs uppercase tracking-wider text-cream/50">{label}</div>
-            <div className="text-2xl text-cream font-medium">{val || '—'}</div>
-          </div>
-        ))}
-      </div>
+
+      {hasEvents ? (
+        <ul className="mt-4 space-y-3">
+          {events.map((e, i) => (
+            <li key={i} className="border-l-2 border-gold/50 pl-3">
+              <div className="text-lg text-cream font-medium leading-tight">{e.title}</div>
+              <div className="text-sm text-gold/80">{fmtEvent(e.start)}</div>
+              {e.location && <div className="text-sm text-cream/50">{e.location}</div>}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="mt-4 space-y-3">
+          {[['Date', home.meetingDate], ['Time', home.meetingTime], ['Location', home.meetingLocation]].map(([label, val]) => (
+            <div key={label}>
+              <div className="text-xs uppercase tracking-wider text-cream/50">{label}</div>
+              <div className="text-2xl text-cream font-medium">{val || '—'}</div>
+            </div>
+          ))}
+          {home.calendarConfigured && (
+            <p className="text-xs text-cream/40">No upcoming events found on the connected calendar.</p>
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -713,37 +782,52 @@ function PodcastCard({ home }) {
         <h2 className="font-display text-3xl text-red">The Podcast</h2>
         <span className="text-xl">🎙️</span>
       </div>
-      <div className="mt-4 aspect-video w-full rounded-lg overflow-hidden bg-navy3 flex items-center justify-center">
-        {id ? (
-          <iframe className="w-full h-full" src={`https://www.youtube.com/embed/${id}`}
-            title="Club America Podcast" frameBorder="0"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
-        ) : (
-          <div className="text-cream/40 text-sm px-4 text-center">
-            {home.podcastUrl ? 'Linked page (no inline preview)' : 'No podcast linked yet'}
+
+      {!home.podcastEnabled ? (
+        <div className="mt-4 aspect-video w-full rounded-lg overflow-hidden bg-navy3 flex flex-col items-center justify-center text-center px-4">
+          <span className="text-4xl mb-2">🚧</span>
+          <div className="font-display text-2xl text-gold">Under Construction</div>
+          <div className="text-cream/40 text-sm mt-1">The podcast is coming soon — check back later.</div>
+        </div>
+      ) : (
+        <React.Fragment>
+          <div className="mt-4 aspect-video w-full rounded-lg overflow-hidden bg-navy3 flex items-center justify-center">
+            {id ? (
+              <iframe className="w-full h-full" src={`https://www.youtube.com/embed/${id}`}
+                title="Club America Podcast" frameBorder="0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
+            ) : (
+              <div className="text-cream/40 text-sm px-4 text-center">
+                {home.podcastUrl ? 'Linked page (no inline preview)' : 'No podcast linked yet'}
+              </div>
+            )}
           </div>
-        )}
-      </div>
-      {home.podcastUrl && (
-        <a href={home.podcastUrl} target="_blank" rel="noopener"
-          className="mt-4 inline-block bg-gold hover:bg-gold/85 text-navy font-semibold text-sm px-4 py-2 rounded-md transition-colors">
-          ▶ Watch on YouTube
-        </a>
+          {home.podcastUrl && (
+            <a href={home.podcastUrl} target="_blank" rel="noopener"
+              className="mt-4 inline-block bg-gold hover:bg-gold/85 text-navy font-semibold text-sm px-4 py-2 rounded-md transition-colors">
+              ▶ Watch on YouTube
+            </a>
+          )}
+        </React.Fragment>
       )}
     </section>
   );
 }
 
-function HomeEditor({ home, onSaved }) {
+function HomeEditor({ onSaved }) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState(home);
+  const [form, setForm] = useState(null);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
 
-  function start() {
-    setForm(home);
+  async function start() {
     setError(''); setSaved(false);
-    setOpen(true);
+    try {
+      // Load the full settings (including the private calendar URL).
+      const d = await api('/home/settings');
+      setForm(d.home);
+      setOpen(true);
+    } catch (err) { setError(err.message); }
   }
   async function submit(e) {
     e.preventDefault();
@@ -752,6 +836,7 @@ function HomeEditor({ home, onSaved }) {
       const d = await api('/home', { method: 'PUT', body: {
         meetingDate: form.meetingDate, meetingTime: form.meetingTime,
         meetingLocation: form.meetingLocation, podcastUrl: form.podcastUrl,
+        calendarUrl: form.calendarUrl,
       }});
       onSaved(d.home);
       setSaved(true);
@@ -765,16 +850,22 @@ function HomeEditor({ home, onSaved }) {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h2 className="font-display text-2xl text-cream">Digital Presence Manager Controls</h2>
-          <p className="text-cream/50 text-sm">You can edit the meeting details and podcast link shown on the public homepage.</p>
+          <p className="text-cream/50 text-sm">Edit the meeting details, calendar feed, and podcast link shown on the public homepage.</p>
         </div>
         {!open && <Button variant="ghost" onClick={start}>Edit page</Button>}
       </div>
       {saved && !open && <div className="text-emerald-300 text-sm mt-3">Saved — the public homepage is updated.</div>}
-      {open && (
+      {open && form && (
         <form onSubmit={submit} className="mt-5 grid sm:grid-cols-2 gap-4">
-          <Field label="Meeting date"><input className={inputCls} value={form.meetingDate || ''} onChange={set('meetingDate')} placeholder="e.g. Thursday, June 12" /></Field>
-          <Field label="Meeting time"><input className={inputCls} value={form.meetingTime || ''} onChange={set('meetingTime')} placeholder="e.g. 3:30 PM" /></Field>
-          <div className="sm:col-span-2"><Field label="Meeting location"><input className={inputCls} value={form.meetingLocation || ''} onChange={set('meetingLocation')} placeholder="e.g. Room 214" /></Field></div>
+          <div className="sm:col-span-2">
+            <Field label="Calendar feed URL (iCal / .ics — e.g. Google Calendar public address)">
+              <input className={inputCls} value={form.calendarUrl || ''} onChange={set('calendarUrl')} placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" />
+            </Field>
+            <p className="text-xs text-cream/40 mt-1">When set, the homepage shows the next 3 events from this calendar automatically. Leave blank to use the manual meeting fields below.</p>
+          </div>
+          <Field label="Meeting date (fallback)"><input className={inputCls} value={form.meetingDate || ''} onChange={set('meetingDate')} placeholder="e.g. Thursday, June 12" /></Field>
+          <Field label="Meeting time (fallback)"><input className={inputCls} value={form.meetingTime || ''} onChange={set('meetingTime')} placeholder="e.g. 3:30 PM" /></Field>
+          <div className="sm:col-span-2"><Field label="Meeting location (fallback)"><input className={inputCls} value={form.meetingLocation || ''} onChange={set('meetingLocation')} placeholder="e.g. Room 214" /></Field></div>
           <div className="sm:col-span-2"><Field label="Podcast link (YouTube video or page URL)"><input className={inputCls} value={form.podcastUrl || ''} onChange={set('podcastUrl')} placeholder="https://www.youtube.com/watch?v=…" /></Field></div>
           {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
           <div className="sm:col-span-2 flex gap-2">
@@ -783,16 +874,18 @@ function HomeEditor({ home, onSaved }) {
           </div>
         </form>
       )}
+      {error && !open && <div className="text-red text-sm mt-3">{error}</div>}
     </section>
   );
 }
 
 function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
   const [home, setHome] = useState(null);
+  const [events, setEvents] = useState([]);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
-    try { const d = await api('/home'); setHome(d.home); }
+    try { const d = await api('/home'); setHome(d.home); setEvents(d.events || []); }
     catch (err) { setError(err.message); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -802,7 +895,7 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
 
   const cards = (
     <div className="grid md:grid-cols-2 gap-6">
-      <MeetingCard home={home} />
+      <MeetingCard home={home} events={events} />
       <PodcastCard home={home} />
     </div>
   );
@@ -816,7 +909,7 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
           <p className="text-cream/50 mt-1">This is the public-facing page at <span className="text-gold/80">/home</span>.</p>
         </div>
         {cards}
-        {editable && <HomeEditor home={home} onSaved={setHome} />}
+        {editable && <HomeEditor onSaved={load} />}
       </div>
     );
   }
@@ -826,7 +919,7 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
     <div className="min-h-screen">
       <div style={{ background: 'radial-gradient(900px 400px at 50% -10%, rgba(204,28,46,0.25), transparent 60%)' }}>
         <header className="max-w-5xl mx-auto px-4 sm:px-6 pt-6 flex items-center justify-between gap-3">
-          <div className="bg-white rounded-xl px-3 py-2 shadow-lg"><LogoMark big={false} /></div>
+          <Logo size="sidebar" />
           <Button variant="primary" onClick={onEnterPortal}>Board Portal Login →</Button>
         </header>
         <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-10 pb-8 text-center">
