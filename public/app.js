@@ -900,7 +900,24 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
     </div>
   );
 
-  // In-portal view: just the content, plus the editor for permitted users.
+  // Dedicated "Edit Website" tab: editor first, then a live preview.
+  if (mode === 'editor') {
+    return (
+      <div className="max-w-5xl space-y-8">
+        <div>
+          <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Edit Website</h1>
+          <p className="text-cream/50 mt-1">Update what visitors see on the public homepage at <span className="text-gold/80">/home</span>.</p>
+        </div>
+        <HomeEditor onSaved={load} />
+        <div>
+          <div className="font-display text-2xl text-gold mb-3">Live Preview</div>
+          {cards}
+        </div>
+      </div>
+    );
+  }
+
+  // In-portal "Home" view: read-only look at the public page.
   if (mode === 'portal') {
     return (
       <div className="max-w-5xl space-y-8">
@@ -944,6 +961,7 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
 function Sidebar({ me, reports, approvalsCount, view, setView, onLogout, open, onClose }) {
   const [reportsOpen, setReportsOpen] = useState(true);
   const isManager = me.role === 'manager' || me.role === 'admin';
+  const canEditSite = me.role === 'admin' || !!me.canEditHome;
 
   const NavItem = ({ active, onClick, children, badge }) => (
     <button onClick={onClick}
@@ -972,6 +990,9 @@ function Sidebar({ me, reports, approvalsCount, view, setView, onLogout, open, o
 
       <nav className="flex-1 overflow-y-auto p-3 space-y-1">
         <NavItem active={view.type === 'home'} onClick={() => setView({ type: 'home' })}>Home</NavItem>
+        {canEditSite && (
+          <NavItem active={view.type === 'website'} onClick={() => setView({ type: 'website' })}>Edit Website</NavItem>
+        )}
         <NavItem active={view.type === 'mytasks'} onClick={() => setView({ type: 'mytasks' })}>My Tasks</NavItem>
 
         {isManager && (
@@ -1084,8 +1105,13 @@ function App() {
   if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); }} onBack={() => setEnterPortal(false)} />;
   if (me.firstLogin) return <ChangePassword user={me} forced onDone={(u) => { setMe(u); loadShared(u); }} />;
 
+  const canEditSite = me.role === 'admin' || !!me.canEditHome;
+
   let content;
-  if (view.type === 'home') content = <Home mode="portal" editable={me.role === 'admin' || !!me.canEditHome} />;
+  if (view.type === 'home') content = <Home mode="portal" editable={false} />;
+  else if (view.type === 'website') content = canEditSite
+    ? <Home mode="editor" editable={true} />
+    : <Home mode="portal" editable={false} />;
   else if (view.type === 'mytasks') content = <TaskPage me={me} userId={me.id} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'person') content = <TaskPage me={me} userId={view.userId} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'approvals') content = <Approvals onChanged={bump} refreshSignal={refreshSignal} />;
