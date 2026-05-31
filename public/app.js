@@ -262,6 +262,101 @@ function ChangePassword({ user, onDone, forced }) {
   );
 }
 
+// Read an image file and downscale it to a square-ish data URL (keeps payload small).
+function resizeImage(file, max, cb) {
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      const scale = Math.min(1, max / Math.max(width, height));
+      const w = Math.round(width * scale), h = Math.round(height * scale);
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      cb(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => cb(null);
+    img.src = ev.target.result;
+  };
+  reader.onerror = () => cb(null);
+  reader.readAsDataURL(file);
+}
+
+// Profile setup — runs right after the password step on first login, and is
+// reachable later via "Edit profile". Collects a photo and an intro bio.
+function ProfileSetup({ me, forced, onDone, onSkip }) {
+  const [photo, setPhoto] = useState('');
+  const [bio, setBio] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    api('/me/profile').then((d) => { setPhoto(d.photo || ''); setBio(d.bio || ''); }).catch(() => {});
+  }, []);
+
+  function onFile(e) {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    if (!f.type.startsWith('image/')) { setError('Please choose an image file.'); return; }
+    setError('');
+    resizeImage(f, 512, (dataUrl) => {
+      if (dataUrl) setPhoto(dataUrl);
+      else setError("Couldn't read that image — try another.");
+    });
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    setError('');
+    if (forced && !photo) { setError('Please add a professional headshot.'); return; }
+    if (forced && bio.trim().length < 40) { setError('Please write a short intro — a sentence or two about yourself.'); return; }
+    setLoading(true);
+    try {
+      const d = await api('/me/profile', { method: 'PUT', body: { photo, bio } });
+      onDone(d.user);
+    } catch (err) { setError(err.message); } finally { setLoading(false); }
+  }
+
+  const card = (
+    <div className="w-full max-w-lg bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4">
+      <div>
+        <div className="font-display text-3xl text-gold">{forced ? 'Set Up Your Profile' : 'Edit Profile'}</div>
+        {forced && <p className="text-sm text-cream/60 mt-1">Welcome, {me.displayName.split(' ')[0]}! Add a professional photo and a short intro — this is what the public sees on the Meet the Board page.</p>}
+      </div>
+
+      <div className="flex items-center gap-4">
+        <div className="w-24 h-24 rounded-full bg-navy3 border-2 border-gold/40 overflow-hidden flex items-center justify-center shrink-0">
+          {photo
+            ? <img src={photo} alt="preview" className="w-full h-full object-cover" />
+            : <span className="text-cream/40 text-xs text-center px-2">No photo</span>}
+        </div>
+        <label className="cursor-pointer">
+          <span className="inline-block bg-transparent border border-cream/25 hover:border-gold text-cream text-sm px-4 py-2 rounded-md">Choose photo…</span>
+          <input type="file" accept="image/*" className="hidden" onChange={onFile} />
+          <div className="text-xs text-cream/40 mt-1">A clear, professional headshot.</div>
+        </label>
+      </div>
+
+      <Field label="Introduce yourself (a paragraph or two)">
+        <textarea className={inputCls + ' min-h-[140px] resize-y'} value={bio}
+          onChange={(e) => setBio(e.target.value)} placeholder="Tell the club a bit about you — your year, what you're involved in, and why you're part of Club America." />
+      </Field>
+
+      {error && <div className="text-red text-sm">{error}</div>}
+      <div className="flex gap-2">
+        <Button type="submit" variant="gold" disabled={loading}>{loading ? 'Saving…' : 'Save Profile'}</Button>
+        {forced && onSkip && <Button variant="ghost" onClick={onSkip}>Skip for now</Button>}
+      </div>
+    </div>
+  );
+
+  if (forced) {
+    return <form onSubmit={submit} className="min-h-screen flex items-center justify-center p-4">{card}</form>;
+  }
+  return <form onSubmit={submit} className="max-w-lg">{card}</form>;
+}
+
 // ---------------------------------------------------------------------------
 // Task page (used for self and for managed reports)
 // ---------------------------------------------------------------------------
@@ -716,7 +811,7 @@ function AdminPanel({ users, reload }) {
         <Field label="Grade (for grade reps — receives that grade's join forms)">
           <select className={inputCls} value={grade} onChange={(e) => setGrade(e.target.value)}>
             <option value="">— n/a —</option>
-            {GRADES.map((g) => <option key={g} value={g}>{g}th grade</option>)}
+            {GRADES.map((g) => <option key={g} value={g}>{gradeOption(g)}</option>)}
           </select>
         </Field>
         <div className="sm:col-span-2 flex items-center gap-3">
@@ -969,6 +1064,8 @@ function HomeEditor({ onSaved }) {
 }
 
 const GRADES = ['9', '10', '11', '12'];
+const GRADE_LABELS = { '9': 'Freshman', '10': 'Sophomore', '11': 'Junior', '12': 'Senior' };
+const gradeOption = (g) => `${g}th — ${GRADE_LABELS[g] || ''}`;
 
 // "About Us" section, rendered only when the board has filled it in.
 function AboutSection({ home }) {
@@ -1037,7 +1134,7 @@ function GetInvolved() {
           <Field label="Grade">
             <select className={inputCls} value={form.grade} onChange={set('grade')} required>
               <option value="">Select…</option>
-              {GRADES.map((g) => <option key={g} value={g}>{g}th grade</option>)}
+              {GRADES.map((g) => <option key={g} value={g}>{gradeOption(g)}</option>)}
             </select>
           </Field>
           <div className="sm:col-span-2">
@@ -1051,6 +1148,88 @@ function GetInvolved() {
           </div>
         </form>
       )}
+    </section>
+  );
+}
+
+// ---- Meet the Board (public, data-driven org chart with click-for-bio) ------
+function Avatar({ member, size = 56 }) {
+  if (member.photo) {
+    return <img src={member.photo} alt={member.displayName}
+      style={{ width: size, height: size }} className="rounded-full object-cover border-2 border-gold/40" />;
+  }
+  const initials = (member.displayName || '?').split(/\s+/).map((s) => s[0]).slice(0, 2).join('').toUpperCase();
+  return (
+    <div style={{ width: size, height: size }}
+      className="rounded-full bg-navy3 border-2 border-gold/40 flex items-center justify-center text-gold font-display">
+      {initials}
+    </div>
+  );
+}
+
+function buildBoardTree(members) {
+  const byId = {};
+  members.forEach((m) => { byId[m.id] = { ...m, children: [] }; });
+  const roots = [];
+  members.forEach((m) => {
+    if (m.managerId && byId[m.managerId]) byId[m.managerId].children.push(byId[m.id]);
+    else roots.push(byId[m.id]);
+  });
+  return roots;
+}
+
+function BoardModal({ member, onClose }) {
+  return (
+    <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+      <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-md w-full p-6 relative">
+        <button onClick={onClose} aria-label="Close" className="absolute top-2 right-4 text-cream/60 hover:text-cream text-3xl leading-none">×</button>
+        <div className="flex items-center gap-4">
+          <Avatar member={member} size={84} />
+          <div className="min-w-0">
+            <div className="font-display text-2xl text-cream leading-tight">{member.displayName}</div>
+            <div className="text-gold">{member.title || roleLabel(member.role)}</div>
+            {member.grade && <div className="text-cream/40 text-xs mt-0.5">Grade {member.grade}</div>}
+          </div>
+        </div>
+        <p className="text-cream/80 mt-4 whitespace-pre-line leading-relaxed">
+          {member.bio || "This board member hasn't added an intro yet."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function MeetTheBoard() {
+  const [members, setMembers] = useState(null);
+  const [sel, setSel] = useState(null);
+
+  useEffect(() => { api('/board').then((d) => setMembers(d.members)).catch(() => setMembers([])); }, []);
+  if (!members || members.length === 0) return null;
+
+  const tree = buildBoardTree(members);
+  const renderNode = (node) => (
+    <div key={node.id} className="flex flex-col items-center">
+      <button onClick={() => setSel(node)}
+        className="bg-navy2 border border-cream/15 rounded-xl px-4 py-3 flex flex-col items-center gap-2 w-36 hover:border-gold transition-colors">
+        <Avatar member={node} size={56} />
+        <div className="text-cream text-sm font-medium text-center leading-tight">{node.displayName}</div>
+        <div className="text-gold/80 text-xs text-center leading-tight">{node.title || roleLabel(node.role)}</div>
+      </button>
+      {node.children.length > 0 && <div className="w-px h-4 bg-cream/20" />}
+      {node.children.length > 0 && (
+        <div className="flex flex-wrap justify-center gap-4">{node.children.map(renderNode)}</div>
+      )}
+    </div>
+  );
+
+  return (
+    <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6">
+      <h2 className="font-display text-3xl text-gold mb-1">Meet the Board</h2>
+      <p className="text-cream/60 text-sm mb-6">Tap anyone to learn more about them.</p>
+      <div className="flex flex-col items-center gap-4 overflow-x-auto pb-2">
+        {tree.map(renderNode)}
+      </div>
+      {sel && <BoardModal member={sel} onClose={() => setSel(null)} />}
     </section>
   );
 }
@@ -1135,6 +1314,7 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
       <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-16 space-y-6">
         <AboutSection home={home} />
         {cards}
+        <MeetTheBoard />
         <GetInvolved />
       </main>
       <footer className="border-t border-cream/10 py-6 text-center text-cream/40 text-sm space-y-3">
@@ -1238,7 +1418,8 @@ function Sidebar({ me, reports, approvalsCount, submissionsCount, view, setView,
       <div className="p-3 border-t border-cream/10">
         <div className="text-sm text-cream">{me.displayName}</div>
         <div className="text-xs text-cream/40 mb-2">{me.title || roleLabel(me.role)} · {roleLabel(me.role)}</div>
-        <div className="flex gap-2">
+        <div className="flex gap-x-3 gap-y-1 flex-wrap">
+          <button onClick={() => setView({ type: 'profile' })} className="text-xs text-gold/80 hover:text-gold">Edit profile</button>
           <button onClick={() => setView({ type: 'password' })} className="text-xs text-gold/80 hover:text-gold">Change password</button>
           <button onClick={onLogout} className="text-xs text-red/80 hover:text-red ml-auto">Log out</button>
         </div>
@@ -1315,6 +1496,10 @@ function App() {
 
   if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); }} onBack={() => setEnterPortal(false)} />;
   if (me.firstLogin) return <ChangePassword user={me} forced onDone={(u) => { setMe(u); loadShared(u); }} />;
+  // Right after the password step: prompt for a profile photo + intro bio.
+  if (!me.profileComplete) return <ProfileSetup me={me} forced
+    onDone={(u) => { setMe(u); loadShared(u); }}
+    onSkip={() => setMe({ ...me, profileComplete: true })} />;
 
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
 
@@ -1330,6 +1515,7 @@ function App() {
   else if (view.type === 'org') content = <OrgChart />;
   else if (view.type === 'admin') content = <AdminPanel users={users} reload={bump} />;
   else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); setView({ type: 'mytasks' }); }} />;
+  else if (view.type === 'profile') content = <ProfileSetup me={me} onDone={(u) => { setMe(u); setView({ type: 'mytasks' }); }} />;
 
   // Navigating from the sidebar also closes the mobile drawer.
   const navigate = (v) => { setView(v); setSidebarOpen(false); };

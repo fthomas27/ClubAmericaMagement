@@ -33,6 +33,9 @@ function init() {
       firstLogin   INTEGER NOT NULL DEFAULT 1,
       canEditHome  INTEGER NOT NULL DEFAULT 0,
       grade        TEXT NOT NULL DEFAULT '',   -- for grade reps: which grade they cover (9-12)
+      photo        TEXT NOT NULL DEFAULT '',   -- profile photo as a data URL
+      bio          TEXT NOT NULL DEFAULT '',   -- self-intro paragraph(s)
+      profileComplete INTEGER NOT NULL DEFAULT 0,
       createdAt    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -83,6 +86,15 @@ function init() {
   }
   if (!cols.includes('grade')) {
     db.exec("ALTER TABLE users ADD COLUMN grade TEXT NOT NULL DEFAULT ''");
+  }
+  if (!cols.includes('photo')) {
+    db.exec("ALTER TABLE users ADD COLUMN photo TEXT NOT NULL DEFAULT ''");
+  }
+  if (!cols.includes('bio')) {
+    db.exec("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''");
+  }
+  if (!cols.includes('profileComplete')) {
+    db.exec("ALTER TABLE users ADD COLUMN profileComplete INTEGER NOT NULL DEFAULT 0");
   }
   // Migrations for newer site_settings columns.
   const siteCols = db.prepare("PRAGMA table_info(site_settings)").all().map((c) => c.name);
@@ -169,6 +181,15 @@ function seed() {
     }
     // The President, VP, and Digital Presence Manager can edit the website.
     db.prepare("UPDATE users SET canEditHome = 1 WHERE username IN ('fthomas', 'deddy', 'dhays')").run();
+
+    // Grade reps by grade (9=Freshman, 10=Sophomore, 11=Junior, 12=Senior).
+    const setGrade = db.prepare('UPDATE users SET grade = ? WHERE username = ?');
+    setGrade.run('9', 'dhuges');     // Davis Hughes — Freshman
+    setGrade.run('10', 'lmcnalley'); // Liam McNalley — Sophomore
+    setGrade.run('10', 'tsummers');  // Thomas Summers — Sophomore
+    setGrade.run('11', 'banderson'); // Ben Anderson — Junior
+    setGrade.run('11', 'nneath');    // Nola Neath — Junior
+    setGrade.run('12', 'bhastings'); // Ben Hastings — Senior
   });
   tx();
   return true;
