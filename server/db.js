@@ -32,6 +32,7 @@ function init() {
       managerId    INTEGER REFERENCES users(id) ON DELETE SET NULL,
       firstLogin   INTEGER NOT NULL DEFAULT 1,
       canEditHome  INTEGER NOT NULL DEFAULT 0,
+      grade        TEXT NOT NULL DEFAULT '',   -- for grade reps: which grade they cover (9-12)
       createdAt    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -58,14 +59,30 @@ function init() {
       podcastEnabled  INTEGER NOT NULL DEFAULT 1,
       calendarUrl     TEXT NOT NULL DEFAULT '',
       instagramUrl    TEXT NOT NULL DEFAULT '',
+      aboutText       TEXT NOT NULL DEFAULT '',
       updatedAt       TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Public "Get Involved" submissions: club-join and board applications.
+    CREATE TABLE IF NOT EXISTS submissions (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      type      TEXT NOT NULL DEFAULT 'club',  -- club | board
+      name      TEXT NOT NULL,
+      email     TEXT NOT NULL,
+      grade     TEXT NOT NULL DEFAULT '',
+      message   TEXT NOT NULL DEFAULT '',
+      handled   INTEGER NOT NULL DEFAULT 0,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
 
-  // Migration for databases created before canEditHome existed.
+  // Migrations for users columns added over time.
   const cols = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
   if (!cols.includes('canEditHome')) {
     db.exec("ALTER TABLE users ADD COLUMN canEditHome INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!cols.includes('grade')) {
+    db.exec("ALTER TABLE users ADD COLUMN grade TEXT NOT NULL DEFAULT ''");
   }
   // Migrations for newer site_settings columns.
   const siteCols = db.prepare("PRAGMA table_info(site_settings)").all().map((c) => c.name);
@@ -77,6 +94,9 @@ function init() {
   }
   if (!siteCols.includes('instagramUrl')) {
     db.exec("ALTER TABLE site_settings ADD COLUMN instagramUrl TEXT NOT NULL DEFAULT ''");
+  }
+  if (!siteCols.includes('aboutText')) {
+    db.exec("ALTER TABLE site_settings ADD COLUMN aboutText TEXT NOT NULL DEFAULT ''");
   }
 
   // Ensure the homepage row exists with friendly placeholder content.

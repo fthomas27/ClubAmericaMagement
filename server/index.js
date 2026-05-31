@@ -92,7 +92,7 @@ app.get('/api/me', authenticate, (req, res) => {
 
 // ---- Public homepage content (no auth) --------------------------------------
 function getHome() {
-  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, updatedAt FROM site_settings WHERE id = 1').get();
+  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, aboutText, updatedAt FROM site_settings WHERE id = 1').get();
   return { ...row, podcastEnabled: !!row.podcastEnabled };
 }
 app.get('/api/home', async (req, res) => {
@@ -104,8 +104,67 @@ app.get('/api/home', async (req, res) => {
   res.json({ home: { ...publicHome, calendarConfigured: !!calendarUrl }, events });
 });
 
+// Public "Get Involved" submission (club-join or board application). No auth.
+app.post('/api/submissions', (req, res) => {
+  let { type, name, email, grade, message } = req.body || {};
+  type = type === 'board' ? 'board' : 'club';
+  name = String(name || '').trim().slice(0, 120);
+  email = String(email || '').trim().slice(0, 200);
+  grade = String(grade || '').trim().slice(0, 40);
+  message = String(message || '').trim().slice(0, 2000);
+  if (!name || !email) return res.status(400).json({ error: 'Name and email are required' });
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'Please enter a valid email' });
+  db.prepare('INSERT INTO submissions (type, name, email, grade, message) VALUES (?, ?, ?, ?, ?)')
+    .run(type, name, email, grade, message);
+  res.status(201).json({ ok: true });
+});
+
 // Everything past this point requires a changed password.
 app.use('/api', authenticate, requirePasswordChanged);
+
+// ---- Get Involved submissions inbox -----------------------------------------
+// Routing/visibility:
+//  - Admins (President/VP) see ALL submissions.
+//  - A grade rep (user.grade set) sees CLUB-join submissions for their grade.
+//  - Board applications go to admins only.
+function visibleSubmissionsFor(user) {
+  if (user.role === 'admin') {
+    return db.prepare('SELECT * FROM submissions ORDER BY handled ASC, createdAt DESC').all();
+  }
+  if (user.grade) {
+    return db
+      .prepare("SELECT * FROM submissions WHERE type = 'club' AND grade = ? ORDER BY handled ASC, createdAt DESC")
+      .all(user.grade);
+  }
+  return [];
+}
+function canSeeSubmission(user, row) {
+  if (!row) return false;
+  if (user.role === 'admin') return true;
+  return row.type === 'club' && !!user.grade && row.grade === user.grade;
+}
+function canAccessSubmissions(user) {
+  return user.role === 'admin' || !!user.grade;
+}
+
+app.get('/api/submissions', (req, res) => {
+  if (!canAccessSubmissions(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  res.json({ submissions: visibleSubmissionsFor(req.user) });
+});
+
+app.post('/api/submissions/:id/handled', (req, res) => {
+  const row = db.prepare('SELECT * FROM submissions WHERE id = ?').get(Number(req.params.id));
+  if (!canSeeSubmission(req.user, row)) return res.status(403).json({ error: 'Not allowed' });
+  db.prepare('UPDATE submissions SET handled = ? WHERE id = ?').run(row.handled ? 0 : 1, row.id);
+  res.json({ submission: db.prepare('SELECT * FROM submissions WHERE id = ?').get(row.id) });
+});
+
+app.delete('/api/submissions/:id', (req, res) => {
+  const row = db.prepare('SELECT * FROM submissions WHERE id = ?').get(Number(req.params.id));
+  if (!canSeeSubmission(req.user, row)) return res.status(403).json({ error: 'Not allowed' });
+  db.prepare('DELETE FROM submissions WHERE id = ?').run(row.id);
+  res.json({ ok: true });
+});
 
 // The full settings (including the calendar URL) for authorized editors.
 app.get('/api/home/settings', (req, res) => {
@@ -119,7 +178,7 @@ function canEditHome(user) {
 }
 app.put('/api/home', (req, res) => {
   if (!canEditHome(req.user)) return res.status(403).json({ error: 'Only the Digital Presence Manager can edit the homepage' });
-  const { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl } = req.body || {};
+  const { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, aboutText } = req.body || {};
   const podcastEnabledVal = podcastEnabled === undefined ? null : (podcastEnabled ? 1 : 0);
   db.prepare(`UPDATE site_settings SET
        meetingDate = COALESCE(?, meetingDate),
@@ -129,6 +188,7 @@ app.put('/api/home', (req, res) => {
        podcastEnabled = COALESCE(?, podcastEnabled),
        calendarUrl = COALESCE(?, calendarUrl),
        instagramUrl = COALESCE(?, instagramUrl),
+       aboutText = COALESCE(?, aboutText),
        updatedAt = datetime('now')
      WHERE id = 1`)
     .run(
@@ -139,6 +199,7 @@ app.put('/api/home', (req, res) => {
       podcastEnabledVal,
       calendarUrl ?? null,
       instagramUrl ?? null,
+      aboutText ?? null,
     );
   res.json({ home: getHome() });
 });
@@ -286,11 +347,12 @@ app.post('/api/tasks/:id/reject', (req, res) => {
 
 // ---- Admin Panel ------------------------------------------------------------
 app.post('/api/admin/users', requireAdmin, (req, res) => {
-  let { firstName, lastName, role, title, managerId } = req.body || {};
+  let { firstName, lastName, role, title, managerId, grade } = req.body || {};
   firstName = (firstName || '').trim();
   lastName = (lastName || '').trim();
   if (!firstName) return res.status(400).json({ error: 'First name required' });
   role = ROLES.includes(role) ? role : 'member';
+  grade = String(grade || '').trim().slice(0, 40);
 
   const base = ((firstName[0] || '') + lastName).toLowerCase().replace(/[^a-z0-9]/g, '');
   let username = base || 'member';
@@ -300,9 +362,9 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
   }
   const displayName = lastName ? `${firstName} ${lastName}` : firstName;
   const info = db
-    .prepare(`INSERT INTO users (username, firstName, lastName, displayName, passwordHash, role, title, managerId, firstLogin)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`)
-    .run(username, firstName, lastName, displayName, bcrypt.hashSync(username, 10), role, title || '', managerId || null);
+    .prepare(`INSERT INTO users (username, firstName, lastName, displayName, passwordHash, role, title, managerId, grade, firstLogin)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
+    .run(username, firstName, lastName, displayName, bcrypt.hashSync(username, 10), role, title || '', managerId || null, grade);
 
   if (managerId) refreshRole(Number(managerId));
   res.status(201).json({ user: publicUser(getUser(info.lastInsertRowid)), defaultPassword: username });
@@ -311,15 +373,15 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
 app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
   const user = getUser(Number(req.params.id));
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { role, title, managerId } = req.body || {};
+  const { role, title, managerId, grade } = req.body || {};
   const prevManager = user.managerId;
 
   const newRole = ROLES.includes(role) ? role : user.role;
   const newManagerId = managerId === undefined ? user.managerId : (managerId || null);
   if (newManagerId === user.id) return res.status(400).json({ error: 'A user cannot manage themselves' });
 
-  db.prepare('UPDATE users SET role = ?, title = COALESCE(?, title), managerId = ? WHERE id = ?')
-    .run(newRole, title ?? null, newManagerId, user.id);
+  db.prepare('UPDATE users SET role = ?, title = COALESCE(?, title), managerId = ?, grade = COALESCE(?, grade) WHERE id = ?')
+    .run(newRole, title ?? null, newManagerId, grade ?? null, user.id);
 
   // Recompute manager flags for affected supervisors.
   if (prevManager) refreshRole(prevManager);

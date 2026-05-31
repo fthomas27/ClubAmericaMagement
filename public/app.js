@@ -493,6 +493,57 @@ function Approvals({ onChanged, refreshSignal }) {
   );
 }
 
+// "Get Involved" inbox — club-join + board-application submissions routed here.
+function SubmissionsInbox({ onChanged, refreshSignal }) {
+  const [items, setItems] = useState([]);
+  const load = useCallback(async () => {
+    const d = await api('/submissions');
+    setItems(d.submissions);
+  }, []);
+  useEffect(() => { load(); }, [load, refreshSignal]);
+
+  async function toggle(s) {
+    await api(`/submissions/${s.id}/handled`, { method: 'POST' });
+    await load();
+    onChanged && onChanged();
+  }
+  async function remove(s) {
+    if (!confirm('Delete this submission?')) return;
+    await api(`/submissions/${s.id}`, { method: 'DELETE' });
+    await load();
+    onChanged && onChanged();
+  }
+
+  return (
+    <div className="max-w-3xl">
+      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Get Involved</h1>
+      <p className="text-cream/50 mb-6">Club-join and board applications submitted from the public homepage.</p>
+      {items.length === 0 && <div className="text-cream/40">No submissions yet.</div>}
+      <div className="space-y-3">
+        {items.map((s) => (
+          <div key={s.id} className={`bg-navy2 border rounded-lg p-4 ${s.handled ? 'border-cream/10 opacity-70' : 'border-gold/30'}`}>
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="font-medium text-cream">{s.name} <span className="text-cream/40 text-sm">· {s.email}</span></div>
+              <div className="flex gap-2 flex-wrap">
+                <Badge tone={s.type === 'board' ? 'red' : 'blue'}>{s.type === 'board' ? 'Board Application' : 'Join the Club'}</Badge>
+                {s.grade && <Badge tone="gold">Grade {s.grade}</Badge>}
+                {s.handled ? <Badge tone="green">Handled</Badge> : <Badge tone="slate">New</Badge>}
+              </div>
+            </div>
+            {s.message && <div className="text-sm text-cream/70 mt-2 whitespace-pre-line">{s.message}</div>}
+            <div className="text-xs text-cream/40 mt-2">{(s.createdAt || '').replace('T', ' ').slice(0, 16)}</div>
+            <div className="flex gap-2 mt-3 items-center">
+              <a href={`mailto:${s.email}`} className="text-xs text-gold/80 hover:text-gold mr-auto">Email {s.name.split(' ')[0]}</a>
+              <Button variant={s.handled ? 'ghost' : 'gold'} onClick={() => toggle(s)}>{s.handled ? 'Reopen' : 'Mark handled'}</Button>
+              <Button variant="danger" onClick={() => remove(s)}>Delete</Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Org Chart
 // ---------------------------------------------------------------------------
@@ -605,6 +656,7 @@ function AdminPanel({ users, reload }) {
   const [title, setTitle] = useState('');
   const [role, setRole] = useState('member');
   const [managerId, setManagerId] = useState('');
+  const [grade, setGrade] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
 
@@ -613,10 +665,10 @@ function AdminPanel({ users, reload }) {
     setError(''); setNotice('');
     try {
       const d = await api('/admin/users', { method: 'POST', body: {
-        firstName: first, lastName: last, title, role, managerId: managerId ? Number(managerId) : null,
+        firstName: first, lastName: last, title, role, managerId: managerId ? Number(managerId) : null, grade,
       }});
       setNotice(`Added ${d.user.displayName} — username "${d.user.username}", default password "${d.defaultPassword}".`);
-      setFirst(''); setLast(''); setTitle(''); setRole('member'); setManagerId('');
+      setFirst(''); setLast(''); setTitle(''); setRole('member'); setManagerId(''); setGrade('');
       reload();
     } catch (err) { setError(err.message); }
   }
@@ -661,6 +713,12 @@ function AdminPanel({ users, reload }) {
             {users.map((u) => <option key={u.id} value={u.id}>{u.displayName}</option>)}
           </select>
         </Field>
+        <Field label="Grade (for grade reps — receives that grade's join forms)">
+          <select className={inputCls} value={grade} onChange={(e) => setGrade(e.target.value)}>
+            <option value="">— n/a —</option>
+            {GRADES.map((g) => <option key={g} value={g}>{g}th grade</option>)}
+          </select>
+        </Field>
         <div className="sm:col-span-2 flex items-center gap-3">
           <Button type="submit" variant="gold">Add Member</Button>
           <span className="text-xs text-cream/40">Username & default password are generated as first-initial + last name.</span>
@@ -675,7 +733,7 @@ function AdminPanel({ users, reload }) {
           <thead>
             <tr className="text-left text-cream/50 border-b border-cream/10">
               <th className="py-2 pr-3">Name</th><th className="pr-3">Username</th><th className="pr-3">Role</th>
-              <th className="pr-3">Reports To</th><th className="pr-3">First login?</th><th></th>
+              <th className="pr-3">Reports To</th><th className="pr-3">Grade</th><th className="pr-3">First login?</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -699,6 +757,13 @@ function AdminPanel({ users, reload }) {
                     value={u.managerId || ''} onChange={(e) => updateUser(u, { managerId: e.target.value ? Number(e.target.value) : null })}>
                     <option value="">— none —</option>
                     {users.filter((x) => x.id !== u.id).map((x) => <option key={x.id} value={x.id}>{x.displayName}</option>)}
+                  </select>
+                </td>
+                <td className="pr-3">
+                  <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs"
+                    value={u.grade || ''} onChange={(e) => updateUser(u, { grade: e.target.value })}>
+                    <option value="">—</option>
+                    {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
                   </select>
                 </td>
                 <td className="pr-3">{u.firstLogin ? <Badge tone="red">Yes</Badge> : <Badge tone="green">No</Badge>}</td>
@@ -858,6 +923,7 @@ function HomeEditor({ onSaved }) {
         meetingDate: form.meetingDate, meetingTime: form.meetingTime,
         meetingLocation: form.meetingLocation, podcastUrl: form.podcastUrl,
         calendarUrl: form.calendarUrl, instagramUrl: form.instagramUrl,
+        aboutText: form.aboutText,
       }});
       onSaved(d.home);
       setSaved(true);
@@ -889,6 +955,7 @@ function HomeEditor({ onSaved }) {
           <div className="sm:col-span-2"><Field label="Meeting location (fallback)"><input className={inputCls} value={form.meetingLocation || ''} onChange={set('meetingLocation')} placeholder="e.g. Room 214" /></Field></div>
           <div className="sm:col-span-2"><Field label="Podcast link (YouTube video or page URL)"><input className={inputCls} value={form.podcastUrl || ''} onChange={set('podcastUrl')} placeholder="https://www.youtube.com/watch?v=…" /></Field></div>
           <div className="sm:col-span-2"><Field label="Instagram link"><input className={inputCls} value={form.instagramUrl || ''} onChange={set('instagramUrl')} placeholder="https://www.instagram.com/yourclub" /></Field></div>
+          <div className="sm:col-span-2"><Field label="About / Mission (shown on the public homepage)"><textarea className={inputCls + ' min-h-[120px] resize-y'} value={form.aboutText || ''} onChange={set('aboutText')} placeholder="Tell visitors who Club America is and what you stand for…" /></Field></div>
           {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
           <div className="sm:col-span-2 flex gap-2">
             <Button type="submit" variant="gold">Save</Button>
@@ -897,6 +964,93 @@ function HomeEditor({ onSaved }) {
         </form>
       )}
       {error && !open && <div className="text-red text-sm mt-3">{error}</div>}
+    </section>
+  );
+}
+
+const GRADES = ['9', '10', '11', '12'];
+
+// "About Us" section, rendered only when the board has filled it in.
+function AboutSection({ home }) {
+  if (!home.aboutText) return null;
+  return (
+    <section className="bg-navy2 border border-cream/10 rounded-2xl p-6">
+      <h2 className="font-display text-2xl text-gold mb-2">About Us</h2>
+      <p className="text-cream/80 whitespace-pre-line leading-relaxed">{home.aboutText}</p>
+    </section>
+  );
+}
+
+// Public "Get Involved" — a join-the-club form and a board-application form.
+function GetInvolved() {
+  const [tab, setTab] = useState('club'); // club | board
+  const [form, setForm] = useState({ name: '', email: '', grade: '', message: '' });
+  const [error, setError] = useState('');
+  const [done, setDone] = useState(false);
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function submit(e) {
+    e.preventDefault();
+    setError('');
+    if (!form.grade) { setError('Please select your grade.'); return; }
+    try {
+      await api('/submissions', { method: 'POST', body: { ...form, type: tab } });
+      setDone(true);
+    } catch (err) { setError(err.message); }
+  }
+
+  const TabBtn = ({ id, children }) => (
+    <button type="button" onClick={() => { setTab(id); setDone(false); setError(''); }}
+      className={`px-4 py-2 rounded-md text-sm transition-colors ${tab === id ? 'bg-red text-cream' : 'bg-navy border border-cream/20 text-cream/70 hover:border-gold'}`}>
+      {children}
+    </button>
+  );
+
+  return (
+    <section className="bg-navy2 border border-gold/30 rounded-2xl p-6">
+      <h2 className="font-display text-3xl text-gold mb-1">Get Involved</h2>
+      <p className="text-cream/60 text-sm mb-4">Join the club or apply for the board — tell us your grade and we'll connect you with the right person.</p>
+
+      <div className="flex gap-2 mb-5">
+        <TabBtn id="club">Join the Club</TabBtn>
+        <TabBtn id="board">Board Application</TabBtn>
+      </div>
+
+      {done ? (
+        <div className="text-center py-6">
+          <div className="text-4xl mb-2">🎉</div>
+          <div className="font-display text-2xl text-gold">Thanks, {form.name.split(' ')[0] || 'friend'}!</div>
+          <p className="text-cream/70 mt-1">
+            {tab === 'club'
+              ? "We got your info — your grade rep or the VP will reach out soon."
+              : "We got your board application — the VP and President will be in touch."}
+          </p>
+          <button className="mt-4 text-gold/80 hover:text-gold text-sm"
+            onClick={() => { setForm({ name: '', email: '', grade: '', message: '' }); setDone(false); }}>
+            Submit another
+          </button>
+        </div>
+      ) : (
+        <form onSubmit={submit} className="grid sm:grid-cols-2 gap-4">
+          <Field label="Name"><input className={inputCls} value={form.name} onChange={set('name')} required /></Field>
+          <Field label="Email"><input type="email" className={inputCls} value={form.email} onChange={set('email')} required /></Field>
+          <Field label="Grade">
+            <select className={inputCls} value={form.grade} onChange={set('grade')} required>
+              <option value="">Select…</option>
+              {GRADES.map((g) => <option key={g} value={g}>{g}th grade</option>)}
+            </select>
+          </Field>
+          <div className="sm:col-span-2">
+            <Field label={tab === 'board' ? 'Why do you want to join the board?' : 'Anything you want us to know? (optional)'}>
+              <textarea className={inputCls + ' min-h-[90px]'} value={form.message} onChange={set('message')} />
+            </Field>
+          </div>
+          {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
+          <div className="sm:col-span-2">
+            <Button type="submit" variant="gold">{tab === 'board' ? 'Submit Application' : 'Join the Club'}</Button>
+          </div>
+        </form>
+      )}
     </section>
   );
 }
@@ -931,10 +1085,11 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
           <p className="text-cream/50 mt-1">Update what visitors see on the public homepage at <span className="text-gold/80">/home</span>.</p>
         </div>
         <HomeEditor onSaved={load} />
-        <div>
-          <div className="font-display text-2xl text-gold mb-3">Live Preview</div>
+        <div className="space-y-6">
+          <div className="font-display text-2xl text-gold">Live Preview</div>
+          <AboutSection home={home} />
           {cards}
-          {home.instagramUrl && <div className="mt-4"><InstagramLink url={home.instagramUrl} /></div>}
+          {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
         </div>
       </div>
     );
@@ -948,6 +1103,7 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
           <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Home</h1>
           <p className="text-cream/50 mt-1">This is the public-facing page at <span className="text-gold/80">/home</span>.</p>
         </div>
+        <AboutSection home={home} />
         {cards}
         {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
         {editable && <HomeEditor onSaved={load} />}
@@ -976,7 +1132,11 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
           )}
         </section>
       </div>
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-16">{cards}</main>
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-16 space-y-6">
+        <AboutSection home={home} />
+        {cards}
+        <GetInvolved />
+      </main>
       <footer className="border-t border-cream/10 py-6 text-center text-cream/40 text-sm space-y-3">
         {home.instagramUrl && (
           <div className="flex justify-center">
@@ -995,10 +1155,11 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
 // ---------------------------------------------------------------------------
 // Sidebar + Layout
 // ---------------------------------------------------------------------------
-function Sidebar({ me, reports, approvalsCount, view, setView, onLogout, open, onClose }) {
+function Sidebar({ me, reports, approvalsCount, submissionsCount, view, setView, onLogout, open, onClose }) {
   const [reportsOpen, setReportsOpen] = useState(true);
   const isManager = me.role === 'manager' || me.role === 'admin';
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
+  const canSeeSubmissions = me.role === 'admin' || !!me.grade;
 
   const NavItem = ({ active, onClick, children, badge }) => (
     <button onClick={onClick}
@@ -1061,6 +1222,12 @@ function Sidebar({ me, reports, approvalsCount, view, setView, onLogout, open, o
           </NavItem>
         )}
 
+        {canSeeSubmissions && (
+          <NavItem active={view.type === 'submissions'} onClick={() => setView({ type: 'submissions' })} badge={submissionsCount}>
+            Get Involved
+          </NavItem>
+        )}
+
         <NavItem active={view.type === 'org'} onClick={() => setView({ type: 'org' })}>Org Chart</NavItem>
 
         {me.role === 'admin' && (
@@ -1091,6 +1258,7 @@ function App() {
   const [users, setUsers] = useState([]);
   const [reports, setReports] = useState([]);
   const [approvalsCount, setApprovalsCount] = useState(0);
+  const [submissionsCount, setSubmissionsCount] = useState(0);
   const [refreshSignal, setRefreshSignal] = useState(0);
 
   const bump = () => setRefreshSignal((n) => n + 1);
@@ -1106,6 +1274,12 @@ function App() {
         setApprovalsCount(a.approvals.length);
       } else {
         setApprovalsCount(0);
+      }
+      if (user.role === 'admin' || user.grade) {
+        const s = await api('/submissions');
+        setSubmissionsCount(s.submissions.filter((x) => !x.handled).length);
+      } else {
+        setSubmissionsCount(0);
       }
     } catch (_) {}
   }, []);
@@ -1152,6 +1326,7 @@ function App() {
   else if (view.type === 'mytasks') content = <TaskPage me={me} userId={me.id} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'person') content = <TaskPage me={me} userId={view.userId} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'approvals') content = <Approvals onChanged={bump} refreshSignal={refreshSignal} />;
+  else if (view.type === 'submissions') content = <SubmissionsInbox onChanged={bump} refreshSignal={refreshSignal} />;
   else if (view.type === 'org') content = <OrgChart />;
   else if (view.type === 'admin') content = <AdminPanel users={users} reload={bump} />;
   else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); setView({ type: 'mytasks' }); }} />;
@@ -1161,7 +1336,7 @@ function App() {
 
   return (
     <div className="lg:flex">
-      <Sidebar me={me} reports={reports} approvalsCount={approvalsCount}
+      <Sidebar me={me} reports={reports} approvalsCount={approvalsCount} submissionsCount={submissionsCount}
         view={view} setView={navigate} onLogout={logout}
         open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="flex-1 min-w-0">
