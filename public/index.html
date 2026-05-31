@@ -34,9 +34,12 @@
   </script>
 
   <!-- React + Babel (no build step required) -->
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"
+    onerror="(window.__cdnErrors=window.__cdnErrors||[]).push('React')"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+    onerror="(window.__cdnErrors=window.__cdnErrors||[]).push('ReactDOM')"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"
+    onerror="(window.__cdnErrors=window.__cdnErrors||[]).push('Babel')"></script>
 
   <style>
     body { background-color: #0A1628; color: #F5F0E8; font-family: "DM Sans", sans-serif; }
@@ -45,10 +48,47 @@
     ::-webkit-scrollbar-track { background: #0A1628; }
     ::-webkit-scrollbar-thumb { background: #16294A; border-radius: 6px; }
     select option { background: #0F1E33; color: #F5F0E8; }
+    .ca-center { min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:12px; padding:24px; }
   </style>
 </head>
 <body>
-  <div id="root" class="min-h-screen"></div>
+  <div id="root" class="min-h-screen">
+    <div class="ca-center" id="ca-loading">
+      <div style="color:#C9A84C; font-family:sans-serif; font-size:18px;">Loading Club America…</div>
+    </div>
+  </div>
+
+  <!-- Watchdog: if the app never mounts (e.g. a CDN is blocked), show why instead of a blank screen. -->
+  <script>
+    window.addEventListener('error', function (e) {
+      window.__lastError = (e && e.message) ? e.message : String(e);
+    });
+    setTimeout(function () {
+      var r = document.getElementById('root');
+      if (!r || r.getAttribute('data-mounted') === '1') return; // app mounted fine
+      var missing = [];
+      if (typeof React === 'undefined') missing.push('React');
+      if (typeof ReactDOM === 'undefined') missing.push('ReactDOM');
+      if (typeof Babel === 'undefined') missing.push('the JSX compiler');
+      if (typeof tailwind === 'undefined') missing.push('Tailwind CSS');
+      var msg;
+      if (missing.length) {
+        msg = "Couldn't load required components (" + missing.join(', ') + "). This is almost always an ad-blocker or browser shield blocking scripts. Try turning OFF Brave Shields / your ad blocker for this site, or open it in another browser or network.";
+      } else if (window.__lastError) {
+        msg = 'The app hit an error: ' + window.__lastError;
+      } else {
+        msg = 'The app failed to start. Please reload.';
+      }
+      r.innerHTML =
+        '<div class="ca-center" style="font-family:sans-serif;color:#F5F0E8">' +
+        '<div style="font-size:42px">⚠️</div>' +
+        '<div style="font-size:20px;color:#C9A84C">Club America couldn\'t load</div>' +
+        '<div style="max-width:480px;color:#cbd5e1;line-height:1.5">' + msg + '</div>' +
+        '<button onclick="location.reload()" style="margin-top:8px;background:#CC1C2E;color:#F5F0E8;border:none;border-radius:8px;padding:10px 18px;font-size:14px;cursor:pointer">Reload</button>' +
+        '</div>';
+    }, 10000);
+  </script>
+
   <script type="text/babel" src="app.js" data-presets="react"></script>
 </body>
 </html>
