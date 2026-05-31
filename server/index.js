@@ -18,7 +18,7 @@ const seeded = seed();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '6mb' })); // profile photos travel as data URLs
 
 const STATUSES = ['Not Started', 'In Progress', 'Complete'];
 const ROLES = ['admin', 'manager', 'member'];
@@ -104,6 +104,15 @@ app.get('/api/home', async (req, res) => {
   res.json({ home: { ...publicHome, calendarConfigured: !!calendarUrl }, events });
 });
 
+// Public board roster for the "Meet the Board" page (no private info, no auth).
+app.get('/api/board', (req, res) => {
+  const members = db
+    .prepare('SELECT id, displayName, title, role, grade, managerId, bio, photo FROM users ORDER BY displayName')
+    .all()
+    .map((m) => ({ ...m, photo: m.photo || null }));
+  res.json({ members });
+});
+
 // Public "Get Involved" submission (club-join or board application). No auth.
 app.post('/api/submissions', (req, res) => {
   let { type, name, email, grade, message } = req.body || {};
@@ -121,6 +130,25 @@ app.post('/api/submissions', (req, res) => {
 
 // Everything past this point requires a changed password.
 app.use('/api', authenticate, requirePasswordChanged);
+
+// ---- Own profile (photo + intro bio) ----------------------------------------
+app.get('/api/me/profile', (req, res) => {
+  const row = db.prepare('SELECT photo, bio, profileComplete FROM users WHERE id = ?').get(req.user.id);
+  res.json({ photo: row.photo || '', bio: row.bio || '', profileComplete: !!row.profileComplete });
+});
+
+app.put('/api/me/profile', (req, res) => {
+  let { photo, bio } = req.body || {};
+  photo = typeof photo === 'string' ? photo : '';
+  bio = String(bio || '').trim().slice(0, 4000);
+  if (photo && !/^data:image\/(png|jpe?g|webp);base64,/.test(photo)) {
+    return res.status(400).json({ error: 'Photo must be an image' });
+  }
+  if (photo.length > 6 * 1024 * 1024) return res.status(400).json({ error: 'Photo is too large' });
+  db.prepare('UPDATE users SET photo = COALESCE(?, photo), bio = ?, profileComplete = 1 WHERE id = ?')
+    .run(photo === undefined ? null : photo, bio, req.user.id);
+  res.json({ user: publicUser(getUser(req.user.id)) });
+});
 
 // ---- Get Involved submissions inbox -----------------------------------------
 // Routing/visibility:

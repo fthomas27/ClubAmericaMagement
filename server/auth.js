@@ -8,11 +8,17 @@ function signToken(user) {
   return jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: TOKEN_TTL });
 }
 
-// Strip the password hash before sending a user to the client.
+// Strip the password hash (and the heavy photo blob) before sending a user to
+// the client. Photos are fetched only where needed (own profile, board page).
 function publicUser(u) {
   if (!u) return null;
-  const { passwordHash, ...rest } = u;
-  return { ...rest, firstLogin: !!u.firstLogin };
+  const { passwordHash, photo, ...rest } = u;
+  return {
+    ...rest,
+    firstLogin: !!u.firstLogin,
+    profileComplete: !!u.profileComplete,
+    hasPhoto: !!photo,
+  };
 }
 
 function getUserById(id) {
