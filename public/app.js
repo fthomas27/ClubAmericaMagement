@@ -160,7 +160,7 @@ function Logo({ size = 'sidebar' }) {
 // ---------------------------------------------------------------------------
 // Login + forced password change
 // ---------------------------------------------------------------------------
-function Login({ onLogin }) {
+function Login({ onLogin, onBack }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -203,6 +203,11 @@ function Login({ onLogin }) {
           <p className="text-center text-xs text-cream/40">
             First time? Your password is your username. You'll set a new one.
           </p>
+          {onBack && (
+            <button type="button" onClick={onBack} className="block mx-auto text-xs text-cream/50 hover:text-gold">
+              ← Back to homepage
+            </button>
+          )}
         </form>
       </div>
     </div>
@@ -667,6 +672,180 @@ function AdminPanel({ users, reload }) {
 }
 
 // ---------------------------------------------------------------------------
+// Public homepage (/home) + in-portal editable view
+// ---------------------------------------------------------------------------
+// Pull a YouTube video id from common URL shapes; null if it's just a page/channel.
+function ytId(url) {
+  if (!url) return null;
+  const m = String(url).match(/(?:youtube\.com\/(?:watch\?v=|embed\/|live\/)|youtu\.be\/)([\w-]{11})/);
+  return m ? m[1] : null;
+}
+
+function MeetingCard({ home }) {
+  const rows = [
+    ['Date', home.meetingDate],
+    ['Time', home.meetingTime],
+    ['Location', home.meetingLocation],
+  ];
+  return (
+    <section className="bg-navy2 border border-gold/30 rounded-2xl p-6">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-3xl text-gold">Next Meeting</h2>
+        <span className="text-red text-xl">📍</span>
+      </div>
+      <div className="mt-4 space-y-3">
+        {rows.map(([label, val]) => (
+          <div key={label}>
+            <div className="text-xs uppercase tracking-wider text-cream/50">{label}</div>
+            <div className="text-2xl text-cream font-medium">{val || '—'}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function PodcastCard({ home }) {
+  const id = ytId(home.podcastUrl);
+  return (
+    <section className="bg-navy2 border border-red/30 rounded-2xl p-6">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-3xl text-red">The Podcast</h2>
+        <span className="text-xl">🎙️</span>
+      </div>
+      <div className="mt-4 aspect-video w-full rounded-lg overflow-hidden bg-navy3 flex items-center justify-center">
+        {id ? (
+          <iframe className="w-full h-full" src={`https://www.youtube.com/embed/${id}`}
+            title="Club America Podcast" frameBorder="0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
+        ) : (
+          <div className="text-cream/40 text-sm px-4 text-center">
+            {home.podcastUrl ? 'Linked page (no inline preview)' : 'No podcast linked yet'}
+          </div>
+        )}
+      </div>
+      {home.podcastUrl && (
+        <a href={home.podcastUrl} target="_blank" rel="noopener"
+          className="mt-4 inline-block bg-gold hover:bg-gold/85 text-navy font-semibold text-sm px-4 py-2 rounded-md transition-colors">
+          ▶ Watch on YouTube
+        </a>
+      )}
+    </section>
+  );
+}
+
+function HomeEditor({ home, onSaved }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState(home);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  function start() {
+    setForm(home);
+    setError(''); setSaved(false);
+    setOpen(true);
+  }
+  async function submit(e) {
+    e.preventDefault();
+    setError('');
+    try {
+      const d = await api('/home', { method: 'PUT', body: {
+        meetingDate: form.meetingDate, meetingTime: form.meetingTime,
+        meetingLocation: form.meetingLocation, podcastUrl: form.podcastUrl,
+      }});
+      onSaved(d.home);
+      setSaved(true);
+      setOpen(false);
+    } catch (err) { setError(err.message); }
+  }
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  return (
+    <section className="bg-navy2 border border-cream/10 rounded-2xl p-6">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h2 className="font-display text-2xl text-cream">Digital Presence Manager Controls</h2>
+          <p className="text-cream/50 text-sm">You can edit the meeting details and podcast link shown on the public homepage.</p>
+        </div>
+        {!open && <Button variant="ghost" onClick={start}>Edit page</Button>}
+      </div>
+      {saved && !open && <div className="text-emerald-300 text-sm mt-3">Saved — the public homepage is updated.</div>}
+      {open && (
+        <form onSubmit={submit} className="mt-5 grid sm:grid-cols-2 gap-4">
+          <Field label="Meeting date"><input className={inputCls} value={form.meetingDate || ''} onChange={set('meetingDate')} placeholder="e.g. Thursday, June 12" /></Field>
+          <Field label="Meeting time"><input className={inputCls} value={form.meetingTime || ''} onChange={set('meetingTime')} placeholder="e.g. 3:30 PM" /></Field>
+          <div className="sm:col-span-2"><Field label="Meeting location"><input className={inputCls} value={form.meetingLocation || ''} onChange={set('meetingLocation')} placeholder="e.g. Room 214" /></Field></div>
+          <div className="sm:col-span-2"><Field label="Podcast link (YouTube video or page URL)"><input className={inputCls} value={form.podcastUrl || ''} onChange={set('podcastUrl')} placeholder="https://www.youtube.com/watch?v=…" /></Field></div>
+          {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
+          <div className="sm:col-span-2 flex gap-2">
+            <Button type="submit" variant="gold">Save</Button>
+            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
+
+function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
+  const [home, setHome] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    try { const d = await api('/home'); setHome(d.home); }
+    catch (err) { setError(err.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  if (error) return <div className="text-red p-8">{error}</div>;
+  if (!home) return <div className="text-cream/50 p-8">Loading…</div>;
+
+  const cards = (
+    <div className="grid md:grid-cols-2 gap-6">
+      <MeetingCard home={home} />
+      <PodcastCard home={home} />
+    </div>
+  );
+
+  // In-portal view: just the content, plus the editor for permitted users.
+  if (mode === 'portal') {
+    return (
+      <div className="max-w-5xl space-y-8">
+        <div>
+          <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Home</h1>
+          <p className="text-cream/50 mt-1">This is the public-facing page at <span className="text-gold/80">/home</span>.</p>
+        </div>
+        {cards}
+        {editable && <HomeEditor home={home} onSaved={setHome} />}
+      </div>
+    );
+  }
+
+  // Public landing page (full screen).
+  return (
+    <div className="min-h-screen">
+      <div style={{ background: 'radial-gradient(900px 400px at 50% -10%, rgba(204,28,46,0.25), transparent 60%)' }}>
+        <header className="max-w-5xl mx-auto px-4 sm:px-6 pt-6 flex items-center justify-between gap-3">
+          <div className="bg-white rounded-xl px-3 py-2 shadow-lg"><LogoMark big={false} /></div>
+          <Button variant="primary" onClick={onEnterPortal}>Board Portal Login →</Button>
+        </header>
+        <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-10 pb-8 text-center">
+          <h1 className="font-display text-6xl sm:text-8xl text-cream leading-none">CLUB AMERICA</h1>
+          <p className="text-gold font-display text-2xl sm:text-3xl tracking-[0.25em] mt-1">PARK CITY HIGH SCHOOL</p>
+          <p className="text-cream/70 max-w-2xl mx-auto mt-4">
+            Faith, freedom, and community. Join us at our next meeting and tune into the Club America podcast.
+          </p>
+        </section>
+      </div>
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-16">{cards}</main>
+      <footer className="border-t border-cream/10 py-6 text-center text-cream/40 text-sm">
+        Club America at Park City High School · Powered by TPUSA
+      </footer>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Sidebar + Layout
 // ---------------------------------------------------------------------------
 function Sidebar({ me, reports, approvalsCount, view, setView, onLogout, open, onClose }) {
@@ -699,6 +878,7 @@ function Sidebar({ me, reports, approvalsCount, view, setView, onLogout, open, o
       </div>
 
       <nav className="flex-1 overflow-y-auto p-3 space-y-1">
+        <NavItem active={view.type === 'home'} onClick={() => setView({ type: 'home' })}>Home</NavItem>
         <NavItem active={view.type === 'mytasks'} onClick={() => setView({ type: 'mytasks' })}>My Tasks</NavItem>
 
         {isManager && (
@@ -755,6 +935,8 @@ function App() {
   const [booted, setBooted] = useState(false);
   const [view, setView] = useState({ type: 'mytasks' });
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // The site lands on the public homepage; the portal opens on demand.
+  const [enterPortal, setEnterPortal] = useState(false);
   const [users, setUsers] = useState([]);
   const [reports, setReports] = useState([]);
   const [approvalsCount, setApprovalsCount] = useState(0);
@@ -798,14 +980,20 @@ function App() {
     localStorage.removeItem(TOKEN_KEY);
     setMe(null);
     setView({ type: 'mytasks' });
+    setEnterPortal(false);
   }
 
   if (!booted) return <div className="min-h-screen flex items-center justify-center text-cream/40">Loading…</div>;
-  if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); }} />;
+
+  // Default landing: the public homepage. The portal opens via the login button.
+  if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;
+
+  if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); }} onBack={() => setEnterPortal(false)} />;
   if (me.firstLogin) return <ChangePassword user={me} forced onDone={(u) => { setMe(u); loadShared(u); }} />;
 
   let content;
-  if (view.type === 'mytasks') content = <TaskPage me={me} userId={me.id} users={users} refreshSignal={refreshSignal} />;
+  if (view.type === 'home') content = <Home mode="portal" editable={me.role === 'admin' || !!me.canEditHome} />;
+  else if (view.type === 'mytasks') content = <TaskPage me={me} userId={me.id} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'person') content = <TaskPage me={me} userId={view.userId} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'approvals') content = <Approvals onChanged={bump} refreshSignal={refreshSignal} />;
   else if (view.type === 'org') content = <OrgChart />;

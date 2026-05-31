@@ -97,7 +97,17 @@ report in the Admin Panel, and drops back to **Member** when they have none.
 
 ## Features
 
+### Public Homepage (`/home`)
+- The site **lands on a public homepage** at `/home` — no login required — with a
+  **Board Portal Login** button for board members.
+- Shows the **next meeting** (date, time, location) and a **podcast** section that
+  embeds a YouTube video inline (or links out to a channel/page).
+- **Controlled by the Digital Presence Manager** (`dhays`) — they (and the
+  President/VP) get an edit panel on the in-portal **Home** view to update the
+  meeting details and podcast link. Everyone else sees it read-only.
+
 ### Sidebar Navigation
+- **Home** — the public homepage; Digital Presence Manager / admins can edit it here.
 - **My Tasks** — always visible.
 - **People I Manage** — managers/admins only; expands to direct reports, click a
   name to open their task page in read **+ assign** mode.

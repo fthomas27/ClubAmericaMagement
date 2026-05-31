@@ -89,8 +89,39 @@ app.get('/api/me', authenticate, (req, res) => {
   res.json({ user: publicUser(getUser(req.user.id)) });
 });
 
+// ---- Public homepage content (no auth) --------------------------------------
+function getHome() {
+  return db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, updatedAt FROM site_settings WHERE id = 1').get();
+}
+app.get('/api/home', (req, res) => {
+  res.json({ home: getHome() });
+});
+
 // Everything past this point requires a changed password.
 app.use('/api', authenticate, requirePasswordChanged);
+
+// Update homepage content — Digital Presence Manager (canEditHome) or admins.
+function canEditHome(user) {
+  return user.role === 'admin' || !!user.canEditHome;
+}
+app.put('/api/home', (req, res) => {
+  if (!canEditHome(req.user)) return res.status(403).json({ error: 'Only the Digital Presence Manager can edit the homepage' });
+  const { meetingDate, meetingTime, meetingLocation, podcastUrl } = req.body || {};
+  db.prepare(`UPDATE site_settings SET
+       meetingDate = COALESCE(?, meetingDate),
+       meetingTime = COALESCE(?, meetingTime),
+       meetingLocation = COALESCE(?, meetingLocation),
+       podcastUrl = COALESCE(?, podcastUrl),
+       updatedAt = datetime('now')
+     WHERE id = 1`)
+    .run(
+      meetingDate ?? null,
+      meetingTime ?? null,
+      meetingLocation ?? null,
+      podcastUrl ?? null,
+    );
+  res.json({ home: getHome() });
+});
 
 // ---- Directory / org --------------------------------------------------------
 app.get('/api/users', (req, res) => {
@@ -300,11 +331,7 @@ app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
 // ---- Static frontend --------------------------------------------------------
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-// Standalone homepage preview (not yet wired into the SPA). Visit /home.
-app.get('/home', (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'public', 'home-preview.html'));
-});
-
+// The SPA handles client-side routes (/, /home, etc.).
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
