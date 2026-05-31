@@ -29,6 +29,37 @@ To change the port: `PORT=4000 npm start`.
 
 ---
 
+## Deploying & Keeping Your Data (important)
+
+The app stores **everything** — accounts, password changes, tasks, and homepage
+settings — in a single SQLite file. By default that's `server/clubamerica.db`.
+
+Most hosting services use an **ephemeral disk**: the files are wiped on every
+restart or redeploy. If the database file is wiped, the app re-seeds and
+**every account is forced to reset its password again** (and tasks reset too).
+To avoid that, put the database on a **persistent volume** and point the app at
+it with the `DB_PATH` environment variable:
+
+```
+DB_PATH=/var/data/clubamerica.db
+```
+
+Host-specific setup:
+
+- **Render:** add a **Disk** (Settings → Disks), mount path e.g. `/var/data`,
+  then set the env var `DB_PATH=/var/data/clubamerica.db`.
+- **Railway:** add a **Volume**, mount it at e.g. `/data`, then set
+  `DB_PATH=/data/clubamerica.db`.
+- **Fly.io:** `fly volumes create data`, mount at `/data` in `fly.toml`, set
+  `DB_PATH=/data/clubamerica.db`.
+- **Heroku / Vercel / Netlify:** these have **no persistent disk** for SQLite —
+  use a host that supports a volume (above), or switch to a hosted database.
+
+The app auto-creates the `DB_PATH` directory on startup, so you only need the
+volume mounted and the env var set.
+
+---
+
 ## How Login Works
 
 - **Username** = first initial + last name, all lowercase (Finley Thomas → `fthomas`).

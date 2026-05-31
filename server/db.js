@@ -1,8 +1,12 @@
 const path = require('path');
+const fs = require('fs');
 const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 
+// Set DB_PATH to a persistent volume in production (e.g. /var/data/clubamerica.db)
+// so accounts, tasks, and password changes survive restarts/redeploys.
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'clubamerica.db');
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
