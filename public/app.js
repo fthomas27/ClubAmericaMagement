@@ -849,8 +849,8 @@ function HomeEditor({ onSaved }) {
     <section className="bg-navy2 border border-cream/10 rounded-2xl p-6">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h2 className="font-display text-2xl text-cream">Digital Presence Manager Controls</h2>
-          <p className="text-cream/50 text-sm">Edit the meeting details, calendar feed, and podcast link shown on the public homepage.</p>
+          <h2 className="font-display text-2xl text-cream">Website Controls</h2>
+          <p className="text-cream/50 text-sm">President, VP, and the Digital Presence Manager can edit the meeting details, calendar feed, and podcast link shown on the public homepage.</p>
         </div>
         {!open && <Button variant="ghost" onClick={start}>Edit page</Button>}
       </div>
