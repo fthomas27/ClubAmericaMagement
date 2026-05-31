@@ -99,12 +99,21 @@ report in the Admin Panel, and drops back to **Member** when they have none.
 
 ### Public Homepage (`/home`)
 - The site **lands on a public homepage** at `/home` — no login required — with a
-  **Board Portal Login** button for board members.
-- Shows the **next meeting** (date, time, location) and a **podcast** section that
-  embeds a YouTube video inline (or links out to a channel/page).
+  **Board Portal Login** button for board members. It uses the same Club America
+  logo as the rest of the app.
+- **Upcoming events:** connect an **iCal/.ics calendar feed** (e.g. a Google
+  Calendar public address) and the homepage automatically shows the **next 3
+  events** (title, date/time, location). If no calendar is connected, it falls
+  back to a manually-entered **next meeting** (date, time, location).
+- **Podcast section** embeds a YouTube video inline (or links out to a
+  channel/page).
 - **Controlled by the Digital Presence Manager** (`dhays`) — they (and the
-  President/VP) get an edit panel on the in-portal **Home** view to update the
-  meeting details and podcast link. Everyone else sees it read-only.
+  President/VP) get an edit panel on the in-portal **Home** view to set the
+  calendar feed, meeting fallback, and podcast link. Everyone else sees it
+  read-only. (The private calendar URL is never exposed on the public page.)
+- **Podcast on/off toggle:** the **Admin Panel** has a switch to hide the podcast
+  section — when off, the homepage shows an **"Under Construction"** message in
+  its place.
 
 ### Sidebar Navigation
 - **Home** — the public homepage; Digital Presence Manager / admins can edit it here.

@@ -44,6 +44,8 @@ function init() {
       meetingTime     TEXT NOT NULL DEFAULT '',
       meetingLocation TEXT NOT NULL DEFAULT '',
       podcastUrl      TEXT NOT NULL DEFAULT '',
+      podcastEnabled  INTEGER NOT NULL DEFAULT 1,
+      calendarUrl     TEXT NOT NULL DEFAULT '',
       updatedAt       TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
@@ -52,6 +54,14 @@ function init() {
   const cols = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
   if (!cols.includes('canEditHome')) {
     db.exec("ALTER TABLE users ADD COLUMN canEditHome INTEGER NOT NULL DEFAULT 0");
+  }
+  // Migrations for newer site_settings columns.
+  const siteCols = db.prepare("PRAGMA table_info(site_settings)").all().map((c) => c.name);
+  if (!siteCols.includes('podcastEnabled')) {
+    db.exec("ALTER TABLE site_settings ADD COLUMN podcastEnabled INTEGER NOT NULL DEFAULT 1");
+  }
+  if (!siteCols.includes('calendarUrl')) {
+    db.exec("ALTER TABLE site_settings ADD COLUMN calendarUrl TEXT NOT NULL DEFAULT ''");
   }
 
   // Ensure the homepage row exists with friendly placeholder content.
