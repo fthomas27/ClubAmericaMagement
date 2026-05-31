@@ -1177,4 +1177,39 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+// Catches render-time errors so the page shows a readable message, never blank.
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err, info) { console.error('App error:', err, info); }
+  render() {
+    if (this.state.err) {
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center text-center gap-3 p-6">
+          <div className="text-4xl">⚠️</div>
+          <div className="font-display text-2xl text-gold">Something went wrong</div>
+          <div className="text-cream/70 max-w-md text-sm">{String((this.state.err && this.state.err.message) || this.state.err)}</div>
+          <button onClick={() => location.reload()} className="mt-2 bg-red text-cream px-4 py-2 rounded-md text-sm">Reload</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+(function mount() {
+  const rootEl = document.getElementById('root');
+  try {
+    ReactDOM.createRoot(rootEl).render(<ErrorBoundary><App /></ErrorBoundary>);
+    rootEl.setAttribute('data-mounted', '1'); // tells the index.html watchdog we started
+  } catch (e) {
+    rootEl.setAttribute('data-mounted', '1');
+    rootEl.innerHTML =
+      '<div class="ca-center" style="font-family:sans-serif;color:#F5F0E8">' +
+      '<div style="font-size:42px">⚠️</div>' +
+      '<div style="font-size:20px;color:#C9A84C">Club America couldn\'t start</div>' +
+      '<div style="max-width:480px;color:#cbd5e1">' + ((e && e.message) || e) + '</div>' +
+      '<button onclick="location.reload()" style="margin-top:8px;background:#CC1C2E;color:#F5F0E8;border:none;border-radius:8px;padding:10px 18px;cursor:pointer">Reload</button>' +
+      '</div>';
+  }
+})();
