@@ -20,6 +20,7 @@ function init() {
       title        TEXT NOT NULL DEFAULT '',
       managerId    INTEGER REFERENCES users(id) ON DELETE SET NULL,
       firstLogin   INTEGER NOT NULL DEFAULT 1,
+      canEditHome  INTEGER NOT NULL DEFAULT 0,
       createdAt    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -35,7 +36,27 @@ function init() {
       approverId     INTEGER REFERENCES users(id) ON DELETE SET NULL,
       createdAt      TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Single-row store for the public homepage content.
+    CREATE TABLE IF NOT EXISTS site_settings (
+      id              INTEGER PRIMARY KEY CHECK (id = 1),
+      meetingDate     TEXT NOT NULL DEFAULT '',
+      meetingTime     TEXT NOT NULL DEFAULT '',
+      meetingLocation TEXT NOT NULL DEFAULT '',
+      podcastUrl      TEXT NOT NULL DEFAULT '',
+      updatedAt       TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
+
+  // Migration for databases created before canEditHome existed.
+  const cols = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
+  if (!cols.includes('canEditHome')) {
+    db.exec("ALTER TABLE users ADD COLUMN canEditHome INTEGER NOT NULL DEFAULT 0");
+  }
+
+  // Ensure the homepage row exists with friendly placeholder content.
+  db.prepare(`INSERT OR IGNORE INTO site_settings (id, meetingDate, meetingTime, meetingLocation, podcastUrl)
+              VALUES (1, 'To be announced', 'To be announced', 'To be announced', '')`).run();
 }
 
 // ---- Seed data ---------------------------------------------------------------
@@ -101,6 +122,8 @@ function seed() {
     for (const u of SEED_USERS) {
       if (u.manager) setManager.run(byUsername[u.manager], u.username);
     }
+    // The Digital Presence Manager controls the public homepage.
+    db.prepare("UPDATE users SET canEditHome = 1 WHERE username = 'dhays'").run();
   });
   tx();
   return true;
