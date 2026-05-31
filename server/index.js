@@ -92,7 +92,7 @@ app.get('/api/me', authenticate, (req, res) => {
 
 // ---- Public homepage content (no auth) --------------------------------------
 function getHome() {
-  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, updatedAt FROM site_settings WHERE id = 1').get();
+  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, updatedAt FROM site_settings WHERE id = 1').get();
   return { ...row, podcastEnabled: !!row.podcastEnabled };
 }
 app.get('/api/home', async (req, res) => {
@@ -119,7 +119,7 @@ function canEditHome(user) {
 }
 app.put('/api/home', (req, res) => {
   if (!canEditHome(req.user)) return res.status(403).json({ error: 'Only the Digital Presence Manager can edit the homepage' });
-  const { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl } = req.body || {};
+  const { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl } = req.body || {};
   const podcastEnabledVal = podcastEnabled === undefined ? null : (podcastEnabled ? 1 : 0);
   db.prepare(`UPDATE site_settings SET
        meetingDate = COALESCE(?, meetingDate),
@@ -128,6 +128,7 @@ app.put('/api/home', (req, res) => {
        podcastUrl = COALESCE(?, podcastUrl),
        podcastEnabled = COALESCE(?, podcastEnabled),
        calendarUrl = COALESCE(?, calendarUrl),
+       instagramUrl = COALESCE(?, instagramUrl),
        updatedAt = datetime('now')
      WHERE id = 1`)
     .run(
@@ -137,6 +138,7 @@ app.put('/api/home', (req, res) => {
       podcastUrl ?? null,
       podcastEnabledVal,
       calendarUrl ?? null,
+      instagramUrl ?? null,
     );
   res.json({ home: getHome() });
 });

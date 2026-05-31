@@ -718,6 +718,27 @@ function AdminPanel({ users, reload }) {
 // ---------------------------------------------------------------------------
 // Public homepage (/home) + in-portal editable view
 // ---------------------------------------------------------------------------
+function InstagramIcon({ className = 'w-5 h-5' }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="2" width="20" height="20" rx="5" ry="5" />
+      <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
+      <line x1="17.5" y1="6.5" x2="17.51" y2="6.5" />
+    </svg>
+  );
+}
+
+// A "Follow on Instagram" button, only rendered when a link is configured.
+function InstagramLink({ url, className = '' }) {
+  if (!url) return null;
+  return (
+    <a href={url} target="_blank" rel="noopener"
+      className={`inline-flex items-center gap-2 px-4 py-2 rounded-md bg-gradient-to-r from-red to-gold text-cream text-sm font-medium hover:opacity-90 transition-opacity ${className}`}>
+      <InstagramIcon className="w-4 h-4" /> Follow on Instagram
+    </a>
+  );
+}
+
 // Pull a YouTube video id from common URL shapes; null if it's just a page/channel.
 function ytId(url) {
   if (!url) return null;
@@ -836,7 +857,7 @@ function HomeEditor({ onSaved }) {
       const d = await api('/home', { method: 'PUT', body: {
         meetingDate: form.meetingDate, meetingTime: form.meetingTime,
         meetingLocation: form.meetingLocation, podcastUrl: form.podcastUrl,
-        calendarUrl: form.calendarUrl,
+        calendarUrl: form.calendarUrl, instagramUrl: form.instagramUrl,
       }});
       onSaved(d.home);
       setSaved(true);
@@ -867,6 +888,7 @@ function HomeEditor({ onSaved }) {
           <Field label="Meeting time (fallback)"><input className={inputCls} value={form.meetingTime || ''} onChange={set('meetingTime')} placeholder="e.g. 3:30 PM" /></Field>
           <div className="sm:col-span-2"><Field label="Meeting location (fallback)"><input className={inputCls} value={form.meetingLocation || ''} onChange={set('meetingLocation')} placeholder="e.g. Room 214" /></Field></div>
           <div className="sm:col-span-2"><Field label="Podcast link (YouTube video or page URL)"><input className={inputCls} value={form.podcastUrl || ''} onChange={set('podcastUrl')} placeholder="https://www.youtube.com/watch?v=…" /></Field></div>
+          <div className="sm:col-span-2"><Field label="Instagram link"><input className={inputCls} value={form.instagramUrl || ''} onChange={set('instagramUrl')} placeholder="https://www.instagram.com/yourclub" /></Field></div>
           {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
           <div className="sm:col-span-2 flex gap-2">
             <Button type="submit" variant="gold">Save</Button>
@@ -912,6 +934,7 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
         <div>
           <div className="font-display text-2xl text-gold mb-3">Live Preview</div>
           {cards}
+          {home.instagramUrl && <div className="mt-4"><InstagramLink url={home.instagramUrl} /></div>}
         </div>
       </div>
     );
@@ -926,6 +949,7 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
           <p className="text-cream/50 mt-1">This is the public-facing page at <span className="text-gold/80">/home</span>.</p>
         </div>
         {cards}
+        {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
         {editable && <HomeEditor onSaved={load} />}
       </div>
     );
@@ -945,11 +969,24 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
           <p className="text-cream/70 max-w-2xl mx-auto mt-4">
             Faith, freedom, and community. Join us at our next meeting and tune into the Club America podcast.
           </p>
+          {home.instagramUrl && (
+            <div className="mt-6 flex justify-center">
+              <InstagramLink url={home.instagramUrl} />
+            </div>
+          )}
         </section>
       </div>
       <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-16">{cards}</main>
-      <footer className="border-t border-cream/10 py-6 text-center text-cream/40 text-sm">
-        Club America at Park City High School · Powered by TPUSA
+      <footer className="border-t border-cream/10 py-6 text-center text-cream/40 text-sm space-y-3">
+        {home.instagramUrl && (
+          <div className="flex justify-center">
+            <a href={home.instagramUrl} target="_blank" rel="noopener"
+              className="inline-flex items-center gap-2 text-cream/60 hover:text-gold transition-colors">
+              <InstagramIcon className="w-5 h-5" /> @ our Instagram
+            </a>
+          </div>
+        )}
+        <div>Club America at Park City High School · Powered by TPUSA</div>
       </footer>
     </div>
   );
