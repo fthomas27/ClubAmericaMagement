@@ -46,6 +46,7 @@ function init() {
       podcastUrl      TEXT NOT NULL DEFAULT '',
       podcastEnabled  INTEGER NOT NULL DEFAULT 1,
       calendarUrl     TEXT NOT NULL DEFAULT '',
+      instagramUrl    TEXT NOT NULL DEFAULT '',
       updatedAt       TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
@@ -62,6 +63,9 @@ function init() {
   }
   if (!siteCols.includes('calendarUrl')) {
     db.exec("ALTER TABLE site_settings ADD COLUMN calendarUrl TEXT NOT NULL DEFAULT ''");
+  }
+  if (!siteCols.includes('instagramUrl')) {
+    db.exec("ALTER TABLE site_settings ADD COLUMN instagramUrl TEXT NOT NULL DEFAULT ''");
   }
 
   // Ensure the homepage row exists with friendly placeholder content.
