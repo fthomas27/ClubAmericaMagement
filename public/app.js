@@ -150,7 +150,7 @@ function Logo({ size = 'sidebar' }) {
             alt="Club America at Park City High School"
             onError={() => setFailed(true)}
             className={`object-contain ${big ? 'max-h-40 w-auto' : 'max-h-16 w-auto'}`}
-          )}
+          />
         )}
       </div>
     </div>
@@ -630,7 +630,7 @@ function PageAdminControls({ targetUser, onUpdated }) {
             )}
           </div>
 
-          <div className="py-4 pb-0">
+          <div className="py-4">
             <div className="flex items-start justify-between gap-4 mb-2">
               <div>
                 <div className="text-cream font-medium">Copyable Log Form</div>
@@ -654,6 +654,25 @@ function PageAdminControls({ targetUser, onUpdated }) {
                 {settings.formFields.length > 0 && (
                   <div className="text-xs text-cream/40">Current fields: {settings.formFields.join(', ')}</div>
                 )}
+              </div>
+            )}
+          </div>
+
+          <div className="py-4 pb-0">
+            <div className="flex items-start justify-between gap-4 mb-2">
+              <div>
+                <div className="text-cream font-medium">Bio / About Section</div>
+                <div className="text-cream/50 text-sm">A short bio or description shown at the top of their My Page.</div>
+              </div>
+              <Toggle enabled={settings.bioEnabled} onChange={() => toggle('bioEnabled')} disabled={busy} />
+            </div>
+            {settings.bioEnabled && (
+              <div className="mt-3">
+                <Field label="Bio Text">
+                  <textarea className={inputCls} rows="3" defaultValue={settings.bioText}
+                    onBlur={(e) => e.target.value !== settings.bioText && save({ bioText: e.target.value })}
+                    placeholder="e.g. Grade 11 · Public Engagement · passionate about community outreach." />
+                </Field>
               </div>
             )}
           </div>
@@ -837,6 +856,7 @@ function TaskPage({ me, userId, users, refreshSignal }) {
 
       {ps.bannerEnabled && <BannerSection title={ps.bannerTitle} url={ps.bannerUrl} />}
       {ps.announcementEnabled && <AnnouncementSection text={ps.announcementText} />}
+      {ps.bioEnabled && <BioSection text={ps.bioText} />}
       {ps.calendarEnabled && <PersonalCalendarSection userId={userId} />}
       {ps.formEnabled && <CopyableFormSection title={ps.formTitle} fields={ps.formFields} />}
 
@@ -1084,46 +1104,64 @@ function AdminPanel({ users, reload }) {
       </form>
 
       <div className="font-display text-2xl text-gold mb-3">All Members ({users.length})</div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-cream/50 border-b border-cream/10">
-              <th className="py-2 pr-3">Name</th><th className="pr-3">Username</th><th className="pr-3">Role</th>
-              <th className="pr-3">Reports To</th><th className="pr-3">First login?</th><th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id} className="border-b border-cream/5">
-                <td className="py-2 pr-3">
-                  <div className="text-cream">{u.displayName}</div>
-                  <div className="text-cream/40 text-xs">{u.title}</div>
-                </td>
-                <td className="pr-3 text-cream/70">@{u.username}</td>
-                <td className="pr-3">
-                  <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs"
-                    value={u.role} onChange={(e) => updateUser(u, { role: e.target.value })}>
-                    <option value="member">Member</option>
-                    <option value="manager">Manager</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </td>
-                <td className="pr-3">
-                  <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs"
-                    value={u.managerId || ''} onChange={(e) => updateUser(u, { managerId: e.target.value ? Number(e.target.value) : null })}>
-                    <option value="">— none —</option>
-                    {users.filter((x) => x.id !== u.id).map((x) => <option key={x.id} value={x.id}>{x.displayName}</option>)}
-                  </select>
-                </td>
-                <td className="pr-3">{u.firstLogin ? <Badge tone="red">Yes</Badge> : <Badge tone="green">No</Badge>}</td>
-                <td className="text-right whitespace-nowrap">
-                  <button onClick={() => resetPw(u)} className="text-xs text-gold/80 hover:text-gold mr-3">Reset PW</button>
-                  <button onClick={() => removeUser(u)} className="text-xs text-red/80 hover:text-red">Remove</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="space-y-3">
+        {users.map((u) => (
+          <div key={u.id} className="bg-navy2 border border-cream/10 rounded-xl p-4">
+            <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+              <div>
+                <div className="text-cream font-medium">{u.displayName}</div>
+                <div className="text-cream/40 text-xs">@{u.username}{u.title ? ` · ${u.title}` : ''}</div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {u.firstLogin ? <Badge tone="red">First login</Badge> : <Badge tone="green">Active</Badge>}
+                <button onClick={() => resetPw(u)} className="text-xs text-gold/80 hover:text-gold">Reset PW</button>
+                <button onClick={() => removeUser(u)} className="text-xs text-red/80 hover:text-red">Remove</button>
+              </div>
+            </div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+              <div>
+                <div className="text-cream/50 uppercase tracking-wider mb-1">Role</div>
+                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full"
+                  value={u.role} onChange={(e) => updateUser(u, { role: e.target.value })}>
+                  <option value="member">Member</option>
+                  <option value="manager">Manager</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <div>
+                <div className="text-cream/50 uppercase tracking-wider mb-1">Reports To</div>
+                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full"
+                  value={u.managerId || ''} onChange={(e) => updateUser(u, { managerId: e.target.value ? Number(e.target.value) : null })}>
+                  <option value="">— none —</option>
+                  {users.filter((x) => x.id !== u.id).map((x) => <option key={x.id} value={x.id}>{x.displayName}</option>)}
+                </select>
+              </div>
+              <div>
+                <div className="text-cream/50 uppercase tracking-wider mb-1">Managed Grade</div>
+                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full"
+                  value={u.managedGrade || ''} onChange={(e) => updateUser(u, { managedGrade: e.target.value ? Number(e.target.value) : null })}>
+                  <option value="">— none —</option>
+                  {[9,10,11,12].map((g) => <option key={g} value={g}>{g}th Grade</option>)}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <div className="text-cream/50 uppercase tracking-wider mb-1">Permissions</div>
+                {[
+                  { key: 'canManageRoster', label: 'Manage Roster' },
+                  { key: 'canAnnounce', label: 'Homepage Announce' },
+                  { key: 'canEditHome', label: 'Edit Website' },
+                ].map(({ key, label }) => (
+                  <label key={key} className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={!!u[key]}
+                      onChange={(e) => updateUser(u, { [key]: e.target.checked })}
+                      className="accent-gold" />
+                    <span className="text-cream/70">{label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -1213,7 +1251,8 @@ function PodcastCard({ home }) {
             ) : (
               <div className="text-cream/40 text-sm px-4 text-center">
                 {home.podcastUrl ? 'Linked page (no inline preview)' : 'No podcast linked yet'}
-            </div>
+              </div>
+            )}
           </div>
           {home.podcastUrl && (
             <a href={home.podcastUrl} target="_blank" rel="noopener"
@@ -1295,7 +1334,81 @@ function HomeEditor({ onSaved }) {
   );
 }
 
-function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
+function HomeAnnouncementBanner({ home }) {
+  if (!home.homeAnnouncementEnabled || !home.homeAnnouncement) return null;
+  return (
+    <div className="bg-red/15 border border-red/50 rounded-xl px-5 py-4 flex gap-3 items-start">
+      <span className="text-xl mt-0.5 shrink-0">📣</span>
+      <div className="text-cream whitespace-pre-wrap">{home.homeAnnouncement}</div>
+    </div>
+  );
+}
+
+function HomeAnnouncementEditor({ home, onSaved }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState(home.homeAnnouncement || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => { setText(home.homeAnnouncement || ''); }, [home.homeAnnouncement]);
+
+  async function publish() {
+    setBusy(true); setError(''); setSaved(false);
+    try {
+      const d = await api('/home/announcement', { method: 'PUT', body: { text } });
+      onSaved(d.home);
+      setSaved(true);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  if (!open) return (
+    <section className="bg-navy2 border border-cream/10 rounded-2xl p-6">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h2 className="font-display text-2xl text-cream">Homepage Announcement</h2>
+          <p className="text-cream/50 text-sm">
+            {home.homeAnnouncementEnabled
+              ? 'An announcement banner is live on the homepage.'
+              : 'No active announcement — post one to show a banner to everyone.'}
+          </p>
+        </div>
+        <Button variant="ghost" onClick={() => setOpen(true)}>
+          {home.homeAnnouncementEnabled ? 'Edit' : 'Post Announcement'}
+        </Button>
+      </div>
+    </section>
+  );
+
+  return (
+    <section className="bg-navy2 border border-cream/10 rounded-2xl p-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-2xl text-cream">Homepage Announcement</h2>
+        <button onClick={() => setOpen(false)} className="text-cream/50 hover:text-cream text-2xl leading-none">×</button>
+      </div>
+      <Field label="Announcement (leave blank to remove)">
+        <textarea className={inputCls} rows="3"
+          value={text} onChange={(e) => { setText(e.target.value); setSaved(false); }}
+          placeholder="e.g. Welcome back — chapter elections are next Tuesday at 3:30 PM." />
+      </Field>
+      {error && <div className="text-red text-sm">{error}</div>}
+      {saved && (
+        <div className="text-emerald-300 text-sm">
+          ✓ {text.trim() ? 'Announcement published — visible to everyone.' : 'Announcement removed.'}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <Button variant="gold" onClick={publish} disabled={busy}>
+          {busy ? 'Saving…' : text.trim() ? 'Publish' : 'Clear Announcement'}
+        </Button>
+        <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+      </div>
+    </section>
+  );
+}
+
+function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onBack }) {
   const [home, setHome] = useState(null);
   const [events, setEvents] = useState([]);
   const [error, setError] = useState('');
@@ -1308,6 +1421,8 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
 
   if (error) return <div className="text-red p-8">{error}</div>;
   if (!home) return <div className="text-cream/50 p-8">Loading…</div>;
+
+  const canAnnounce = me && (me.role === 'admin' || !!me.canAnnounce);
 
   const cards = (
     <div className="grid md:grid-cols-2 gap-6">
@@ -1327,13 +1442,14 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
         <HomeEditor onSaved={load} />
         <div>
           <div className="font-display text-2xl text-gold mb-3">Live Preview</div>
+          <HomeAnnouncementBanner home={home} />
           {cards}
         </div>
       </div>
     );
   }
 
-  // In-portal "Home" view: read-only look at the public page.
+  // In-portal "Home" view.
   if (mode === 'portal') {
     return (
       <div className="max-w-5xl space-y-8">
@@ -1341,7 +1457,9 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
           <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Home</h1>
           <p className="text-cream/50 mt-1">This is the public-facing page at <span className="text-gold/80">/home</span>.</p>
         </div>
+        <HomeAnnouncementBanner home={home} />
         {cards}
+        {canAnnounce && <HomeAnnouncementEditor home={home} onSaved={(h) => setHome(h)} />}
         {editable && <HomeEditor onSaved={load} />}
       </div>
     );
@@ -1363,7 +1481,12 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
           </p>
         </section>
       </div>
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-16">{cards}</main>
+      {home.homeAnnouncementEnabled && home.homeAnnouncement && (
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 pt-6">
+          <HomeAnnouncementBanner home={home} />
+        </div>
+      )}
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-16 pt-6">{cards}</main>
       <footer className="border-t border-cream/10 py-6 text-center text-cream/40 text-sm">
         Club America at Park City High School · Powered by TPUSA
       </footer>
@@ -1372,12 +1495,1024 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
 }
 
 // ---------------------------------------------------------------------------
+// Bio section (displayed on My Page when bioEnabled)
+// ---------------------------------------------------------------------------
+function BioSection({ text }) {
+  if (!text) return null;
+  return (
+    <div className="bg-navy2 border border-cream/10 rounded-xl p-5 mb-6">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-lg">👤</span>
+        <div className="font-display text-2xl text-gold">About</div>
+      </div>
+      <div className="text-cream/80 whitespace-pre-wrap leading-relaxed">{text}</div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Public Interest Survey (shown at /survey path, no auth)
+// ---------------------------------------------------------------------------
+function InterestSurvey({ onBack }) {
+  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', email: '', gender: '' });
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function submit(e) {
+    e.preventDefault();
+    setError(''); setBusy(true);
+    try {
+      await fetch('/api/roster/survey', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      }).then(async (r) => {
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Failed');
+      });
+      setSubmitted(true);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  if (submitted) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="w-full max-w-md text-center">
+          <div className="text-5xl mb-4">🎉</div>
+          <div className="font-display text-4xl text-gold mb-3">Thanks for your interest!</div>
+          <p className="text-cream/70 mb-6">
+            We've received your information. A Club America representative will be in touch soon.
+          </p>
+          <Button variant="gold" onClick={onBack}>← Back to Homepage</Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="mb-6">
+          <Logo size="login" />
+        </div>
+        <div className="font-display text-3xl text-gold mb-1">Interest Survey</div>
+        <p className="text-cream/60 text-sm mb-6">
+          Interested in Club America at Park City High School? Fill out this short form and we'll reach out.
+        </p>
+        <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="First Name *">
+              <input className={inputCls} value={form.firstName} onChange={set('firstName')} required autoFocus />
+            </Field>
+            <Field label="Last Name">
+              <input className={inputCls} value={form.lastName} onChange={set('lastName')} />
+            </Field>
+          </div>
+          <Field label="Phone Number">
+            <input className={inputCls} type="tel" value={form.phone} onChange={set('phone')} placeholder="(435) 555-0100" />
+          </Field>
+          <Field label="Email">
+            <input className={inputCls} type="email" value={form.email} onChange={set('email')} placeholder="you@example.com" />
+          </Field>
+          <Field label="Gender">
+            <select className={inputCls} value={form.gender} onChange={set('gender')}>
+              <option value="">Prefer not to say</option>
+              <option value="Male">Male</option>
+              <option value="Female">Female</option>
+            </select>
+          </Field>
+          {error && <div className="text-red text-sm">{error}</div>}
+          <Button type="submit" variant="gold" className="w-full" disabled={busy}>
+            {busy ? 'Submitting…' : 'Submit'}
+          </Button>
+          <button type="button" onClick={onBack} className="block mx-auto text-xs text-cream/50 hover:text-gold">
+            ← Back to homepage
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Roster Page
+// ---------------------------------------------------------------------------
+const ROSTER_STATUSES = ['Prospect', 'Contacted', 'Onboarded', 'Declined'];
+
+function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
+  const [busy, setBusy] = useState(false);
+  const [converting, setConverting] = useState(false);
+  const [convertForm, setConvertForm] = useState({ grade: member.grade || '', roleDescription: member.roleDescription || '' });
+
+  async function act(action, body) {
+    setBusy(true);
+    try { await onAction(member.id, action, body); }
+    finally { setBusy(false); }
+  }
+
+  const statusColors = {
+    Prospect: 'slate', Contacted: 'blue', Onboarded: 'green', Declined: 'red',
+  };
+
+  return (
+    <div className="bg-navy2 border border-cream/10 rounded-lg p-4">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <div className="font-medium text-cream">{member.firstName} {member.lastName}</div>
+          <div className="text-sm text-cream/50 mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
+            {member.grade && <span>Grade {member.grade}</span>}
+            {member.gender && <span>{member.gender}</span>}
+            {member.phone && <span>{member.phone}</span>}
+            {member.email && <span>{member.email}</span>}
+          </div>
+          {member.roleDescription && <div className="text-xs text-cream/40 mt-1">{member.roleDescription}</div>}
+          {member.notes && <div className="text-xs text-gold/60 mt-1 italic">{member.notes}</div>}
+          {member.claimedByName && (
+            <div className="text-xs text-cream/40 mt-1">Managed by {member.claimedByName}</div>
+          )}
+        </div>
+        <Badge tone={statusColors[member.status] || 'slate'}>{member.status}</Badge>
+      </div>
+
+      <div className="flex items-center gap-2 mt-3 flex-wrap">
+        {member.status === 'Prospect' && (
+          <>
+            {!member.claimedByUserId && (
+              <Button variant="gold" className="text-xs px-3 py-1" onClick={() => act('claim')} disabled={busy}>
+                Manage This
+              </Button>
+            )}
+            {(member.claimedByUserId === me.id || me.role === 'admin' || me.role === 'manager') && (
+              <Button variant="ghost" className="text-xs px-3 py-1" onClick={() => act('contacted')} disabled={busy}>
+                Mark Contacted
+              </Button>
+            )}
+          </>
+        )}
+        {member.status === 'Contacted' && (member.claimedByUserId === me.id || me.role === 'admin' || me.role === 'manager') && (
+          <>
+            {!converting ? (
+              <>
+                <Button variant="gold" className="text-xs px-3 py-1" onClick={() => setConverting(true)} disabled={busy}>
+                  They Joined ✓
+                </Button>
+                <Button variant="danger" className="text-xs px-3 py-1" onClick={() => act('decline')} disabled={busy}>
+                  Not Joining
+                </Button>
+              </>
+            ) : (
+              <div className="w-full mt-2 bg-navy border border-gold/30 rounded-lg p-3 space-y-2">
+                <div className="text-sm text-gold font-medium">Confirm Onboarding</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="Grade">
+                    <input className={inputCls} type="number" min="9" max="12"
+                      value={convertForm.grade} onChange={(e) => setConvertForm((f) => ({ ...f, grade: e.target.value }))} />
+                  </Field>
+                  <Field label="Role / Position">
+                    <input className={inputCls} value={convertForm.roleDescription}
+                      onChange={(e) => setConvertForm((f) => ({ ...f, roleDescription: e.target.value }))}
+                      placeholder="e.g. Grade Rep" />
+                  </Field>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="gold" className="text-xs px-3 py-1" onClick={() => act('convert', convertForm)} disabled={busy}>Confirm</Button>
+                  <Button variant="ghost" className="text-xs px-3 py-1" onClick={() => setConverting(false)}>Cancel</Button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+        {onEdit && (me.role === 'admin' || me.role === 'manager') && (
+          <button onClick={() => onEdit(member)} className="text-xs text-gold/60 hover:text-gold ml-auto">Edit</button>
+        )}
+        {canDelete && (
+          <button onClick={() => onAction(member.id, 'delete')} className="text-xs text-red/60 hover:text-red">Delete</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AddRosterMemberForm({ me, onCreated }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', roleDescription: '', status: 'Prospect', notes: '' });
+  const [error, setError] = useState('');
+
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function submit(e) {
+    e.preventDefault(); setError('');
+    try {
+      await api('/roster', { method: 'POST', body: { ...form, grade: form.grade ? Number(form.grade) : null } });
+      setForm({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', roleDescription: '', status: 'Prospect', notes: '' });
+      setOpen(false); onCreated();
+    } catch (err) { setError(err.message); }
+  }
+
+  if (!open) return <Button variant="ghost" onClick={() => setOpen(true)}>+ Add Member</Button>;
+  return (
+    <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3">
+      <div className="font-display text-xl text-gold">Add Roster Member</div>
+      <div className="grid sm:grid-cols-2 gap-3">
+        <Field label="First Name *"><input className={inputCls} value={form.firstName} onChange={set('firstName')} required autoFocus /></Field>
+        <Field label="Last Name"><input className={inputCls} value={form.lastName} onChange={set('lastName')} /></Field>
+        <Field label="Phone"><input className={inputCls} value={form.phone} onChange={set('phone')} /></Field>
+        <Field label="Email"><input className={inputCls} type="email" value={form.email} onChange={set('email')} /></Field>
+        <Field label="Grade">
+          <select className={inputCls} value={form.grade} onChange={set('grade')}>
+            <option value="">—</option>
+            {[9,10,11,12].map((g) => <option key={g} value={g}>{g}th</option>)}
+          </select>
+        </Field>
+        <Field label="Gender">
+          <select className={inputCls} value={form.gender} onChange={set('gender')}>
+            <option value="">—</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+          </select>
+        </Field>
+        <Field label="Role Description"><input className={inputCls} value={form.roleDescription} onChange={set('roleDescription')} placeholder="e.g. Grade Rep" /></Field>
+        <Field label="Status">
+          <select className={inputCls} value={form.status} onChange={set('status')}>
+            {ROSTER_STATUSES.map((s) => <option key={s}>{s}</option>)}
+          </select>
+        </Field>
+        <div className="sm:col-span-2"><Field label="Notes"><textarea className={inputCls} rows="2" value={form.notes} onChange={set('notes')} /></Field></div>
+      </div>
+      {error && <div className="text-red text-sm">{error}</div>}
+      <div className="flex gap-2">
+        <Button type="submit" variant="gold">Add</Button>
+        <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+      </div>
+    </form>
+  );
+}
+
+function EditRosterMemberModal({ member, onSaved, onClose }) {
+  const [form, setForm] = useState({
+    firstName: member.firstName, lastName: member.lastName,
+    phone: member.phone, email: member.email,
+    grade: member.grade || '', gender: member.gender,
+    roleDescription: member.roleDescription, status: member.status, notes: member.notes,
+  });
+  const [error, setError] = useState('');
+
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function submit(e) {
+    e.preventDefault(); setError('');
+    try {
+      await api(`/roster/${member.id}`, { method: 'PATCH', body: { ...form, grade: form.grade ? Number(form.grade) : null } });
+      onSaved(); onClose();
+    } catch (err) { setError(err.message); }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+      <form onSubmit={submit} className="w-full max-w-lg bg-navy2 border border-cream/10 rounded-xl p-5 space-y-3 max-h-screen overflow-y-auto">
+        <div className="flex items-center justify-between">
+          <div className="font-display text-xl text-gold">Edit Member</div>
+          <button type="button" onClick={onClose} className="text-cream/50 hover:text-cream text-2xl leading-none">×</button>
+        </div>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <Field label="First Name *"><input className={inputCls} value={form.firstName} onChange={set('firstName')} required /></Field>
+          <Field label="Last Name"><input className={inputCls} value={form.lastName} onChange={set('lastName')} /></Field>
+          <Field label="Phone"><input className={inputCls} value={form.phone} onChange={set('phone')} /></Field>
+          <Field label="Email"><input className={inputCls} type="email" value={form.email} onChange={set('email')} /></Field>
+          <Field label="Grade">
+            <select className={inputCls} value={form.grade} onChange={set('grade')}>
+              <option value="">—</option>
+              {[9,10,11,12].map((g) => <option key={g} value={g}>{g}th</option>)}
+            </select>
+          </Field>
+          <Field label="Gender">
+            <select className={inputCls} value={form.gender} onChange={set('gender')}>
+              <option value="">—</option>
+              <option value="Male">Male</option>
+              <option value="Female">Female</option>
+            </select>
+          </Field>
+          <Field label="Role Description"><input className={inputCls} value={form.roleDescription} onChange={set('roleDescription')} /></Field>
+          <Field label="Status">
+            <select className={inputCls} value={form.status} onChange={set('status')}>
+              {ROSTER_STATUSES.map((s) => <option key={s}>{s}</option>)}
+            </select>
+          </Field>
+          <div className="sm:col-span-2"><Field label="Notes"><textarea className={inputCls} rows="2" value={form.notes} onChange={set('notes')} /></Field></div>
+        </div>
+        {error && <div className="text-red text-sm">{error}</div>}
+        <div className="flex gap-2">
+          <Button type="submit" variant="gold">Save</Button>
+          <Button variant="ghost" onClick={onClose} type="button">Cancel</Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Grade Rep Recruitment Leaderboard
+// ---------------------------------------------------------------------------
+function GradeRepLeaderboard({ me }) {
+  const [board, setBoard] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api('/roster/leaderboard')
+      .then((d) => { setBoard(d.leaderboard || []); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  if (loading || board.length === 0) return null;
+
+  const leader = board[0];
+  const myEntry = board.find((r) => r.id === me.id);
+
+  const medals = ['🥇', '🥈', '🥉'];
+
+  return (
+    <div className="bg-navy2 border-2 border-gold/60 rounded-2xl p-5 mb-8">
+      {/* Prize banner */}
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
+        <div className="text-3xl">🏆</div>
+        <div className="flex-1 min-w-0">
+          <div className="font-display text-2xl text-gold leading-tight">Grade Rep Recruitment Challenge</div>
+          <div className="text-cream/70 text-sm mt-0.5">
+            The rep who brings in the most new members by year-end wins a{' '}
+            <span className="text-gold font-semibold">$50 Amazon gift card</span>. Keep recruiting!
+          </div>
+        </div>
+        {leader.count > 0 && (
+          <div className="bg-gold/15 border border-gold/40 rounded-xl px-4 py-2 text-center shrink-0">
+            <div className="text-xs text-gold/70 uppercase tracking-wider">Current Leader</div>
+            <div className="font-display text-xl text-gold leading-tight">{leader.displayName}</div>
+            <div className="text-xs text-cream/60">{leader.count} onboarded</div>
+          </div>
+        )}
+      </div>
+
+      {/* Ranked list */}
+      <div className="space-y-2">
+        {board.map((rep, i) => {
+          const isMe = rep.id === me.id;
+          const isLeader = i === 0 && rep.count > 0;
+          return (
+            <div key={rep.id}
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-colors ${
+                isLeader ? 'bg-gold/15 border border-gold/40' :
+                isMe ? 'bg-navy border border-cream/20' : 'bg-navy/40'
+              }`}>
+              <div className={`font-display text-xl w-8 text-center shrink-0 ${isLeader ? 'text-gold' : 'text-cream/40'}`}>
+                {medals[i] || `${i + 1}`}
+              </div>
+              <div className="flex-1 min-w-0">
+                <span className={`font-medium ${isMe ? 'text-gold' : 'text-cream'}`}>
+                  {rep.displayName}
+                  {isMe && <span className="text-xs text-cream/50 ml-1">(you)</span>}
+                </span>
+                {rep.managedGrade && (
+                  <span className="text-xs text-cream/40 ml-2">Grade {rep.managedGrade}</span>
+                )}
+              </div>
+              <div className={`font-display text-2xl shrink-0 ${isLeader ? 'text-gold' : 'text-cream/60'}`}>
+                {rep.count}
+              </div>
+              <div className="text-xs text-cream/40 shrink-0">onboarded</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {myEntry && (
+        <div className="mt-3 text-xs text-cream/40 text-center">
+          You've onboarded {myEntry.count} member{myEntry.count !== 1 ? 's' : ''} this year.
+          {myEntry.count < leader.count && leader.id !== me.id && (
+            <> You're {leader.count - myEntry.count} behind the leader — keep going!</>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RosterPage({ me }) {
+  const [members, setMembers] = useState([]);
+  const [myGrade, setMyGrade] = useState(null);
+  const [gradeFilter, setGradeFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [tab, setTab] = useState('all');
+  const [editing, setEditing] = useState(null);
+  const [error, setError] = useState('');
+
+  const isPrivileged = me.role === 'admin' || me.role === 'manager';
+
+  const load = useCallback(async () => {
+    setError('');
+    try {
+      const params = new URLSearchParams();
+      if (gradeFilter) params.set('grade', gradeFilter);
+      if (statusFilter) params.set('status', statusFilter);
+      const d = await api('/roster' + (params.toString() ? '?' + params : ''));
+      setMembers(d.members || []);
+      if (d.myGrade && !gradeFilter) setMyGrade(d.myGrade);
+    } catch (err) { setError(err.message); }
+  }, [gradeFilter, statusFilter]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Grade reps default to their assigned grade filter
+  useEffect(() => {
+    if (me.managedGrade && !isPrivileged) setGradeFilter(String(me.managedGrade));
+  }, [me.managedGrade, isPrivileged]);
+
+  async function handleAction(memberId, action, body) {
+    if (action === 'delete') {
+      if (!confirm('Delete this member from the roster?')) return;
+      await api(`/roster/${memberId}`, { method: 'DELETE' });
+    } else {
+      await api(`/roster/${memberId}/${action}`, { method: 'POST', body: body || undefined });
+    }
+    load();
+  }
+
+  const tabFilteredMembers = useMemo(() => {
+    if (tab === 'pipeline') return members.filter((m) => m.status === 'Prospect' || m.status === 'Contacted');
+    if (tab === 'members') return members.filter((m) => m.status === 'Onboarded');
+    if (tab === 'declined') return members.filter((m) => m.status === 'Declined');
+    return members;
+  }, [members, tab]);
+
+  const counts = useMemo(() => ({
+    all: members.length,
+    pipeline: members.filter((m) => m.status === 'Prospect' || m.status === 'Contacted').length,
+    members: members.filter((m) => m.status === 'Onboarded').length,
+    declined: members.filter((m) => m.status === 'Declined').length,
+  }), [members]);
+
+  const tabs = [
+    { key: 'all', label: 'All' },
+    { key: 'pipeline', label: 'Leads Pipeline' },
+    { key: 'members', label: 'Members' },
+    { key: 'declined', label: 'Declined' },
+  ];
+
+  return (
+    <div className="max-w-4xl">
+      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Roster</h1>
+      <p className="text-cream/50 mb-6">Club America recruitment pipeline and member directory.</p>
+
+      <GradeRepLeaderboard me={me} />
+
+      {error && <div className="text-red text-sm mb-4">{error}</div>}
+
+      <div className="flex flex-wrap gap-3 mb-4">
+        {isPrivileged ? (
+          <Field label="Filter by Grade">
+            <select className="bg-navy border border-cream/20 rounded-md px-3 py-2 text-sm text-cream"
+              value={gradeFilter} onChange={(e) => setGradeFilter(e.target.value)}>
+              <option value="">All Grades</option>
+              {[9,10,11,12].map((g) => <option key={g} value={g}>{g}th Grade</option>)}
+            </select>
+          </Field>
+        ) : (
+          <Field label="Grade">
+            <select className="bg-navy border border-cream/20 rounded-md px-3 py-2 text-sm text-cream"
+              value={gradeFilter} onChange={(e) => setGradeFilter(e.target.value)}>
+              {[9,10,11,12].map((g) => <option key={g} value={g}>{g}th Grade</option>)}
+            </select>
+          </Field>
+        )}
+      </div>
+
+      <div className="flex gap-1 mb-5 flex-wrap">
+        {tabs.map((t) => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${tab === t.key ? 'bg-red text-cream' : 'bg-navy2 border border-cream/15 text-cream/70 hover:border-cream/30'}`}>
+            {t.label} <span className="text-xs opacity-60">({counts[t.key]})</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="space-y-3 mb-6">
+        {tabFilteredMembers.length === 0 && (
+          <div className="text-cream/40 py-8 text-center">No entries here.</div>
+        )}
+        {tabFilteredMembers.map((m) => (
+          <RosterMemberRow key={m.id} member={m} me={me}
+            onAction={handleAction}
+            onEdit={isPrivileged ? (m) => setEditing(m) : null}
+            canDelete={isPrivileged} />
+        ))}
+      </div>
+
+      {(isPrivileged || !!me.canManageRoster) && (
+        <AddRosterMemberForm me={me} onCreated={load} />
+      )}
+
+      {editing && (
+        <EditRosterMemberModal member={editing} onSaved={load} onClose={() => setEditing(null)} />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Weekly Check-In Page
+// ---------------------------------------------------------------------------
+function WeeklyCheckinPage({ me }) {
+  const [enabled, setEnabled] = useState(null);
+  const [weekOf, setWeekOf] = useState('');
+  const [content, setContent] = useState('');
+  const [existing, setExisting] = useState(null);
+  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const isManager = me.role === 'admin' || me.role === 'manager';
+
+  const load = useCallback(async () => {
+    setError('');
+    try {
+      const d = await api('/checkins/my');
+      setEnabled(d.enabled);
+      setWeekOf(d.weekOf);
+      if (d.checkin) { setExisting(d.checkin); setContent(d.checkin.content); }
+      else { setExisting(null); setContent(''); }
+    } catch (err) { setError(err.message); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function toggleEnabled() {
+    setBusy(true);
+    try {
+      const d = await api('/checkins/settings', { method: 'PUT', body: { enabled: !enabled } });
+      setEnabled(d.enabled);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function submit(e) {
+    e.preventDefault(); setError(''); setSaved(false); setBusy(true);
+    try {
+      await api('/checkins', { method: 'POST', body: { content } });
+      setSaved(true); load();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  function fmtWeek(iso) {
+    if (!iso) return '';
+    const d = new Date(iso + 'T12:00:00');
+    return d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+  }
+
+  return (
+    <div className="max-w-2xl">
+      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Weekly Check-In</h1>
+      <p className="text-cream/50 mb-6">
+        Submit your weekly update. You can edit it any time before the week ends.
+      </p>
+
+      {isManager && enabled !== null && (
+        <div className="bg-navy2 border border-cream/10 rounded-xl p-4 mb-6 flex items-center justify-between gap-4">
+          <div>
+            <div className="text-cream font-medium">Check-Ins Enabled</div>
+            <div className="text-cream/50 text-sm">{enabled ? 'Members can currently submit check-ins.' : 'Check-ins are currently disabled.'}</div>
+          </div>
+          <Toggle enabled={enabled} onChange={toggleEnabled} disabled={busy} />
+        </div>
+      )}
+
+      {error && <div className="text-red text-sm mb-4">{error}</div>}
+
+      {enabled === false && !isManager && (
+        <div className="text-cream/50 bg-navy2 border border-cream/10 rounded-xl p-6 text-center">
+          Weekly check-ins are currently disabled. Check back later.
+        </div>
+      )}
+
+      {(enabled || isManager) && enabled !== null && (
+        <div className="bg-navy2 border border-cream/10 rounded-xl p-5">
+          <div className="text-sm text-cream/50 mb-3">
+            Week of {fmtWeek(weekOf)}
+            {existing && <span className="ml-2 text-emerald-300">· Submitted</span>}
+          </div>
+          <form onSubmit={submit} className="space-y-4">
+            <Field label="Your update this week">
+              <textarea className={inputCls} rows="6" value={content}
+                onChange={(e) => { setContent(e.target.value); setSaved(false); }}
+                placeholder="What did you accomplish this week? Any blockers? Wins to share?" />
+            </Field>
+            {saved && <div className="text-emerald-300 text-sm">✓ {existing ? 'Updated' : 'Submitted'} successfully.</div>}
+            <Button type="submit" variant="gold" disabled={busy || !content.trim()}>
+              {busy ? 'Saving…' : existing ? 'Update Check-In' : 'Submit Check-In'}
+            </Button>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Funding Request Page
+// ---------------------------------------------------------------------------
+function FundingRequestPage({ me }) {
+  const [requests, setRequests] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ title: '', description: '', amount: '' });
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState(false);
+  const isPrivileged = me.role === 'admin' || me.role === 'manager';
+
+  const load = useCallback(async () => {
+    try { const d = await api('/funding'); setRequests(d.requests || []); }
+    catch (err) { setError(err.message); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function submit(e) {
+    e.preventDefault(); setError(''); setNotice(''); setBusy(true);
+    try {
+      await api('/funding', { method: 'POST', body: { ...form, amount: Number(form.amount) || 0 } });
+      setForm({ title: '', description: '', amount: '' });
+      setOpen(false); setNotice('Funding request submitted!'); load();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function reviewAction(id, action, reviewNotes) {
+    setBusy(true);
+    try { await api(`/funding/${id}`, { method: 'PATCH', body: { action, reviewNotes } }); load(); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  const statusColors = { pending: 'slate', approved: 'green', denied: 'red', purchased: 'blue' };
+
+  return (
+    <div className="max-w-4xl">
+      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Funding Requests</h1>
+      <p className="text-cream/50 mb-6">
+        {isPrivileged ? 'Review and manage all funding requests.' : 'Submit a request and track its status.'}
+      </p>
+
+      {error && <div className="text-red text-sm mb-4">{error}</div>}
+      {notice && <div className="text-emerald-300 text-sm mb-4">{notice}</div>}
+
+      <div className="mb-6">
+        {!open ? (
+          <Button variant="gold" onClick={() => setOpen(true)}>+ New Funding Request</Button>
+        ) : (
+          <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3">
+            <div className="font-display text-xl text-gold">New Funding Request</div>
+            <Field label="Title *"><input className={inputCls} value={form.title} onChange={set('title')} required autoFocus placeholder="e.g. Flyers for fall recruitment" /></Field>
+            <Field label="Description"><textarea className={inputCls} rows="3" value={form.description} onChange={set('description')} placeholder="What is this for? Why is it needed?" /></Field>
+            <Field label="Amount ($)"><input className={inputCls} type="number" min="0" step="0.01" value={form.amount} onChange={set('amount')} placeholder="0.00" /></Field>
+            <div className="flex gap-2">
+              <Button type="submit" variant="gold" disabled={busy}>Submit</Button>
+              <Button variant="ghost" onClick={() => setOpen(false)} type="button">Cancel</Button>
+            </div>
+          </form>
+        )}
+      </div>
+
+      {requests.length === 0 && <div className="text-cream/40">No funding requests yet.</div>}
+      <div className="space-y-3">
+        {requests.map((r) => (
+          <div key={r.id} className="bg-navy2 border border-cream/10 rounded-xl p-4">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <div className="font-medium text-cream">{r.title}</div>
+                {r.description && <div className="text-sm text-cream/60 mt-1">{r.description}</div>}
+                <div className="text-xs text-cream/40 mt-2">
+                  By {r.submitterName} · ${Number(r.amount).toFixed(2)}
+                  {r.reviewerName && <> · Reviewed by {r.reviewerName}</>}
+                  {r.reviewNotes && <> · "{r.reviewNotes}"</>}
+                </div>
+              </div>
+              <Badge tone={statusColors[r.status] || 'slate'}>{r.status}</Badge>
+            </div>
+            {isPrivileged && r.status === 'pending' && (
+              <div className="flex gap-2 mt-3">
+                <Button variant="gold" className="text-xs px-3 py-1" onClick={() => reviewAction(r.id, 'approve')} disabled={busy}>Approve</Button>
+                <Button variant="danger" className="text-xs px-3 py-1" onClick={() => reviewAction(r.id, 'deny')} disabled={busy}>Deny</Button>
+              </div>
+            )}
+            {isPrivileged && r.status === 'approved' && (
+              <div className="flex gap-2 mt-3">
+                <Button variant="ghost" className="text-xs px-3 py-1" onClick={() => reviewAction(r.id, 'purchased')} disabled={busy}>Mark Purchased</Button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Board Applications Page
+// ---------------------------------------------------------------------------
+function BoardApplicationsPage({ me }) {
+  const [apps, setApps] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ positionTitle: '', statement: '' });
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState(false);
+  const isPrivileged = me.role === 'admin' || me.role === 'manager';
+
+  const load = useCallback(async () => {
+    try { const d = await api('/board-apps'); setApps(d.applications || []); }
+    catch (err) { setError(err.message); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function submit(e) {
+    e.preventDefault(); setError(''); setNotice(''); setBusy(true);
+    try {
+      await api('/board-apps', { method: 'POST', body: form });
+      setForm({ positionTitle: '', statement: '' });
+      setOpen(false); setNotice('Application submitted!'); load();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function reviewAction(id, action) {
+    setBusy(true);
+    try { await api(`/board-apps/${id}`, { method: 'PATCH', body: { action } }); load(); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  const statusColors = { pending: 'slate', accepted: 'green', declined: 'red' };
+
+  return (
+    <div className="max-w-3xl">
+      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Board Applications</h1>
+      <p className="text-cream/50 mb-6">
+        Apply for a leadership position. {isPrivileged ? 'Review incoming applications below.' : ''}
+      </p>
+
+      {error && <div className="text-red text-sm mb-4">{error}</div>}
+      {notice && <div className="text-emerald-300 text-sm mb-4">{notice}</div>}
+
+      <div className="mb-6">
+        {!open ? (
+          <Button variant="gold" onClick={() => setOpen(true)}>+ Apply for a Position</Button>
+        ) : (
+          <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3">
+            <div className="font-display text-xl text-gold">New Application</div>
+            <Field label="Position Title *">
+              <input className={inputCls} value={form.positionTitle} onChange={set('positionTitle')} required autoFocus
+                placeholder="e.g. Vice President, CFO, Grade Rep" />
+            </Field>
+            <Field label="Personal Statement">
+              <textarea className={inputCls} rows="4" value={form.statement} onChange={set('statement')}
+                placeholder="Why do you want this position? What makes you a strong candidate?" />
+            </Field>
+            <div className="flex gap-2">
+              <Button type="submit" variant="gold" disabled={busy}>Submit</Button>
+              <Button variant="ghost" onClick={() => setOpen(false)} type="button">Cancel</Button>
+            </div>
+          </form>
+        )}
+      </div>
+
+      {apps.length === 0 && <div className="text-cream/40">No applications yet.</div>}
+      <div className="space-y-3">
+        {apps.map((a) => (
+          <div key={a.id} className="bg-navy2 border border-cream/10 rounded-xl p-4">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <div className="font-medium text-cream">{a.positionTitle}</div>
+                {isPrivileged && (
+                  <div className="text-sm text-gold/80 mt-0.5">{a.applicantName}{a.applicantTitle ? ` · ${a.applicantTitle}` : ''}</div>
+                )}
+                {a.statement && <div className="text-sm text-cream/60 mt-1 whitespace-pre-wrap">{a.statement}</div>}
+                <div className="text-xs text-cream/40 mt-2">{new Date(a.createdAt).toLocaleDateString()}</div>
+              </div>
+              <Badge tone={statusColors[a.status] || 'slate'}>{a.status}</Badge>
+            </div>
+            {isPrivileged && a.status === 'pending' && (
+              <div className="flex gap-2 mt-3">
+                <Button variant="gold" className="text-xs px-3 py-1" onClick={() => reviewAction(a.id, 'accept')} disabled={busy}>Accept</Button>
+                <Button variant="danger" className="text-xs px-3 py-1" onClick={() => reviewAction(a.id, 'decline')} disabled={busy}>Decline</Button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Admin Dashboard (managers + admins only)
+// ---------------------------------------------------------------------------
+function AdminDashboardPage({ me }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [checkinEnabled, setCheckinEnabled] = useState(null);
+
+  const load = useCallback(async () => {
+    setError('');
+    try {
+      const [d, s] = await Promise.all([api('/dashboard'), api('/checkins/settings')]);
+      setData(d);
+      setCheckinEnabled(s.enabled);
+    } catch (err) { setError(err.message); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function fundingAction(id, action) {
+    setBusy(true);
+    try { await api(`/funding/${id}`, { method: 'PATCH', body: { action } }); load(); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function appAction(id, action) {
+    setBusy(true);
+    try { await api(`/board-apps/${id}`, { method: 'PATCH', body: { action } }); load(); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function taskAction(task, action) {
+    setBusy(true);
+    try { await api(`/tasks/${task.id}/${action}`, { method: 'POST' }); load(); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function toggleCheckins() {
+    setBusy(true);
+    try {
+      const d = await api('/checkins/settings', { method: 'PUT', body: { enabled: !checkinEnabled } });
+      setCheckinEnabled(d.enabled);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  function fmtDate(iso) {
+    if (!iso) return '';
+    return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  if (!data) return <div className="text-cream/50">Loading dashboard…</div>;
+
+  const { pendingFunding, pendingApps, recentCheckins, pendingTasks, counts } = data;
+
+  return (
+    <div className="max-w-5xl space-y-8">
+      <div>
+        <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Dashboard</h1>
+        <p className="text-cream/50 mt-1">Overview for managers and admins.</p>
+      </div>
+
+      {error && <div className="text-red text-sm">{error}</div>}
+
+      {/* Check-in toggle */}
+      {checkinEnabled !== null && (
+        <div className="bg-navy2 border border-cream/10 rounded-xl p-5 flex items-center justify-between gap-4">
+          <div>
+            <div className="text-cream font-medium">Weekly Check-Ins</div>
+            <div className="text-cream/50 text-sm">{checkinEnabled ? 'Members can submit check-ins this week.' : 'Check-ins are currently disabled.'}</div>
+          </div>
+          <Toggle enabled={checkinEnabled} onChange={toggleCheckins} disabled={busy} />
+        </div>
+      )}
+
+      {/* Summary cards */}
+      <div className="grid sm:grid-cols-3 gap-4">
+        {[
+          { label: 'Pending Funding', count: counts.funding, color: 'text-gold' },
+          { label: 'Board Applications', count: counts.apps, color: 'text-sky-300' },
+          { label: 'Pending Task Approvals', count: counts.tasks, color: 'text-red' },
+        ].map(({ label, count, color }) => (
+          <div key={label} className="bg-navy2 border border-cream/10 rounded-xl p-5 text-center">
+            <div className={`font-display text-4xl ${color}`}>{count}</div>
+            <div className="text-cream/60 text-sm mt-1">{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Pending Funding Requests */}
+      <div>
+        <div className="font-display text-2xl text-gold mb-3">Pending Funding Requests ({pendingFunding.length})</div>
+        {pendingFunding.length === 0 && <div className="text-cream/40">None pending.</div>}
+        <div className="space-y-3">
+          {pendingFunding.map((r) => (
+            <div key={r.id} className="bg-navy2 border border-gold/20 rounded-xl p-4">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div>
+                  <div className="font-medium text-cream">{r.title}</div>
+                  {r.description && <div className="text-sm text-cream/60 mt-1">{r.description}</div>}
+                  <div className="text-xs text-cream/40 mt-1">By {r.submitterName} · ${Number(r.amount).toFixed(2)} · {fmtDate(r.createdAt)}</div>
+                </div>
+                <Badge tone="slate">pending</Badge>
+              </div>
+              <div className="flex gap-2 mt-3">
+                <Button variant="gold" className="text-xs px-3 py-1" onClick={() => fundingAction(r.id, 'approve')} disabled={busy}>Approve</Button>
+                <Button variant="danger" className="text-xs px-3 py-1" onClick={() => fundingAction(r.id, 'deny')} disabled={busy}>Deny</Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Board Applications */}
+      <div>
+        <div className="font-display text-2xl text-gold mb-3">Board Applications ({pendingApps.length})</div>
+        {pendingApps.length === 0 && <div className="text-cream/40">No pending applications.</div>}
+        <div className="space-y-3">
+          {pendingApps.map((a) => (
+            <div key={a.id} className="bg-navy2 border border-sky-500/20 rounded-xl p-4">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div>
+                  <div className="font-medium text-cream">{a.positionTitle}</div>
+                  <div className="text-sm text-sky-300/80">{a.applicantName}{a.applicantTitle ? ` · ${a.applicantTitle}` : ''}</div>
+                  {a.statement && <div className="text-sm text-cream/60 mt-1 whitespace-pre-wrap line-clamp-3">{a.statement}</div>}
+                  <div className="text-xs text-cream/40 mt-1">{fmtDate(a.createdAt)}</div>
+                </div>
+              </div>
+              <div className="flex gap-2 mt-3">
+                <Button variant="gold" className="text-xs px-3 py-1" onClick={() => appAction(a.id, 'accept')} disabled={busy}>Accept</Button>
+                <Button variant="danger" className="text-xs px-3 py-1" onClick={() => appAction(a.id, 'decline')} disabled={busy}>Decline</Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Pending Task Approvals */}
+      <div>
+        <div className="font-display text-2xl text-gold mb-3">Pending Task Approvals ({pendingTasks.length})</div>
+        {pendingTasks.length === 0 && <div className="text-cream/40">Nothing waiting on you.</div>}
+        <div className="space-y-3">
+          {pendingTasks.map((t) => (
+            <div key={t.id} className="bg-navy2 border border-red/20 rounded-xl p-4">
+              <div className="font-medium text-cream">{t.name}</div>
+              {t.description && <div className="text-sm text-cream/60 mt-1">{t.description}</div>}
+              <div className="text-xs text-cream/50 mt-2">
+                For <span className="text-gold/80">{t.ownerName}</span> · from <span className="text-gold/80">{t.assignedByName}</span>
+                {t.dueDate && <> · due {t.dueDate}</>}
+              </div>
+              <div className="flex gap-2 mt-3">
+                <Button variant="gold" className="text-xs px-3 py-1" onClick={() => taskAction(t, 'approve')} disabled={busy}>Approve</Button>
+                <Button variant="danger" className="text-xs px-3 py-1" onClick={() => taskAction(t, 'reject')} disabled={busy}>Reject</Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Recent Check-Ins */}
+      <div>
+        <div className="font-display text-2xl text-gold mb-3">Recent Check-Ins ({recentCheckins.length})</div>
+        {recentCheckins.length === 0 && <div className="text-cream/40">No check-ins submitted yet.</div>}
+        <div className="space-y-3">
+          {recentCheckins.map((c) => (
+            <div key={c.id} className="bg-navy2 border border-cream/10 rounded-xl p-4">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div>
+                  <span className="font-medium text-cream">{c.userName}</span>
+                  {c.userTitle && <span className="text-cream/50 text-sm ml-2">· {c.userTitle}</span>}
+                </div>
+                <span className="text-xs text-cream/40">Week of {fmtDate(c.weekOf)}</span>
+              </div>
+              <div className="text-sm text-cream/70 whitespace-pre-wrap">{c.content}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Sidebar + Layout
 // ---------------------------------------------------------------------------
-function Sidebar({ me, reports, approvalsCount, view, setView, onLogout, open, onClose }) {
+function Sidebar({ me, reports, approvalsCount, checkinEnabled, view, setView, onLogout, open, onClose }) {
   const [reportsOpen, setReportsOpen] = useState(true);
   const isManager = me.role === 'manager' || me.role === 'admin';
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
+  const canRoster = isManager || !!me.canManageRoster;
 
   const NavItem = ({ active, onClick, children, badge }) => (
     <button onClick={onClick}
@@ -1446,6 +2581,37 @@ function Sidebar({ me, reports, approvalsCount, view, setView, onLogout, open, o
           </NavItem>
         )}
 
+        {canRoster && (
+          <NavItem active={view.type === 'roster'} onClick={() => setView({ type: 'roster' })}>
+            📋 Roster
+          </NavItem>
+        )}
+
+        {checkinEnabled && (
+          <NavItem active={view.type === 'checkin'} onClick={() => setView({ type: 'checkin' })}>
+            ✅ Weekly Check-In
+          </NavItem>
+        )}
+        {isManager && !checkinEnabled && (
+          <NavItem active={view.type === 'checkin'} onClick={() => setView({ type: 'checkin' })}>
+            ✅ Check-In Settings
+          </NavItem>
+        )}
+
+        <NavItem active={view.type === 'funding'} onClick={() => setView({ type: 'funding' })}>
+          💰 Funding Requests
+        </NavItem>
+
+        <NavItem active={view.type === 'apply'} onClick={() => setView({ type: 'apply' })}>
+          📝 Apply for Position
+        </NavItem>
+
+        {isManager && (
+          <NavItem active={view.type === 'dashboard'} onClick={() => setView({ type: 'dashboard' })}>
+            📊 Dashboard
+          </NavItem>
+        )}
+
         <NavItem active={view.type === 'org'} onClick={() => setView({ type: 'org' })}>Org Chart</NavItem>
 
         {me.role === 'admin' && (
@@ -1476,16 +2642,21 @@ function App() {
   const [users, setUsers] = useState([]);
   const [reports, setReports] = useState([]);
   const [approvalsCount, setApprovalsCount] = useState(0);
+  const [checkinEnabled, setCheckinEnabled] = useState(false);
   const [refreshSignal, setRefreshSignal] = useState(0);
+
+  // Detect /survey path for public survey
+  const isSurveyPath = window.location.pathname === '/survey';
 
   const bump = () => setRefreshSignal((n) => n + 1);
 
   const loadShared = useCallback(async (user) => {
     if (!user || user.firstLogin) return;
     try {
-      const [u, r] = await Promise.all([api('/users'), api('/reports')]);
+      const [u, r, ci] = await Promise.all([api('/users'), api('/reports'), api('/checkins/settings').catch(() => ({ enabled: false }))]);
       setUsers(u.users);
       setReports(r.reports);
+      setCheckinEnabled(!!ci.enabled);
       if (user.role === 'manager' || user.role === 'admin') {
         const a = await api('/approvals');
         setApprovalsCount(a.approvals.length);
@@ -1521,6 +2692,9 @@ function App() {
 
   if (!booted) return <div className="min-h-screen flex items-center justify-center text-cream/40">Loading…</div>;
 
+  // Public interest survey at /survey
+  if (isSurveyPath) return <InterestSurvey onBack={() => { window.history.pushState(null, '', '/'); window.location.reload(); }} />;
+
   // Default landing: the public homepage. The portal opens via the login button.
   if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;
 
@@ -1530,14 +2704,19 @@ function App() {
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
 
   let content;
-  if (view.type === 'home') content = <Home mode="portal" editable={false} />;
+  if (view.type === 'home') content = <Home mode="portal" me={me} />;
   else if (view.type === 'website') content = canEditSite
-    ? <Home mode="editor" editable={true} />
-    : <Home mode="portal" editable={false} />;
+    ? <Home mode="editor" me={me} editable={true} />
+    : <Home mode="portal" me={me} />;
   else if (view.type === 'mytasks') content = <TaskPage me={me} userId={me.id} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'person') content = <TaskPage me={me} userId={view.userId} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'announce') content = <TeamAnnouncementView me={me} reports={reports} />;
   else if (view.type === 'approvals') content = <Approvals onChanged={bump} refreshSignal={refreshSignal} />;
+  else if (view.type === 'roster') content = <RosterPage me={me} />;
+  else if (view.type === 'checkin') content = <WeeklyCheckinPage me={me} />;
+  else if (view.type === 'funding') content = <FundingRequestPage me={me} />;
+  else if (view.type === 'apply') content = <BoardApplicationsPage me={me} />;
+  else if (view.type === 'dashboard') content = <AdminDashboardPage me={me} />;
   else if (view.type === 'org') content = <OrgChart />;
   else if (view.type === 'admin') content = <AdminPanel users={users} reload={bump} />;
   else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); setView({ type: 'mytasks' }); }} />;
@@ -1547,7 +2726,7 @@ function App() {
 
   return (
     <div className="lg:flex">
-      <Sidebar me={me} reports={reports} approvalsCount={approvalsCount}
+      <Sidebar me={me} reports={reports} approvalsCount={approvalsCount} checkinEnabled={checkinEnabled}
         view={view} setView={navigate} onLogout={logout}
         open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="flex-1 min-w-0">

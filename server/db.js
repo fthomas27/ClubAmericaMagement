@@ -21,18 +21,21 @@ db.pragma('foreign_keys = ON');
 function init() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      username     TEXT UNIQUE NOT NULL,
-      firstName    TEXT NOT NULL,
-      lastName     TEXT NOT NULL DEFAULT '',
-      displayName  TEXT NOT NULL,
-      passwordHash TEXT NOT NULL,
-      role         TEXT NOT NULL DEFAULT 'member',  -- admin | manager | member
-      title        TEXT NOT NULL DEFAULT '',
-      managerId    INTEGER REFERENCES users(id) ON DELETE SET NULL,
-      firstLogin   INTEGER NOT NULL DEFAULT 1,
-      canEditHome  INTEGER NOT NULL DEFAULT 0,
-      createdAt    TEXT NOT NULL DEFAULT (datetime('now'))
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      username         TEXT UNIQUE NOT NULL,
+      firstName        TEXT NOT NULL,
+      lastName         TEXT NOT NULL DEFAULT '',
+      displayName      TEXT NOT NULL,
+      passwordHash     TEXT NOT NULL,
+      role             TEXT NOT NULL DEFAULT 'member',
+      title            TEXT NOT NULL DEFAULT '',
+      managerId        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      firstLogin       INTEGER NOT NULL DEFAULT 1,
+      canEditHome      INTEGER NOT NULL DEFAULT 0,
+      canAnnounce      INTEGER NOT NULL DEFAULT 0,
+      canManageRoster  INTEGER NOT NULL DEFAULT 0,
+      managedGrade     INTEGER,
+      createdAt        TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS tasks (
@@ -50,14 +53,17 @@ function init() {
 
     -- Single-row store for the public homepage content.
     CREATE TABLE IF NOT EXISTS site_settings (
-      id              INTEGER PRIMARY KEY CHECK (id = 1),
-      meetingDate     TEXT NOT NULL DEFAULT '',
-      meetingTime     TEXT NOT NULL DEFAULT '',
-      meetingLocation TEXT NOT NULL DEFAULT '',
-      podcastUrl      TEXT NOT NULL DEFAULT '',
-      podcastEnabled  INTEGER NOT NULL DEFAULT 1,
-      calendarUrl     TEXT NOT NULL DEFAULT '',
-      updatedAt       TEXT NOT NULL DEFAULT (datetime('now'))
+      id                      INTEGER PRIMARY KEY CHECK (id = 1),
+      meetingDate             TEXT NOT NULL DEFAULT '',
+      meetingTime             TEXT NOT NULL DEFAULT '',
+      meetingLocation         TEXT NOT NULL DEFAULT '',
+      podcastUrl              TEXT NOT NULL DEFAULT '',
+      podcastEnabled          INTEGER NOT NULL DEFAULT 1,
+      calendarUrl             TEXT NOT NULL DEFAULT '',
+      homeAnnouncement        TEXT NOT NULL DEFAULT '',
+      homeAnnouncementEnabled INTEGER NOT NULL DEFAULT 0,
+      weeklyCheckinEnabled    INTEGER NOT NULL DEFAULT 0,
+      updatedAt               TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     -- Per-user page feature flags configured by admins/managers.
@@ -73,6 +79,8 @@ function init() {
       formFields          TEXT NOT NULL DEFAULT '[]',
       announcementEnabled INTEGER NOT NULL DEFAULT 0,
       announcementText    TEXT NOT NULL DEFAULT '',
+      bioEnabled          INTEGER NOT NULL DEFAULT 0,
+      bioText             TEXT NOT NULL DEFAULT '',
       updatedAt           TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -84,21 +92,88 @@ function init() {
       createdAt TEXT NOT NULL DEFAULT (datetime('now')),
       updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Club roster: prospects through fully onboarded members (not app users).
+    CREATE TABLE IF NOT EXISTS roster_members (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      firstName       TEXT NOT NULL,
+      lastName        TEXT NOT NULL DEFAULT '',
+      phone           TEXT NOT NULL DEFAULT '',
+      email           TEXT NOT NULL DEFAULT '',
+      grade           INTEGER,
+      gender          TEXT NOT NULL DEFAULT '',
+      roleDescription TEXT NOT NULL DEFAULT '',
+      status          TEXT NOT NULL DEFAULT 'Prospect',
+      claimedByUserId INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      notes           TEXT NOT NULL DEFAULT '',
+      convertedAt     TEXT,
+      createdAt       TEXT NOT NULL DEFAULT (datetime('now')),
+      updatedAt       TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Funding requests routed to CFO for review.
+    CREATE TABLE IF NOT EXISTS funding_requests (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      submittedById INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title         TEXT NOT NULL,
+      description   TEXT NOT NULL DEFAULT '',
+      amount        REAL NOT NULL DEFAULT 0,
+      status        TEXT NOT NULL DEFAULT 'pending',
+      reviewedById  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      reviewedAt    TEXT,
+      purchasedById INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      purchasedAt   TEXT,
+      reviewNotes   TEXT NOT NULL DEFAULT '',
+      createdAt     TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Weekly check-in submissions from board members.
+    CREATE TABLE IF NOT EXISTS weekly_checkins (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      userId      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      content     TEXT NOT NULL,
+      weekOf      TEXT NOT NULL,
+      submittedAt TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Board / leadership position applications.
+    CREATE TABLE IF NOT EXISTS board_applications (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      userId        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      positionTitle TEXT NOT NULL,
+      statement     TEXT NOT NULL DEFAULT '',
+      status        TEXT NOT NULL DEFAULT 'pending',
+      reviewedById  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      reviewedAt    TEXT,
+      createdAt     TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
-  // Migration for databases created before canEditHome existed.
+  // User column migrations.
   const cols = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
-  if (!cols.includes('canEditHome')) {
-    db.exec("ALTER TABLE users ADD COLUMN canEditHome INTEGER NOT NULL DEFAULT 0");
+  if (!cols.includes('canEditHome'))     db.exec("ALTER TABLE users ADD COLUMN canEditHome INTEGER NOT NULL DEFAULT 0");
+  if (!cols.includes('canAnnounce')) {
+    db.exec("ALTER TABLE users ADD COLUMN canAnnounce INTEGER NOT NULL DEFAULT 0");
+    db.prepare("UPDATE users SET canAnnounce = 1 WHERE username IN ('campbell', 'dhays')").run();
   }
-  // Migrations for newer site_settings columns.
+  if (!cols.includes('canManageRoster')) {
+    db.exec("ALTER TABLE users ADD COLUMN canManageRoster INTEGER NOT NULL DEFAULT 0");
+    db.prepare("UPDATE users SET canManageRoster = 1 WHERE title IN ('Secretary', 'Grade Rep')").run();
+  }
+  if (!cols.includes('managedGrade'))    db.exec("ALTER TABLE users ADD COLUMN managedGrade INTEGER");
+
+  // site_settings column migrations.
   const siteCols = db.prepare("PRAGMA table_info(site_settings)").all().map((c) => c.name);
-  if (!siteCols.includes('podcastEnabled')) {
-    db.exec("ALTER TABLE site_settings ADD COLUMN podcastEnabled INTEGER NOT NULL DEFAULT 1");
-  }
-  if (!siteCols.includes('calendarUrl')) {
-    db.exec("ALTER TABLE site_settings ADD COLUMN calendarUrl TEXT NOT NULL DEFAULT ''");
-  }
+  if (!siteCols.includes('podcastEnabled'))          db.exec("ALTER TABLE site_settings ADD COLUMN podcastEnabled INTEGER NOT NULL DEFAULT 1");
+  if (!siteCols.includes('calendarUrl'))              db.exec("ALTER TABLE site_settings ADD COLUMN calendarUrl TEXT NOT NULL DEFAULT ''");
+  if (!siteCols.includes('homeAnnouncement'))         db.exec("ALTER TABLE site_settings ADD COLUMN homeAnnouncement TEXT NOT NULL DEFAULT ''");
+  if (!siteCols.includes('homeAnnouncementEnabled'))  db.exec("ALTER TABLE site_settings ADD COLUMN homeAnnouncementEnabled INTEGER NOT NULL DEFAULT 0");
+  if (!siteCols.includes('weeklyCheckinEnabled'))     db.exec("ALTER TABLE site_settings ADD COLUMN weeklyCheckinEnabled INTEGER NOT NULL DEFAULT 0");
+
+  // user_page_settings column migrations.
+  const upsCols = db.prepare("PRAGMA table_info(user_page_settings)").all().map((c) => c.name);
+  if (!upsCols.includes('bioEnabled'))  db.exec("ALTER TABLE user_page_settings ADD COLUMN bioEnabled INTEGER NOT NULL DEFAULT 0");
+  if (!upsCols.includes('bioText'))     db.exec("ALTER TABLE user_page_settings ADD COLUMN bioText TEXT NOT NULL DEFAULT ''");
 
   // Ensure the homepage row exists with friendly placeholder content.
   db.prepare(`INSERT OR IGNORE INTO site_settings (id, meetingDate, meetingTime, meetingLocation, podcastUrl)
@@ -168,8 +243,9 @@ function seed() {
     for (const u of SEED_USERS) {
       if (u.manager) setManager.run(byUsername[u.manager], u.username);
     }
-    // The President, VP, and Digital Presence Manager can edit the website.
     db.prepare("UPDATE users SET canEditHome = 1 WHERE username IN ('fthomas', 'deddy', 'dhays')").run();
+    db.prepare("UPDATE users SET canAnnounce = 1 WHERE username IN ('campbell', 'dhays')").run();
+    db.prepare("UPDATE users SET canManageRoster = 1 WHERE title IN ('Secretary', 'Grade Rep')").run();
   });
   tx();
   return true;
