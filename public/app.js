@@ -1814,6 +1814,91 @@ function EditRosterMemberModal({ member, onSaved, onClose }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Grade Rep Recruitment Leaderboard
+// ---------------------------------------------------------------------------
+function GradeRepLeaderboard({ me }) {
+  const [board, setBoard] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api('/roster/leaderboard')
+      .then((d) => { setBoard(d.leaderboard || []); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  if (loading || board.length === 0) return null;
+
+  const leader = board[0];
+  const myEntry = board.find((r) => r.id === me.id);
+
+  const medals = ['🥇', '🥈', '🥉'];
+
+  return (
+    <div className="bg-navy2 border-2 border-gold/60 rounded-2xl p-5 mb-8">
+      {/* Prize banner */}
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
+        <div className="text-3xl">🏆</div>
+        <div className="flex-1 min-w-0">
+          <div className="font-display text-2xl text-gold leading-tight">Grade Rep Recruitment Challenge</div>
+          <div className="text-cream/70 text-sm mt-0.5">
+            The rep who brings in the most new members by year-end wins a{' '}
+            <span className="text-gold font-semibold">$50 Amazon gift card</span>. Keep recruiting!
+          </div>
+        </div>
+        {leader.count > 0 && (
+          <div className="bg-gold/15 border border-gold/40 rounded-xl px-4 py-2 text-center shrink-0">
+            <div className="text-xs text-gold/70 uppercase tracking-wider">Current Leader</div>
+            <div className="font-display text-xl text-gold leading-tight">{leader.displayName}</div>
+            <div className="text-xs text-cream/60">{leader.count} onboarded</div>
+          </div>
+        )}
+      </div>
+
+      {/* Ranked list */}
+      <div className="space-y-2">
+        {board.map((rep, i) => {
+          const isMe = rep.id === me.id;
+          const isLeader = i === 0 && rep.count > 0;
+          return (
+            <div key={rep.id}
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-colors ${
+                isLeader ? 'bg-gold/15 border border-gold/40' :
+                isMe ? 'bg-navy border border-cream/20' : 'bg-navy/40'
+              }`}>
+              <div className={`font-display text-xl w-8 text-center shrink-0 ${isLeader ? 'text-gold' : 'text-cream/40'}`}>
+                {medals[i] || `${i + 1}`}
+              </div>
+              <div className="flex-1 min-w-0">
+                <span className={`font-medium ${isMe ? 'text-gold' : 'text-cream'}`}>
+                  {rep.displayName}
+                  {isMe && <span className="text-xs text-cream/50 ml-1">(you)</span>}
+                </span>
+                {rep.managedGrade && (
+                  <span className="text-xs text-cream/40 ml-2">Grade {rep.managedGrade}</span>
+                )}
+              </div>
+              <div className={`font-display text-2xl shrink-0 ${isLeader ? 'text-gold' : 'text-cream/60'}`}>
+                {rep.count}
+              </div>
+              <div className="text-xs text-cream/40 shrink-0">onboarded</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {myEntry && (
+        <div className="mt-3 text-xs text-cream/40 text-center">
+          You've onboarded {myEntry.count} member{myEntry.count !== 1 ? 's' : ''} this year.
+          {myEntry.count < leader.count && leader.id !== me.id && (
+            <> You're {leader.count - myEntry.count} behind the leader — keep going!</>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RosterPage({ me }) {
   const [members, setMembers] = useState([]);
   const [myGrade, setMyGrade] = useState(null);
@@ -1879,6 +1964,8 @@ function RosterPage({ me }) {
     <div className="max-w-4xl">
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Roster</h1>
       <p className="text-cream/50 mb-6">Club America recruitment pipeline and member directory.</p>
+
+      <GradeRepLeaderboard me={me} />
 
       {error && <div className="text-red text-sm mb-4">{error}</div>}
 

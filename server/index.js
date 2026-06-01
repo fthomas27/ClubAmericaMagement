@@ -411,6 +411,21 @@ app.post('/api/roster/:id/decline', (req, res) => {
   res.json({ ok: true });
 });
 
+// Grade rep recruitment leaderboard — ranked by Onboarded members they claimed.
+app.get('/api/roster/leaderboard', (req, res) => {
+  if (!canViewRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const rows = db.prepare(`
+    SELECT u.id, u.displayName, u.managedGrade,
+           COUNT(r.id) AS count
+    FROM users u
+    LEFT JOIN roster_members r ON r.claimedByUserId = u.id AND r.status = 'Onboarded'
+    WHERE u.title LIKE '%Grade Rep%' OR u.managedGrade IS NOT NULL
+    GROUP BY u.id
+    ORDER BY count DESC, u.displayName ASC
+  `).all();
+  res.json({ leaderboard: rows });
+});
+
 // ---- Weekly Check-Ins -------------------------------------------------------
 function getCheckinEnabled() {
   const row = db.prepare('SELECT weeklyCheckinEnabled FROM site_settings WHERE id=1').get();
