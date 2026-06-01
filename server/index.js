@@ -72,6 +72,27 @@ function taskWithNames(t) {
   };
 }
 
+function getPageSettings(userId) {
+  const row = db.prepare('SELECT * FROM user_page_settings WHERE userId = ?').get(userId);
+  if (!row) return {
+    userId,
+    bannerEnabled: false, bannerTitle: '', bannerUrl: '',
+    calendarEnabled: false, calendarUrl: '',
+    formEnabled: false, formTitle: '', formFields: [],
+    announcementEnabled: false, announcementText: '',
+  };
+  let formFields = [];
+  try { formFields = JSON.parse(row.formFields || '[]'); } catch (_) {}
+  return {
+    ...row,
+    bannerEnabled: !!row.bannerEnabled,
+    calendarEnabled: !!row.calendarEnabled,
+    formEnabled: !!row.formEnabled,
+    announcementEnabled: !!row.announcementEnabled,
+    formFields,
+  };
+}
+
 // ---- Auth -------------------------------------------------------------------
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body || {};
@@ -172,6 +193,103 @@ app.get('/api/reports', (req, res) => {
 app.get('/api/orgchart', (req, res) => {
   const users = db.prepare('SELECT * FROM users').all().map(publicUser);
   res.json({ users });
+});
+
+// ---- User page settings (per-person feature toggles) ------------------------
+app.get('/api/users/:id/page-settings', (req, res) => {
+  const targetId = Number(req.params.id);
+  if (!canViewTasksOf(req.user, targetId)) return res.status(403).json({ error: 'Not allowed' });
+  res.json({ settings: getPageSettings(targetId) });
+});
+
+app.put('/api/users/:id/page-settings', (req, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user.role !== 'admin' && !isManagerOf(req.user, targetId)) {
+    return res.status(403).json({ error: 'Only admins or the direct manager can edit page settings' });
+  }
+  const { bannerEnabled, bannerTitle, bannerUrl, calendarEnabled, calendarUrl,
+          formEnabled, formTitle, formFields, announcementEnabled, announcementText } = req.body || {};
+  db.prepare('INSERT OR IGNORE INTO user_page_settings (userId) VALUES (?)').run(targetId);
+  db.prepare(`UPDATE user_page_settings SET
+    bannerEnabled       = COALESCE(?, bannerEnabled),
+    bannerTitle         = COALESCE(?, bannerTitle),
+    bannerUrl           = COALESCE(?, bannerUrl),
+    calendarEnabled     = COALESCE(?, calendarEnabled),
+    calendarUrl         = COALESCE(?, calendarUrl),
+    formEnabled         = COALESCE(?, formEnabled),
+    formTitle           = COALESCE(?, formTitle),
+    formFields          = COALESCE(?, formFields),
+    announcementEnabled = COALESCE(?, announcementEnabled),
+    announcementText    = COALESCE(?, announcementText),
+    updatedAt           = datetime('now')
+  WHERE userId = ?`).run(
+    bannerEnabled !== undefined ? (bannerEnabled ? 1 : 0) : null,
+    bannerTitle ?? null,
+    bannerUrl ?? null,
+    calendarEnabled !== undefined ? (calendarEnabled ? 1 : 0) : null,
+    calendarUrl ?? null,
+    formEnabled !== undefined ? (formEnabled ? 1 : 0) : null,
+    formTitle ?? null,
+    formFields !== undefined ? JSON.stringify(Array.isArray(formFields) ? formFields : []) : null,
+    announcementEnabled !== undefined ? (announcementEnabled ? 1 : 0) : null,
+    announcementText ?? null,
+    targetId,
+  );
+  res.json({ settings: getPageSettings(targetId) });
+});
+
+app.get('/api/users/:id/calendar', async (req, res) => {
+  const targetId = Number(req.params.id);
+  if (!canViewTasksOf(req.user, targetId)) return res.status(403).json({ error: 'Not allowed' });
+  const settings = getPageSettings(targetId);
+  if (!settings.calendarEnabled || !settings.calendarUrl) return res.json({ events: [] });
+  try {
+    const events = await fetchUpcoming(settings.calendarUrl, 5);
+    res.json({ events });
+  } catch (_) {
+    res.json({ events: [], error: 'Failed to fetch calendar events' });
+  }
+});
+
+// ---- Team announcements (broadcast from manager/admin to all their reports) --
+app.get('/api/team-announcement', (req, res) => {
+  if (req.user.role === 'member') return res.status(403).json({ error: 'Not allowed' });
+  const row = db.prepare('SELECT * FROM team_announcements WHERE authorId = ?').get(req.user.id);
+  res.json({ announcement: row || null });
+});
+
+app.put('/api/team-announcement', (req, res) => {
+  if (req.user.role === 'member') return res.status(403).json({ error: 'Not allowed' });
+  const trimmed = String((req.body || {}).text || '').trim();
+  if (!trimmed) return res.status(400).json({ error: 'Announcement text required' });
+  db.prepare(`
+    INSERT INTO team_announcements (authorId, text) VALUES (?, ?)
+    ON CONFLICT(authorId) DO UPDATE SET text = excluded.text, updatedAt = datetime('now')
+  `).run(req.user.id, trimmed);
+  res.json({ announcement: db.prepare('SELECT * FROM team_announcements WHERE authorId = ?').get(req.user.id) });
+});
+
+app.delete('/api/team-announcement', (req, res) => {
+  if (req.user.role === 'member') return res.status(403).json({ error: 'Not allowed' });
+  db.prepare('DELETE FROM team_announcements WHERE authorId = ?').run(req.user.id);
+  res.json({ ok: true });
+});
+
+// Returns announcements from: the target user's direct manager + all admins.
+app.get('/api/users/:id/announcements', (req, res) => {
+  const targetId = Number(req.params.id);
+  if (!canViewTasksOf(req.user, targetId)) return res.status(403).json({ error: 'Not allowed' });
+  const target = getUser(targetId);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  const rows = db.prepare(`
+    SELECT ta.id, ta.authorId, ta.text, ta.updatedAt,
+           u.displayName AS authorName, u.title AS authorTitle
+    FROM team_announcements ta
+    JOIN users u ON u.id = ta.authorId
+    WHERE u.role = 'admin' OR ta.authorId = ?
+    ORDER BY ta.updatedAt DESC
+  `).all(target.managerId || 0);
+  res.json({ announcements: rows });
 });
 
 // ---- Tasks ------------------------------------------------------------------
