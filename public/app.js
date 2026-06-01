@@ -1208,6 +1208,7 @@ function AdminPanel({ users, reload }) {
       }});
       setNotice(`Added ${d.user.displayName} — username "${d.user.username}", default password "${d.defaultPassword}".`);
       setFirst(''); setLast(''); setTitle(''); setRole('member'); setManagerId(''); setGrade(''); setEmail('');
+      rosterNeedsSync = true; // new portal user → re-import to roster next time it opens
       reload();
     } catch (err) { setError(err.message); }
   }
@@ -1992,6 +1993,9 @@ function InterestSurvey({ onBack }) {
 // Roster Page
 // ---------------------------------------------------------------------------
 const ROSTER_STATUSES = ['Prospect', 'Contacted', 'Onboarded', 'Declined'];
+// Triggers auto-import of board members into the roster. Starts true (run on first visit),
+// resets to true after a roster delete or new portal user is created.
+let rosterNeedsSync = true;
 
 function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
   const [busy, setBusy] = useState(false);
@@ -2313,9 +2317,11 @@ function RosterPage({ me }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // Auto-import board portal members once on mount (idempotent — skips existing entries).
+  // Auto-import board portal members — runs once per session; resets when a member is
+  // deleted from the roster or when a new portal user is created (see rosterNeedsSync).
   useEffect(() => {
-    if (isPrivileged || me.canManageRoster) {
+    if ((isPrivileged || me.canManageRoster) && rosterNeedsSync) {
+      rosterNeedsSync = false;
       api('/roster/import-board', { method: 'POST' }).then(() => load()).catch(() => {});
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2330,6 +2336,7 @@ function RosterPage({ me }) {
     if (action === 'delete') {
       if (!confirm('Delete this member from the roster?')) return;
       await api(`/roster/${memberId}`, { method: 'DELETE' });
+      rosterNeedsSync = true; // re-import board members on next roster visit
     } else {
       await api(`/roster/${memberId}/${action}`, { method: 'POST', body: body || undefined });
     }
