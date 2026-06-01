@@ -665,21 +665,124 @@ function PageAdminControls({ targetUser, onUpdated }) {
   );
 }
 
+function TeamAnnouncementsDisplay({ announcements }) {
+  if (!announcements || announcements.length === 0) return null;
+  return (
+    <div className="space-y-3 mb-6">
+      {announcements.map((a) => (
+        <div key={a.id} className="bg-gold/10 border border-gold/40 rounded-xl px-5 py-4 flex gap-3 items-start">
+          <span className="text-xl mt-0.5 shrink-0">📢</span>
+          <div>
+            <div className="text-xs text-gold/70 mb-1">{a.authorName}{a.authorTitle ? ` · ${a.authorTitle}` : ''}</div>
+            <div className="text-cream whitespace-pre-wrap">{a.text}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TeamAnnouncementView({ me, reports }) {
+  const [text, setText] = useState('');
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api('/team-announcement')
+      .then((d) => { if (d.announcement) setText(d.announcement.text); setLoaded(true); })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  async function publish() {
+    setBusy(true); setError(''); setSaved(false);
+    try {
+      await api('/team-announcement', { method: 'PUT', body: { text } });
+      setSaved(true);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function remove() {
+    if (!confirm("Remove the team announcement? It will disappear from your reports' pages.")) return;
+    setBusy(true); setSaved(false);
+    try {
+      await api('/team-announcement', { method: 'DELETE' });
+      setText('');
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  const scope = me.role === 'admin'
+    ? 'all board members'
+    : reports.length > 0
+      ? `your ${reports.length} direct report${reports.length === 1 ? '' : 's'}`
+      : 'your direct reports';
+
+  return (
+    <div className="max-w-2xl">
+      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Team Announcement</h1>
+      <p className="text-cream/50 mb-6">
+        Post a message that appears at the top of the My Page for {scope}. One active announcement at a time.
+      </p>
+
+      {!loaded ? <div className="text-cream/40">Loading…</div> : (
+        <div className="bg-navy2 border border-cream/10 rounded-xl p-5 space-y-4">
+          <Field label="Announcement">
+            <textarea
+              className={inputCls} rows="4"
+              value={text}
+              onChange={(e) => { setText(e.target.value); setSaved(false); }}
+              placeholder="e.g. Reminder: chapter meeting this Thursday at 3:30 PM in Room 214." />
+          </Field>
+          {error && <div className="text-red text-sm">{error}</div>}
+          {saved && <div className="text-emerald-300 text-sm">✓ Published — now visible to {scope}.</div>}
+          <div className="flex gap-2 flex-wrap">
+            <Button variant="gold" onClick={publish} disabled={busy || !text.trim()}>
+              {busy ? 'Saving…' : 'Publish'}
+            </Button>
+            {text.trim() && (
+              <Button variant="danger" onClick={remove} disabled={busy}>Remove</Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {text.trim() && (
+        <div className="mt-6">
+          <div className="text-xs text-cream/50 uppercase tracking-wider mb-2">How reports see it</div>
+          <div className="bg-gold/10 border border-gold/40 rounded-xl px-5 py-4 flex gap-3 items-start">
+            <span className="text-xl mt-0.5 shrink-0">📢</span>
+            <div>
+              <div className="text-xs text-gold/70 mb-1">{me.displayName}{me.title ? ` · ${me.title}` : ''}</div>
+              <div className="text-cream whitespace-pre-wrap">{text}</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TaskPage({ me, userId, users, refreshSignal }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [pageSettings, setPageSettings] = useState(null);
+  const [teamAnnouncements, setTeamAnnouncements] = useState([]);
   const isSelf = userId === me.id;
   const canManagePage = !isSelf && (me.role === 'admin' || me.role === 'manager');
 
   const load = useCallback(async () => {
     try {
-      const [taskData, settingsData] = await Promise.all([
+      const [taskData, settingsData, annData] = await Promise.all([
         api(`/users/${userId}/tasks`),
         api(`/users/${userId}/page-settings`).catch(() => ({ settings: {} })),
+        api(`/users/${userId}/announcements`).catch(() => ({ announcements: [] })),
       ]);
       setData(taskData);
       setPageSettings(settingsData.settings);
+      setTeamAnnouncements(annData.announcements || []);
     } catch (err) { setError(err.message); }
   }, [userId]);
 
@@ -727,6 +830,8 @@ function TaskPage({ me, userId, users, refreshSignal }) {
         </div>
         <Badge tone="gold">{tasks.length} task{tasks.length === 1 ? '' : 's'}</Badge>
       </div>
+
+      <TeamAnnouncementsDisplay announcements={teamAnnouncements} />
 
       {canManagePage && <PageAdminControls targetUser={user} onUpdated={reloadSettings} />}
 
@@ -1307,6 +1412,12 @@ function Sidebar({ me, reports, approvalsCount, view, setView, onLogout, open, o
         <NavItem active={view.type === 'mytasks'} onClick={() => setView({ type: 'mytasks' })}>My Page</NavItem>
 
         {isManager && (
+          <NavItem active={view.type === 'announce'} onClick={() => setView({ type: 'announce' })}>
+            📢 Team Announcement
+          </NavItem>
+        )}
+
+        {isManager && (
           <div>
             <button onClick={() => setReportsOpen((o) => !o)}
               className="w-full text-left px-3 py-2 rounded-md text-cream/80 hover:bg-navy3 flex items-center justify-between">
@@ -1425,6 +1536,7 @@ function App() {
     : <Home mode="portal" editable={false} />;
   else if (view.type === 'mytasks') content = <TaskPage me={me} userId={me.id} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'person') content = <TaskPage me={me} userId={view.userId} users={users} refreshSignal={refreshSignal} />;
+  else if (view.type === 'announce') content = <TeamAnnouncementView me={me} reports={reports} />;
   else if (view.type === 'approvals') content = <Approvals onChanged={bump} refreshSignal={refreshSignal} />;
   else if (view.type === 'org') content = <OrgChart />;
   else if (view.type === 'admin') content = <AdminPanel users={users} reload={bump} />;

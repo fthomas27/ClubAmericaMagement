@@ -75,6 +75,15 @@ function init() {
       announcementText    TEXT NOT NULL DEFAULT '',
       updatedAt           TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- One active broadcast announcement per manager/admin; shown to all their reports.
+    CREATE TABLE IF NOT EXISTS team_announcements (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      authorId  INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      text      TEXT NOT NULL DEFAULT '',
+      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+      updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   // Migration for databases created before canEditHome existed.

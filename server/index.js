@@ -251,6 +251,47 @@ app.get('/api/users/:id/calendar', async (req, res) => {
   }
 });
 
+// ---- Team announcements (broadcast from manager/admin to all their reports) --
+app.get('/api/team-announcement', (req, res) => {
+  if (req.user.role === 'member') return res.status(403).json({ error: 'Not allowed' });
+  const row = db.prepare('SELECT * FROM team_announcements WHERE authorId = ?').get(req.user.id);
+  res.json({ announcement: row || null });
+});
+
+app.put('/api/team-announcement', (req, res) => {
+  if (req.user.role === 'member') return res.status(403).json({ error: 'Not allowed' });
+  const trimmed = String((req.body || {}).text || '').trim();
+  if (!trimmed) return res.status(400).json({ error: 'Announcement text required' });
+  db.prepare(`
+    INSERT INTO team_announcements (authorId, text) VALUES (?, ?)
+    ON CONFLICT(authorId) DO UPDATE SET text = excluded.text, updatedAt = datetime('now')
+  `).run(req.user.id, trimmed);
+  res.json({ announcement: db.prepare('SELECT * FROM team_announcements WHERE authorId = ?').get(req.user.id) });
+});
+
+app.delete('/api/team-announcement', (req, res) => {
+  if (req.user.role === 'member') return res.status(403).json({ error: 'Not allowed' });
+  db.prepare('DELETE FROM team_announcements WHERE authorId = ?').run(req.user.id);
+  res.json({ ok: true });
+});
+
+// Returns announcements from: the target user's direct manager + all admins.
+app.get('/api/users/:id/announcements', (req, res) => {
+  const targetId = Number(req.params.id);
+  if (!canViewTasksOf(req.user, targetId)) return res.status(403).json({ error: 'Not allowed' });
+  const target = getUser(targetId);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  const rows = db.prepare(`
+    SELECT ta.id, ta.authorId, ta.text, ta.updatedAt,
+           u.displayName AS authorName, u.title AS authorTitle
+    FROM team_announcements ta
+    JOIN users u ON u.id = ta.authorId
+    WHERE u.role = 'admin' OR ta.authorId = ?
+    ORDER BY ta.updatedAt DESC
+  `).all(target.managerId || 0);
+  res.json({ announcements: rows });
+});
+
 // ---- Tasks ------------------------------------------------------------------
 // A user's task page.
 app.get('/api/users/:id/tasks', (req, res) => {
