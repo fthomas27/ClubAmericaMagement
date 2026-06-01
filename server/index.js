@@ -123,8 +123,8 @@ app.get('/api/me', authenticate, (req, res) => {
 
 // ---- Public homepage content (no auth) --------------------------------------
 function getHome() {
-  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, updatedAt FROM site_settings WHERE id = 1').get();
-  return { ...row, podcastEnabled: !!row.podcastEnabled };
+  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, homeAnnouncement, homeAnnouncementEnabled, updatedAt FROM site_settings WHERE id = 1').get();
+  return { ...row, podcastEnabled: !!row.podcastEnabled, homeAnnouncementEnabled: !!row.homeAnnouncementEnabled };
 }
 app.get('/api/home', async (req, res) => {
   const home = getHome();
@@ -148,6 +148,10 @@ app.get('/api/home/settings', (req, res) => {
 function canEditHome(user) {
   return user.role === 'admin' || !!user.canEditHome;
 }
+// Post/clear homepage announcement — admins, secretary, digital presence manager.
+function canPostAnnouncement(user) {
+  return user.role === 'admin' || !!user.canAnnounce;
+}
 app.put('/api/home', (req, res) => {
   if (!canEditHome(req.user)) return res.status(403).json({ error: 'Only the Digital Presence Manager can edit the homepage' });
   const { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl } = req.body || {};
@@ -169,6 +173,18 @@ app.put('/api/home', (req, res) => {
       podcastEnabledVal,
       calendarUrl ?? null,
     );
+  res.json({ home: getHome() });
+});
+
+// Homepage announcement — secretary, digital presence, VP, president.
+app.put('/api/home/announcement', (req, res) => {
+  if (!canPostAnnouncement(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const text = String((req.body || {}).text || '').trim();
+  db.prepare(`UPDATE site_settings SET
+    homeAnnouncement = ?,
+    homeAnnouncementEnabled = ?,
+    updatedAt = datetime('now')
+  WHERE id = 1`).run(text, text ? 1 : 0);
   res.json({ home: getHome() });
 });
 

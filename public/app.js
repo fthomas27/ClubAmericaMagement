@@ -1295,7 +1295,81 @@ function HomeEditor({ onSaved }) {
   );
 }
 
-function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
+function HomeAnnouncementBanner({ home }) {
+  if (!home.homeAnnouncementEnabled || !home.homeAnnouncement) return null;
+  return (
+    <div className="bg-red/15 border border-red/50 rounded-xl px-5 py-4 flex gap-3 items-start">
+      <span className="text-xl mt-0.5 shrink-0">📣</span>
+      <div className="text-cream whitespace-pre-wrap">{home.homeAnnouncement}</div>
+    </div>
+  );
+}
+
+function HomeAnnouncementEditor({ home, onSaved }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState(home.homeAnnouncement || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => { setText(home.homeAnnouncement || ''); }, [home.homeAnnouncement]);
+
+  async function publish() {
+    setBusy(true); setError(''); setSaved(false);
+    try {
+      const d = await api('/home/announcement', { method: 'PUT', body: { text } });
+      onSaved(d.home);
+      setSaved(true);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  if (!open) return (
+    <section className="bg-navy2 border border-cream/10 rounded-2xl p-6">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h2 className="font-display text-2xl text-cream">Homepage Announcement</h2>
+          <p className="text-cream/50 text-sm">
+            {home.homeAnnouncementEnabled
+              ? 'An announcement banner is live on the homepage.'
+              : 'No active announcement — post one to show a banner to everyone.'}
+          </p>
+        </div>
+        <Button variant="ghost" onClick={() => setOpen(true)}>
+          {home.homeAnnouncementEnabled ? 'Edit' : 'Post Announcement'}
+        </Button>
+      </div>
+    </section>
+  );
+
+  return (
+    <section className="bg-navy2 border border-cream/10 rounded-2xl p-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-2xl text-cream">Homepage Announcement</h2>
+        <button onClick={() => setOpen(false)} className="text-cream/50 hover:text-cream text-2xl leading-none">×</button>
+      </div>
+      <Field label="Announcement (leave blank to remove)">
+        <textarea className={inputCls} rows="3"
+          value={text} onChange={(e) => { setText(e.target.value); setSaved(false); }}
+          placeholder="e.g. Welcome back — chapter elections are next Tuesday at 3:30 PM." />
+      </Field>
+      {error && <div className="text-red text-sm">{error}</div>}
+      {saved && (
+        <div className="text-emerald-300 text-sm">
+          ✓ {text.trim() ? 'Announcement published — visible to everyone.' : 'Announcement removed.'}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <Button variant="gold" onClick={publish} disabled={busy}>
+          {busy ? 'Saving…' : text.trim() ? 'Publish' : 'Clear Announcement'}
+        </Button>
+        <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+      </div>
+    </section>
+  );
+}
+
+function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onBack }) {
   const [home, setHome] = useState(null);
   const [events, setEvents] = useState([]);
   const [error, setError] = useState('');
@@ -1308,6 +1382,8 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
 
   if (error) return <div className="text-red p-8">{error}</div>;
   if (!home) return <div className="text-cream/50 p-8">Loading…</div>;
+
+  const canAnnounce = me && (me.role === 'admin' || !!me.canAnnounce);
 
   const cards = (
     <div className="grid md:grid-cols-2 gap-6">
@@ -1327,13 +1403,14 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
         <HomeEditor onSaved={load} />
         <div>
           <div className="font-display text-2xl text-gold mb-3">Live Preview</div>
+          <HomeAnnouncementBanner home={home} />
           {cards}
         </div>
       </div>
     );
   }
 
-  // In-portal "Home" view: read-only look at the public page.
+  // In-portal "Home" view.
   if (mode === 'portal') {
     return (
       <div className="max-w-5xl space-y-8">
@@ -1341,7 +1418,9 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
           <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Home</h1>
           <p className="text-cream/50 mt-1">This is the public-facing page at <span className="text-gold/80">/home</span>.</p>
         </div>
+        <HomeAnnouncementBanner home={home} />
         {cards}
+        {canAnnounce && <HomeAnnouncementEditor home={home} onSaved={(h) => setHome(h)} />}
         {editable && <HomeEditor onSaved={load} />}
       </div>
     );
@@ -1363,7 +1442,12 @@ function Home({ mode = 'public', editable = false, onEnterPortal, onBack }) {
           </p>
         </section>
       </div>
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-16">{cards}</main>
+      {home.homeAnnouncementEnabled && home.homeAnnouncement && (
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 pt-6">
+          <HomeAnnouncementBanner home={home} />
+        </div>
+      )}
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-16 pt-6">{cards}</main>
       <footer className="border-t border-cream/10 py-6 text-center text-cream/40 text-sm">
         Club America at Park City High School · Powered by TPUSA
       </footer>
@@ -1530,10 +1614,10 @@ function App() {
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
 
   let content;
-  if (view.type === 'home') content = <Home mode="portal" editable={false} />;
+  if (view.type === 'home') content = <Home mode="portal" me={me} />;
   else if (view.type === 'website') content = canEditSite
-    ? <Home mode="editor" editable={true} />
-    : <Home mode="portal" editable={false} />;
+    ? <Home mode="editor" me={me} editable={true} />
+    : <Home mode="portal" me={me} />;
   else if (view.type === 'mytasks') content = <TaskPage me={me} userId={me.id} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'person') content = <TaskPage me={me} userId={view.userId} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'announce') content = <TeamAnnouncementView me={me} reports={reports} />;

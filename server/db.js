@@ -32,6 +32,7 @@ function init() {
       managerId    INTEGER REFERENCES users(id) ON DELETE SET NULL,
       firstLogin   INTEGER NOT NULL DEFAULT 1,
       canEditHome  INTEGER NOT NULL DEFAULT 0,
+      canAnnounce  INTEGER NOT NULL DEFAULT 0,
       createdAt    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -50,14 +51,16 @@ function init() {
 
     -- Single-row store for the public homepage content.
     CREATE TABLE IF NOT EXISTS site_settings (
-      id              INTEGER PRIMARY KEY CHECK (id = 1),
-      meetingDate     TEXT NOT NULL DEFAULT '',
-      meetingTime     TEXT NOT NULL DEFAULT '',
-      meetingLocation TEXT NOT NULL DEFAULT '',
-      podcastUrl      TEXT NOT NULL DEFAULT '',
-      podcastEnabled  INTEGER NOT NULL DEFAULT 1,
-      calendarUrl     TEXT NOT NULL DEFAULT '',
-      updatedAt       TEXT NOT NULL DEFAULT (datetime('now'))
+      id                      INTEGER PRIMARY KEY CHECK (id = 1),
+      meetingDate             TEXT NOT NULL DEFAULT '',
+      meetingTime             TEXT NOT NULL DEFAULT '',
+      meetingLocation         TEXT NOT NULL DEFAULT '',
+      podcastUrl              TEXT NOT NULL DEFAULT '',
+      podcastEnabled          INTEGER NOT NULL DEFAULT 1,
+      calendarUrl             TEXT NOT NULL DEFAULT '',
+      homeAnnouncement        TEXT NOT NULL DEFAULT '',
+      homeAnnouncementEnabled INTEGER NOT NULL DEFAULT 0,
+      updatedAt               TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     -- Per-user page feature flags configured by admins/managers.
@@ -86,18 +89,29 @@ function init() {
     );
   `);
 
-  // Migration for databases created before canEditHome existed.
+  // User column migrations.
   const cols = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
   if (!cols.includes('canEditHome')) {
     db.exec("ALTER TABLE users ADD COLUMN canEditHome INTEGER NOT NULL DEFAULT 0");
   }
-  // Migrations for newer site_settings columns.
+  if (!cols.includes('canAnnounce')) {
+    db.exec("ALTER TABLE users ADD COLUMN canAnnounce INTEGER NOT NULL DEFAULT 0");
+    // Grant to secretary and digital presence manager on existing databases.
+    db.prepare("UPDATE users SET canAnnounce = 1 WHERE username IN ('campbell', 'dhays')").run();
+  }
+  // site_settings column migrations.
   const siteCols = db.prepare("PRAGMA table_info(site_settings)").all().map((c) => c.name);
   if (!siteCols.includes('podcastEnabled')) {
     db.exec("ALTER TABLE site_settings ADD COLUMN podcastEnabled INTEGER NOT NULL DEFAULT 1");
   }
   if (!siteCols.includes('calendarUrl')) {
     db.exec("ALTER TABLE site_settings ADD COLUMN calendarUrl TEXT NOT NULL DEFAULT ''");
+  }
+  if (!siteCols.includes('homeAnnouncement')) {
+    db.exec("ALTER TABLE site_settings ADD COLUMN homeAnnouncement TEXT NOT NULL DEFAULT ''");
+  }
+  if (!siteCols.includes('homeAnnouncementEnabled')) {
+    db.exec("ALTER TABLE site_settings ADD COLUMN homeAnnouncementEnabled INTEGER NOT NULL DEFAULT 0");
   }
 
   // Ensure the homepage row exists with friendly placeholder content.
@@ -170,6 +184,8 @@ function seed() {
     }
     // The President, VP, and Digital Presence Manager can edit the website.
     db.prepare("UPDATE users SET canEditHome = 1 WHERE username IN ('fthomas', 'deddy', 'dhays')").run();
+    // Secretary and Digital Presence Manager (plus admins by role) can post homepage announcements.
+    db.prepare("UPDATE users SET canAnnounce = 1 WHERE username IN ('campbell', 'dhays')").run();
   });
   tx();
   return true;
