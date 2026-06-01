@@ -72,6 +72,27 @@ function taskWithNames(t) {
   };
 }
 
+function getPageSettings(userId) {
+  const row = db.prepare('SELECT * FROM user_page_settings WHERE userId = ?').get(userId);
+  if (!row) return {
+    userId,
+    bannerEnabled: false, bannerTitle: '', bannerUrl: '',
+    calendarEnabled: false, calendarUrl: '',
+    formEnabled: false, formTitle: '', formFields: [],
+    announcementEnabled: false, announcementText: '',
+  };
+  let formFields = [];
+  try { formFields = JSON.parse(row.formFields || '[]'); } catch (_) {}
+  return {
+    ...row,
+    bannerEnabled: !!row.bannerEnabled,
+    calendarEnabled: !!row.calendarEnabled,
+    formEnabled: !!row.formEnabled,
+    announcementEnabled: !!row.announcementEnabled,
+    formFields,
+  };
+}
+
 // ---- Auth -------------------------------------------------------------------
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body || {};
@@ -172,6 +193,62 @@ app.get('/api/reports', (req, res) => {
 app.get('/api/orgchart', (req, res) => {
   const users = db.prepare('SELECT * FROM users').all().map(publicUser);
   res.json({ users });
+});
+
+// ---- User page settings (per-person feature toggles) ------------------------
+app.get('/api/users/:id/page-settings', (req, res) => {
+  const targetId = Number(req.params.id);
+  if (!canViewTasksOf(req.user, targetId)) return res.status(403).json({ error: 'Not allowed' });
+  res.json({ settings: getPageSettings(targetId) });
+});
+
+app.put('/api/users/:id/page-settings', (req, res) => {
+  const targetId = Number(req.params.id);
+  if (req.user.role !== 'admin' && !isManagerOf(req.user, targetId)) {
+    return res.status(403).json({ error: 'Only admins or the direct manager can edit page settings' });
+  }
+  const { bannerEnabled, bannerTitle, bannerUrl, calendarEnabled, calendarUrl,
+          formEnabled, formTitle, formFields, announcementEnabled, announcementText } = req.body || {};
+  db.prepare('INSERT OR IGNORE INTO user_page_settings (userId) VALUES (?)').run(targetId);
+  db.prepare(`UPDATE user_page_settings SET
+    bannerEnabled       = COALESCE(?, bannerEnabled),
+    bannerTitle         = COALESCE(?, bannerTitle),
+    bannerUrl           = COALESCE(?, bannerUrl),
+    calendarEnabled     = COALESCE(?, calendarEnabled),
+    calendarUrl         = COALESCE(?, calendarUrl),
+    formEnabled         = COALESCE(?, formEnabled),
+    formTitle           = COALESCE(?, formTitle),
+    formFields          = COALESCE(?, formFields),
+    announcementEnabled = COALESCE(?, announcementEnabled),
+    announcementText    = COALESCE(?, announcementText),
+    updatedAt           = datetime('now')
+  WHERE userId = ?`).run(
+    bannerEnabled !== undefined ? (bannerEnabled ? 1 : 0) : null,
+    bannerTitle ?? null,
+    bannerUrl ?? null,
+    calendarEnabled !== undefined ? (calendarEnabled ? 1 : 0) : null,
+    calendarUrl ?? null,
+    formEnabled !== undefined ? (formEnabled ? 1 : 0) : null,
+    formTitle ?? null,
+    formFields !== undefined ? JSON.stringify(Array.isArray(formFields) ? formFields : []) : null,
+    announcementEnabled !== undefined ? (announcementEnabled ? 1 : 0) : null,
+    announcementText ?? null,
+    targetId,
+  );
+  res.json({ settings: getPageSettings(targetId) });
+});
+
+app.get('/api/users/:id/calendar', async (req, res) => {
+  const targetId = Number(req.params.id);
+  if (!canViewTasksOf(req.user, targetId)) return res.status(403).json({ error: 'Not allowed' });
+  const settings = getPageSettings(targetId);
+  if (!settings.calendarEnabled || !settings.calendarUrl) return res.json({ events: [] });
+  try {
+    const events = await fetchUpcoming(settings.calendarUrl, 5);
+    res.json({ events });
+  } catch (_) {
+    res.json({ events: [], error: 'Failed to fetch calendar events' });
+  }
 });
 
 // ---- Tasks ------------------------------------------------------------------

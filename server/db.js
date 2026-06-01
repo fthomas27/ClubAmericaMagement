@@ -59,6 +59,22 @@ function init() {
       calendarUrl     TEXT NOT NULL DEFAULT '',
       updatedAt       TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Per-user page feature flags configured by admins/managers.
+    CREATE TABLE IF NOT EXISTS user_page_settings (
+      userId              INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      bannerEnabled       INTEGER NOT NULL DEFAULT 0,
+      bannerTitle         TEXT NOT NULL DEFAULT '',
+      bannerUrl           TEXT NOT NULL DEFAULT '',
+      calendarEnabled     INTEGER NOT NULL DEFAULT 0,
+      calendarUrl         TEXT NOT NULL DEFAULT '',
+      formEnabled         INTEGER NOT NULL DEFAULT 0,
+      formTitle           TEXT NOT NULL DEFAULT '',
+      formFields          TEXT NOT NULL DEFAULT '[]',
+      announcementEnabled INTEGER NOT NULL DEFAULT 0,
+      announcementText    TEXT NOT NULL DEFAULT '',
+      updatedAt           TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   // Migration for databases created before canEditHome existed.

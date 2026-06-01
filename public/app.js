@@ -279,7 +279,7 @@ function TaskCard({ task, canEdit, onChange, onDelete }) {
       <div className="flex items-center flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-cream/50">
         {task.dueDate && <span>Due {task.dueDate}</span>}
         <span>Assigned by <span className="text-gold/80">{task.assignedByName}</span></span>
-        {task.approvalStatus === 'pending' && <Badge tone="red">Pending approval</Badge>
+        {task.approvalStatus === 'pending' && <Badge tone="red">Pending approval</Badge>}
       </div>
       {canEdit && task.approvalStatus === 'approved' && (
         <div className="flex items-center gap-2 mt-3">
@@ -383,15 +383,303 @@ function AssignTaskForm({ me, users, onCreated }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Per-user page feature sections & admin toggle panel
+// ---------------------------------------------------------------------------
+function Toggle({ enabled, onChange, disabled }) {
+  return (
+    <button
+      type="button"
+      onClick={onChange}
+      disabled={disabled}
+      aria-pressed={!!enabled}
+      className={`relative w-12 h-7 rounded-full transition-colors disabled:opacity-50 shrink-0 ${enabled ? 'bg-emerald-500' : 'bg-cream/20'}`}
+    >
+      <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white transition-transform ${enabled ? 'translate-x-5' : ''}`} />
+    </button>
+  );
+}
+
+function BannerSection({ title, url }) {
+  return (
+    <a
+      href={url || '#'}
+      target={url ? '_blank' : undefined}
+      rel="noopener"
+      className="block w-full bg-gold/15 border border-gold/40 rounded-xl px-6 py-5 text-center font-display text-2xl text-gold hover:bg-gold/25 transition-colors mb-6"
+    >
+      {title || 'Click Here →'}
+    </a>
+  );
+}
+
+function AnnouncementSection({ text }) {
+  return (
+    <div className="bg-red/10 border-l-4 border-red rounded-r-xl px-5 py-4 mb-6 flex gap-3 items-start">
+      <span className="text-xl mt-0.5 shrink-0">📌</span>
+      <div className="text-cream whitespace-pre-wrap">{text}</div>
+    </div>
+  );
+}
+
+function PersonalCalendarSection({ userId }) {
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [calError, setCalError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setCalError('');
+    api(`/users/${userId}/calendar`)
+      .then((d) => { if (!cancelled) { setEvents(d.events || []); setLoading(false); } })
+      .catch((err) => { if (!cancelled) { setCalError(err.message); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  return (
+    <div className="bg-navy2 border border-cream/10 rounded-xl p-5 mb-6">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-lg">📅</span>
+        <div className="font-display text-2xl text-gold">My Calendar</div>
+      </div>
+      {loading && <div className="text-cream/40 text-sm">Loading events…</div>}
+      {calError && <div className="text-red text-sm">{calError}</div>}
+      {!loading && !calError && events.length === 0 && (
+        <div className="text-cream/40 text-sm">No upcoming events.</div>
+      )}
+      {!loading && events.length > 0 && (
+        <ul className="space-y-3">
+          {events.map((e, i) => (
+            <li key={i} className="border-l-2 border-gold/50 pl-3">
+              <div className="text-cream font-medium leading-tight">{e.title}</div>
+              <div className="text-sm text-gold/80">{fmtEvent(e.start)}</div>
+              {e.location && <div className="text-sm text-cream/50">{e.location}</div>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function CopyableFormSection({ title, fields }) {
+  const parsedFields = useMemo(() => {
+    if (Array.isArray(fields)) return fields;
+    try { return JSON.parse(fields || '[]'); } catch (_) { return []; }
+  }, [fields]);
+
+  const [values, setValues] = useState({});
+  const [copied, setCopied] = useState(false);
+
+  function setField(field, val) {
+    setValues((v) => ({ ...v, [field]: val }));
+  }
+
+  async function copyToClipboard() {
+    const heading = title || 'Form Submission';
+    const lines = [`📋 ${heading}`, ''];
+    for (const f of parsedFields) {
+      lines.push(`${f}: ${values[f] || '—'}`);
+    }
+    lines.push('', `Submitted: ${new Date().toLocaleDateString()}`);
+    try {
+      await navigator.clipboard.writeText(lines.join('\n'));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (_) {}
+  }
+
+  if (parsedFields.length === 0) return null;
+
+  return (
+    <div className="bg-navy2 border border-cream/10 rounded-xl p-5 mb-6">
+      <div className="font-display text-2xl text-gold mb-4">{title || 'Log'}</div>
+      <div className="grid sm:grid-cols-2 gap-3 mb-4">
+        {parsedFields.map((f) => (
+          <Field key={f} label={f}>
+            <input className={inputCls} value={values[f] || ''} onChange={(e) => setField(f, e.target.value)} placeholder={`Enter ${f.toLowerCase()}…`} />
+          </Field>
+        ))}
+      </div>
+      <Button variant="gold" onClick={copyToClipboard}>
+        {copied ? '✓ Copied to Clipboard!' : 'Copy to Clipboard'}
+      </Button>
+      <p className="text-xs text-cream/40 mt-2">Fill in the fields above, then copy and paste anywhere.</p>
+    </div>
+  );
+}
+
+function PageAdminControls({ targetUser, onUpdated }) {
+  const [settings, setSettings] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [fieldInput, setFieldInput] = useState('');
+  const [error, setError] = useState('');
+
+  async function load() {
+    setError('');
+    try {
+      const d = await api(`/users/${targetUser.id}/page-settings`);
+      setSettings(d.settings);
+      setFieldInput(d.settings.formFields.join(', '));
+    } catch (err) { setError(err.message); }
+  }
+
+  useEffect(() => { if (open) load(); }, [open, targetUser.id]);
+
+  async function save(patch) {
+    setBusy(true);
+    setError('');
+    try {
+      const d = await api(`/users/${targetUser.id}/page-settings`, { method: 'PUT', body: patch });
+      setSettings(d.settings);
+      if (patch.formFields !== undefined) setFieldInput(d.settings.formFields.join(', '));
+      onUpdated && onUpdated(d.settings);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function toggle(key) {
+    if (!settings || busy) return;
+    await save({ [key]: !settings[key] });
+  }
+
+  if (!open) return (
+    <div className="mb-4">
+      <button
+        onClick={() => setOpen(true)}
+        className="text-sm text-gold/60 hover:text-gold flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gold/20 hover:border-gold/50 transition-colors"
+      >
+        ⚙ Page Settings
+      </button>
+    </div>
+  );
+
+  return (
+    <div className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6">
+      <div className="flex items-center justify-between mb-5">
+        <div className="font-display text-xl text-gold">Page Settings — {targetUser.displayName}</div>
+        <button onClick={() => setOpen(false)} className="text-cream/50 hover:text-cream text-2xl leading-none">×</button>
+      </div>
+
+      {!settings ? (
+        <div className="text-cream/40 text-sm">Loading…</div>
+      ) : (
+        <div className="divide-y divide-cream/10">
+
+          <div className="py-4 first:pt-0">
+            <div className="flex items-start justify-between gap-4 mb-2">
+              <div>
+                <div className="text-cream font-medium">Full-Width Banner Link</div>
+                <div className="text-cream/50 text-sm">A prominent full-screen-wide button linking to any URL.</div>
+              </div>
+              <Toggle enabled={settings.bannerEnabled} onChange={() => toggle('bannerEnabled')} disabled={busy} />
+            </div>
+            {settings.bannerEnabled && (
+              <div className="grid sm:grid-cols-2 gap-3 mt-3">
+                <Field label="Button Text / Title">
+                  <input className={inputCls} defaultValue={settings.bannerTitle}
+                    onBlur={(e) => e.target.value !== settings.bannerTitle && save({ bannerTitle: e.target.value })}
+                    placeholder="e.g. View Chapter Resources" />
+                </Field>
+                <Field label="Link URL">
+                  <input className={inputCls} defaultValue={settings.bannerUrl}
+                    onBlur={(e) => e.target.value !== settings.bannerUrl && save({ bannerUrl: e.target.value })}
+                    placeholder="https://…" />
+                </Field>
+              </div>
+            )}
+          </div>
+
+          <div className="py-4">
+            <div className="flex items-start justify-between gap-4 mb-2">
+              <div>
+                <div className="text-cream font-medium">Pinned Announcement</div>
+                <div className="text-cream/50 text-sm">A highlighted note visible at the top of their page.</div>
+              </div>
+              <Toggle enabled={settings.announcementEnabled} onChange={() => toggle('announcementEnabled')} disabled={busy} />
+            </div>
+            {settings.announcementEnabled && (
+              <div className="mt-3">
+                <Field label="Announcement Text">
+                  <textarea className={inputCls} rows="2" defaultValue={settings.announcementText}
+                    onBlur={(e) => e.target.value !== settings.announcementText && save({ announcementText: e.target.value })}
+                    placeholder="e.g. Please submit your weekly report by Friday." />
+                </Field>
+              </div>
+            )}
+          </div>
+
+          <div className="py-4">
+            <div className="flex items-start justify-between gap-4 mb-2">
+              <div>
+                <div className="text-cream font-medium">Personal Calendar</div>
+                <div className="text-cream/50 text-sm">Shows upcoming events from an iCal / .ics feed.</div>
+              </div>
+              <Toggle enabled={settings.calendarEnabled} onChange={() => toggle('calendarEnabled')} disabled={busy} />
+            </div>
+            {settings.calendarEnabled && (
+              <div className="mt-3">
+                <Field label="iCal URL (.ics address)">
+                  <input className={inputCls} defaultValue={settings.calendarUrl}
+                    onBlur={(e) => e.target.value !== settings.calendarUrl && save({ calendarUrl: e.target.value })}
+                    placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" />
+                </Field>
+              </div>
+            )}
+          </div>
+
+          <div className="py-4 pb-0">
+            <div className="flex items-start justify-between gap-4 mb-2">
+              <div>
+                <div className="text-cream font-medium">Copyable Log Form</div>
+                <div className="text-cream/50 text-sm">A fillable form the member copies to clipboard (e.g. recruitment quota log).</div>
+              </div>
+              <Toggle enabled={settings.formEnabled} onChange={() => toggle('formEnabled')} disabled={busy} />
+            </div>
+            {settings.formEnabled && (
+              <div className="mt-3 space-y-3">
+                <Field label="Form Title">
+                  <input className={inputCls} defaultValue={settings.formTitle}
+                    onBlur={(e) => e.target.value !== settings.formTitle && save({ formTitle: e.target.value })}
+                    placeholder="e.g. Recruitment Log" />
+                </Field>
+                <Field label="Fields (comma-separated)">
+                  <input className={inputCls} value={fieldInput}
+                    onChange={(e) => setFieldInput(e.target.value)}
+                    onBlur={() => save({ formFields: fieldInput.split(',').map((f) => f.trim()).filter(Boolean) })}
+                    placeholder="e.g. Grade, Week, New Members, Running Total" />
+                </Field>
+                {settings.formFields.length > 0 && (
+                  <div className="text-xs text-cream/40">Current fields: {settings.formFields.join(', ')}</div>
+                )}
+              </div>
+            )}
+          </div>
+
+        </div>
+      )}
+      {error && <div className="text-red text-sm mt-3">{error}</div>}
+    </div>
+  );
+}
+
 function TaskPage({ me, userId, users, refreshSignal }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [pageSettings, setPageSettings] = useState(null);
   const isSelf = userId === me.id;
+  const canManagePage = !isSelf && (me.role === 'admin' || me.role === 'manager');
 
   const load = useCallback(async () => {
     try {
-      const d = await api(`/users/${userId}/tasks`);
-      setData(d);
+      const [taskData, settingsData] = await Promise.all([
+        api(`/users/${userId}/tasks`),
+        api(`/users/${userId}/page-settings`).catch(() => ({ settings: {} })),
+      ]);
+      setData(taskData);
+      setPageSettings(settingsData.settings);
     } catch (err) { setError(err.message); }
   }, [userId]);
 
@@ -407,10 +695,21 @@ function TaskPage({ me, userId, users, refreshSignal }) {
     load();
   }
 
+  function reloadSettings(newSettings) {
+    if (newSettings) {
+      setPageSettings(newSettings);
+    } else {
+      api(`/users/${userId}/page-settings`)
+        .then((d) => setPageSettings(d.settings))
+        .catch(() => {});
+    }
+  }
+
   if (error) return <div className="text-red">{error}</div>;
   if (!data) return <div className="text-cream/50">Loading…</div>;
 
   const { user, tasks } = data;
+  const ps = pageSettings || {};
   const grouped = {
     'Not Started': tasks.filter((t) => t.status === 'Not Started'),
     'In Progress': tasks.filter((t) => t.status === 'In Progress'),
@@ -422,12 +721,19 @@ function TaskPage({ me, userId, users, refreshSignal }) {
       <div className="flex items-end justify-between mb-6 flex-wrap gap-2">
         <div>
           <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">
-            {isSelf ? 'My Tasks' : user.displayName}
+            {isSelf ? 'My Page' : user.displayName}
           </h1>
           <div className="text-cream/50 mt-1">{user.title || roleLabel(user.role)} · @{user.username}</div>
         </div>
         <Badge tone="gold">{tasks.length} task{tasks.length === 1 ? '' : 's'}</Badge>
       </div>
+
+      {canManagePage && <PageAdminControls targetUser={user} onUpdated={reloadSettings} />}
+
+      {ps.bannerEnabled && <BannerSection title={ps.bannerTitle} url={ps.bannerUrl} />}
+      {ps.announcementEnabled && <AnnouncementSection text={ps.announcementText} />}
+      {ps.calendarEnabled && <PersonalCalendarSection userId={userId} />}
+      {ps.formEnabled && <CopyableFormSection title={ps.formTitle} fields={ps.formFields} />}
 
       <div className="space-y-3 mb-6">
         <NewTaskForm targetUserId={isSelf ? undefined : userId} onCreated={load} />
@@ -445,8 +751,8 @@ function TaskPage({ me, userId, users, refreshSignal }) {
                 <TaskCard key={t.id} task={t} canEdit={true} onChange={changeTask} onDelete={deleteTask} />
               ))}
             </div>
-        </div>
-      ))}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -998,7 +1304,7 @@ function Sidebar({ me, reports, approvalsCount, view, setView, onLogout, open, o
         {canEditSite && (
           <NavItem active={view.type === 'website'} onClick={() => setView({ type: 'website' })}>Edit Website</NavItem>
         )}
-        <NavItem active={view.type === 'mytasks'} onClick={() => setView({ type: 'mytasks' })}>My Tasks</NavItem>
+        <NavItem active={view.type === 'mytasks'} onClick={() => setView({ type: 'mytasks' })}>My Page</NavItem>
 
         {isManager && (
           <div>
