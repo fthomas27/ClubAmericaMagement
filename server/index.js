@@ -454,7 +454,7 @@ app.post('/api/checkins', (req, res) => {
   const weekOf = monday.toISOString().slice(0, 10);
   const existing = db.prepare('SELECT id FROM weekly_checkins WHERE userId=? AND weekOf=?').get(req.user.id, weekOf);
   if (existing) {
-    db.prepare('UPDATE weekly_checkins SET content=?, submittedAt=datetime("now") WHERE id=?').run(content, existing.id);
+    db.prepare("UPDATE weekly_checkins SET content=?, submittedAt=datetime('now') WHERE id=?").run(content, existing.id);
   } else {
     db.prepare('INSERT INTO weekly_checkins (userId,content,weekOf) VALUES (?,?,?)').run(req.user.id, content, weekOf);
   }
@@ -740,12 +740,15 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
   const newManagerId = managerId === undefined ? user.managerId : (managerId || null);
   if (newManagerId === user.id) return res.status(400).json({ error: 'A user cannot manage themselves' });
 
+  // managedGrade is nullable, so handle it directly (COALESCE can't clear a value).
+  const newManagedGrade = managedGrade === undefined ? user.managedGrade : (managedGrade || null);
+
   db.prepare(`UPDATE users SET
     role = ?,
     title = COALESCE(?, title),
     managerId = ?,
     canManageRoster = COALESCE(?, canManageRoster),
-    managedGrade    = COALESCE(?, managedGrade),
+    managedGrade    = ?,
     canAnnounce     = COALESCE(?, canAnnounce),
     canEditHome     = COALESCE(?, canEditHome)
   WHERE id = ?`).run(
@@ -753,7 +756,7 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     title ?? null,
     newManagerId,
     canManageRoster !== undefined ? (canManageRoster ? 1 : 0) : null,
-    managedGrade !== undefined ? (managedGrade || null) : user.managedGrade,
+    newManagedGrade,
     canAnnounce !== undefined ? (canAnnounce ? 1 : 0) : null,
     canEditHome !== undefined ? (canEditHome ? 1 : 0) : null,
     user.id,

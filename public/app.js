@@ -150,7 +150,7 @@ function Logo({ size = 'sidebar' }) {
             alt="Club America at Park City High School"
             onError={() => setFailed(true)}
             className={`object-contain ${big ? 'max-h-40 w-auto' : 'max-h-16 w-auto'}`}
-          )}
+          />
         )}
       </div>
     </div>
