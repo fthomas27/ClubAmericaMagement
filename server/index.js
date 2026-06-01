@@ -458,6 +458,40 @@ app.get('/api/roster', (req, res) => {
   res.json({ members: db.prepare(sql).all(...params), myGrade: req.user.managedGrade || null });
 });
 
+// Import all portal users (board members) as Onboarded roster entries, skipping duplicates.
+app.post('/api/roster/import-board', (req, res) => {
+  if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const users = db.prepare('SELECT * FROM users').all();
+  const existing = db.prepare('SELECT email, firstName, lastName FROM roster_members').all();
+  const existingEmails = new Set(existing.map((r) => r.email?.toLowerCase()).filter(Boolean));
+  const existingNames = new Set(existing.map((r) => `${r.firstName?.toLowerCase()}|${r.lastName?.toLowerCase()}`));
+
+  const insert = db.prepare(`INSERT INTO roster_members (firstName, lastName, email, grade, roleDescription, status)
+    VALUES (?, ?, ?, ?, 'Board Member', 'Onboarded')`);
+
+  let imported = 0;
+  let skipped = 0;
+  const importMany = db.transaction(() => {
+    for (const u of users) {
+      const email = (u.email || '').trim().toLowerCase();
+      const nameKey = `${(u.firstName || '').toLowerCase()}|${(u.lastName || '').toLowerCase()}`;
+      if ((email && existingEmails.has(email)) || existingNames.has(nameKey)) {
+        skipped++;
+        continue;
+      }
+      insert.run(
+        u.firstName || u.displayName, u.lastName || '',
+        u.email || '', u.grade ? String(u.grade) : null
+      );
+      if (email) existingEmails.add(email);
+      existingNames.add(nameKey);
+      imported++;
+    }
+  });
+  importMany();
+  res.json({ imported, skipped });
+});
+
 app.post('/api/roster', (req, res) => {
   if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
   const { firstName, lastName, phone, email, grade, gender, roleDescription, status, notes } = req.body || {};

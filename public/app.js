@@ -2089,7 +2089,7 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
 
 function AddRosterMemberForm({ me, onCreated }) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', roleDescription: '', status: 'Prospect', notes: '' });
+  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', status: 'Prospect', notes: '' });
   const [error, setError] = useState('');
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -2098,7 +2098,7 @@ function AddRosterMemberForm({ me, onCreated }) {
     e.preventDefault(); setError('');
     try {
       await api('/roster', { method: 'POST', body: { ...form, grade: form.grade ? Number(form.grade) : null } });
-      setForm({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', roleDescription: '', status: 'Prospect', notes: '' });
+      setForm({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', status: 'Prospect', notes: '' });
       setOpen(false); onCreated();
     } catch (err) { setError(err.message); }
   }
@@ -2125,7 +2125,6 @@ function AddRosterMemberForm({ me, onCreated }) {
             <option value="Female">Female</option>
           </select>
         </Field>
-        <Field label="Role Description"><input className={inputCls} value={form.roleDescription} onChange={set('roleDescription')} placeholder="e.g. Grade Rep" /></Field>
         <Field label="Status">
           <select className={inputCls} value={form.status} onChange={set('status')}>
             {ROSTER_STATUSES.map((s) => <option key={s}>{s}</option>)}
@@ -2313,6 +2312,14 @@ function RosterPage({ me }) {
   }, [gradeFilter, statusFilter]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Auto-import board portal members once on mount (idempotent — skips existing entries).
+  useEffect(() => {
+    if (isPrivileged || me.canManageRoster) {
+      api('/roster/import-board', { method: 'POST' }).then(() => load()).catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Grade reps default to their assigned grade filter
   useEffect(() => {
