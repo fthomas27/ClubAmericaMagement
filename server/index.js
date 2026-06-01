@@ -105,6 +105,10 @@ app.post('/api/auth/login', (req, res) => {
   if (!user || !bcrypt.compareSync(password, user.passwordHash)) {
     return res.status(401).json({ error: 'Invalid username or password' });
   }
+  try {
+    const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+    db.prepare('INSERT INTO login_logs (userId, username, ipAddress) VALUES (?, ?, ?)').run(user.id, user.username, ip);
+  } catch (_) {}
   res.json({ token: signToken(user), user: publicUser(user) });
 });
 
@@ -142,7 +146,7 @@ app.get('/api/home', async (req, res) => {
 // Public board roster for the "Meet the Board" page (no private info, no auth).
 app.get('/api/board', (req, res) => {
   const members = db
-    .prepare('SELECT id, displayName, title, role, grade, managerId, bio, photo FROM users ORDER BY displayName')
+    .prepare("SELECT id, displayName, title, role, grade, managerId, bio, photo FROM users WHERE username != 'logistics' ORDER BY displayName")
     .all()
     .map((m) => ({ ...m, photo: m.photo || null }));
   res.json({ members });
@@ -316,7 +320,7 @@ app.put('/api/home/announcement', (req, res) => {
 
 // ---- Directory / org --------------------------------------------------------
 app.get('/api/users', (req, res) => {
-  const users = db.prepare('SELECT * FROM users ORDER BY displayName').all().map(publicUser);
+  const users = db.prepare("SELECT * FROM users WHERE username != 'logistics' ORDER BY displayName").all().map(publicUser);
   res.json({ users });
 });
 
@@ -325,7 +329,7 @@ app.get('/api/users', (req, res) => {
 app.get('/api/reports', (req, res) => {
   let reports;
   if (req.user.role === 'admin') {
-    reports = db.prepare('SELECT * FROM users WHERE id != ? ORDER BY displayName').all(req.user.id);
+    reports = db.prepare("SELECT * FROM users WHERE id != ? AND username != 'logistics' ORDER BY displayName").all(req.user.id);
   } else {
     reports = directReports(req.user.id);
   }
@@ -333,7 +337,7 @@ app.get('/api/reports', (req, res) => {
 });
 
 app.get('/api/orgchart', (req, res) => {
-  const users = db.prepare('SELECT * FROM users').all().map(publicUser);
+  const users = db.prepare("SELECT * FROM users WHERE username != 'logistics'").all().map(publicUser);
   res.json({ users });
 });
 
@@ -962,6 +966,37 @@ app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
   db.prepare('UPDATE users SET passwordHash = ?, firstLogin = 1 WHERE id = ?')
     .run(bcrypt.hashSync(target.username, 10), target.id);
   res.json({ ok: true, defaultPassword: target.username });
+});
+
+// ---- Logistics login tracking (logistics user only) -------------------------
+app.get('/api/logistics/stats', (req, res) => {
+  if (req.user.username !== 'logistics') return res.status(403).json({ error: 'Access denied' });
+  const stats = db.prepare(`
+    SELECT
+      u.id         AS userId,
+      u.username,
+      u.displayName,
+      u.title,
+      u.role,
+      COALESCE(COUNT(l.id), 0) AS totalLogins,
+      MAX(l.loginAt)           AS lastLogin,
+      COALESCE(SUM(CASE WHEN date(l.loginAt) = date('now') THEN 1 ELSE 0 END), 0) AS todayLogins
+    FROM users u
+    LEFT JOIN login_logs l ON l.userId = u.id
+    WHERE u.username != 'logistics'
+    GROUP BY u.id
+    ORDER BY totalLogins DESC, u.displayName
+  `).all();
+  const recentLogins = db.prepare(`
+    SELECT l.id, l.userId, l.username, l.loginAt, l.ipAddress,
+           u.displayName, u.title, u.role
+    FROM login_logs l
+    JOIN users u ON u.id = l.userId
+    WHERE u.username != 'logistics'
+    ORDER BY l.loginAt DESC
+    LIMIT 200
+  `).all();
+  res.json({ stats, recentLogins });
 });
 
 // ---- Static frontend --------------------------------------------------------

