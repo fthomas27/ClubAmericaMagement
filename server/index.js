@@ -80,6 +80,7 @@ function getPageSettings(userId) {
     calendarEnabled: false, calendarUrl: '',
     formEnabled: false, formTitle: '', formFields: [],
     announcementEnabled: false, announcementText: '',
+    bioEnabled: false, bioText: '',
   };
   let formFields = [];
   try { formFields = JSON.parse(row.formFields || '[]'); } catch (_) {}
@@ -89,6 +90,7 @@ function getPageSettings(userId) {
     calendarEnabled: !!row.calendarEnabled,
     formEnabled: !!row.formEnabled,
     announcementEnabled: !!row.announcementEnabled,
+    bioEnabled: !!row.bioEnabled,
     formFields,
   };
 }
@@ -133,6 +135,18 @@ app.get('/api/home', async (req, res) => {
   // Don't leak the raw calendar URL to the public payload.
   const { calendarUrl, ...publicHome } = home;
   res.json({ home: { ...publicHome, calendarConfigured: !!calendarUrl }, events });
+});
+
+// Public interest survey — no auth required.
+app.post('/api/roster/survey', (req, res) => {
+  const { firstName, lastName, phone, email, gender } = req.body || {};
+  if (!firstName || !String(firstName).trim()) return res.status(400).json({ error: 'First name required' });
+  const info = db.prepare(`INSERT INTO roster_members (firstName, lastName, phone, email, gender)
+    VALUES (?, ?, ?, ?, ?)`).run(
+    String(firstName).trim(), String(lastName || '').trim(),
+    String(phone || '').trim(), String(email || '').trim(), String(gender || '').trim()
+  );
+  res.status(201).json({ ok: true, id: info.lastInsertRowid });
 });
 
 // Everything past this point requires a changed password.
@@ -224,7 +238,8 @@ app.put('/api/users/:id/page-settings', (req, res) => {
     return res.status(403).json({ error: 'Only admins or the direct manager can edit page settings' });
   }
   const { bannerEnabled, bannerTitle, bannerUrl, calendarEnabled, calendarUrl,
-          formEnabled, formTitle, formFields, announcementEnabled, announcementText } = req.body || {};
+          formEnabled, formTitle, formFields, announcementEnabled, announcementText,
+          bioEnabled, bioText } = req.body || {};
   db.prepare('INSERT OR IGNORE INTO user_page_settings (userId) VALUES (?)').run(targetId);
   db.prepare(`UPDATE user_page_settings SET
     bannerEnabled       = COALESCE(?, bannerEnabled),
@@ -237,6 +252,8 @@ app.put('/api/users/:id/page-settings', (req, res) => {
     formFields          = COALESCE(?, formFields),
     announcementEnabled = COALESCE(?, announcementEnabled),
     announcementText    = COALESCE(?, announcementText),
+    bioEnabled          = COALESCE(?, bioEnabled),
+    bioText             = COALESCE(?, bioText),
     updatedAt           = datetime('now')
   WHERE userId = ?`).run(
     bannerEnabled !== undefined ? (bannerEnabled ? 1 : 0) : null,
@@ -249,6 +266,8 @@ app.put('/api/users/:id/page-settings', (req, res) => {
     formFields !== undefined ? JSON.stringify(Array.isArray(formFields) ? formFields : []) : null,
     announcementEnabled !== undefined ? (announcementEnabled ? 1 : 0) : null,
     announcementText ?? null,
+    bioEnabled !== undefined ? (bioEnabled ? 1 : 0) : null,
+    bioText ?? null,
     targetId,
   );
   res.json({ settings: getPageSettings(targetId) });
@@ -307,6 +326,252 @@ app.get('/api/users/:id/announcements', (req, res) => {
   `).all(target.managerId || 0);
   res.json({ announcements: rows });
 });
+
+// ---- Roster -----------------------------------------------------------------
+function canViewRoster(user) {
+  return user.role === 'admin' || user.role === 'manager' || !!user.canManageRoster;
+}
+function canWriteRoster(user) {
+  return user.role === 'admin' || user.role === 'manager' || !!user.canManageRoster;
+}
+
+app.get('/api/roster', (req, res) => {
+  if (!canViewRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const { grade, status } = req.query;
+  let sql = 'SELECT r.*, u.displayName as claimedByName FROM roster_members r LEFT JOIN users u ON u.id = r.claimedByUserId WHERE 1=1';
+  const params = [];
+  if (grade) { sql += ' AND r.grade = ?'; params.push(Number(grade)); }
+  if (status) { sql += ' AND r.status = ?'; params.push(status); }
+  sql += ' ORDER BY r.createdAt DESC';
+  res.json({ members: db.prepare(sql).all(...params), myGrade: req.user.managedGrade || null });
+});
+
+app.post('/api/roster', (req, res) => {
+  if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const { firstName, lastName, phone, email, grade, gender, roleDescription, status, notes } = req.body || {};
+  if (!firstName) return res.status(400).json({ error: 'First name required' });
+  const info = db.prepare(`INSERT INTO roster_members (firstName,lastName,phone,email,grade,gender,roleDescription,status,notes)
+    VALUES (?,?,?,?,?,?,?,?,?)`).run(
+    String(firstName).trim(), String(lastName||'').trim(), String(phone||'').trim(),
+    String(email||'').trim(), grade||null, String(gender||'').trim(),
+    String(roleDescription||'').trim(), status||'Prospect', String(notes||'').trim()
+  );
+  res.status(201).json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(info.lastInsertRowid) });
+});
+
+app.patch('/api/roster/:id', (req, res) => {
+  if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const m = db.prepare('SELECT * FROM roster_members WHERE id=?').get(Number(req.params.id));
+  if (!m) return res.status(404).json({ error: 'Not found' });
+  const { firstName, lastName, phone, email, grade, gender, roleDescription, status, notes } = req.body || {};
+  db.prepare(`UPDATE roster_members SET
+    firstName=COALESCE(?,firstName), lastName=COALESCE(?,lastName), phone=COALESCE(?,phone),
+    email=COALESCE(?,email), grade=COALESCE(?,grade), gender=COALESCE(?,gender),
+    roleDescription=COALESCE(?,roleDescription), status=COALESCE(?,status), notes=COALESCE(?,notes),
+    updatedAt=datetime('now') WHERE id=?`).run(
+    firstName??null, lastName??null, phone??null, email??null, grade??null,
+    gender??null, roleDescription??null, status??null, notes??null, m.id
+  );
+  res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id) });
+});
+
+app.delete('/api/roster/:id', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  db.prepare('DELETE FROM roster_members WHERE id=?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+// First-to-claim logic — atomic UPDATE WHERE claimedByUserId IS NULL.
+app.post('/api/roster/:id/claim', (req, res) => {
+  if (!canViewRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const result = db.prepare(`UPDATE roster_members SET claimedByUserId=?, updatedAt=datetime('now')
+    WHERE id=? AND claimedByUserId IS NULL`).run(req.user.id, Number(req.params.id));
+  if (result.changes === 0) return res.status(409).json({ error: 'Already claimed by someone else' });
+  res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(Number(req.params.id)) });
+});
+
+app.post('/api/roster/:id/contacted', (req, res) => {
+  if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  db.prepare(`UPDATE roster_members SET status='Contacted', updatedAt=datetime('now') WHERE id=?`).run(Number(req.params.id));
+  res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(Number(req.params.id)) });
+});
+
+app.post('/api/roster/:id/convert', (req, res) => {
+  if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const { grade, roleDescription } = req.body || {};
+  db.prepare(`UPDATE roster_members SET status='Onboarded', convertedAt=datetime('now'),
+    grade=COALESCE(?,grade), roleDescription=COALESCE(?,roleDescription), updatedAt=datetime('now')
+    WHERE id=?`).run(grade||null, roleDescription||null, Number(req.params.id));
+  res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(Number(req.params.id)) });
+});
+
+app.post('/api/roster/:id/decline', (req, res) => {
+  if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  db.prepare(`UPDATE roster_members SET status='Declined', updatedAt=datetime('now') WHERE id=?`).run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+// ---- Weekly Check-Ins -------------------------------------------------------
+function getCheckinEnabled() {
+  const row = db.prepare('SELECT weeklyCheckinEnabled FROM site_settings WHERE id=1').get();
+  return !!row?.weeklyCheckinEnabled;
+}
+
+app.get('/api/checkins/settings', (req, res) => {
+  res.json({ enabled: getCheckinEnabled() });
+});
+
+app.put('/api/checkins/settings', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Managers and admins only' });
+  const enabled = !!(req.body || {}).enabled;
+  db.prepare("UPDATE site_settings SET weeklyCheckinEnabled=?, updatedAt=datetime('now') WHERE id=1").run(enabled ? 1 : 0);
+  res.json({ enabled });
+});
+
+app.post('/api/checkins', (req, res) => {
+  if (!getCheckinEnabled()) return res.status(400).json({ error: 'Check-ins are currently disabled' });
+  const content = String((req.body || {}).content || '').trim();
+  if (!content) return res.status(400).json({ error: 'Content required' });
+  // weekOf = Monday of the current week (ISO date).
+  const now = new Date();
+  const day = now.getDay();
+  const monday = new Date(now); monday.setDate(now.getDate() - (day === 0 ? 6 : day - 1));
+  const weekOf = monday.toISOString().slice(0, 10);
+  const existing = db.prepare('SELECT id FROM weekly_checkins WHERE userId=? AND weekOf=?').get(req.user.id, weekOf);
+  if (existing) {
+    db.prepare('UPDATE weekly_checkins SET content=?, submittedAt=datetime("now") WHERE id=?').run(content, existing.id);
+  } else {
+    db.prepare('INSERT INTO weekly_checkins (userId,content,weekOf) VALUES (?,?,?)').run(req.user.id, content, weekOf);
+  }
+  res.json({ ok: true, weekOf });
+});
+
+app.get('/api/checkins', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const rows = db.prepare(`SELECT wc.*, u.displayName as userName, u.title as userTitle
+    FROM weekly_checkins wc JOIN users u ON u.id = wc.userId
+    ORDER BY wc.submittedAt DESC LIMIT 100`).all();
+  res.json({ checkins: rows });
+});
+
+app.get('/api/checkins/my', (req, res) => {
+  const weekOf = req.query.weekOf || (() => {
+    const now = new Date(); const day = now.getDay();
+    const monday = new Date(now); monday.setDate(now.getDate() - (day===0?6:day-1));
+    return monday.toISOString().slice(0,10);
+  })();
+  const row = db.prepare('SELECT * FROM weekly_checkins WHERE userId=? AND weekOf=?').get(req.user.id, weekOf);
+  res.json({ checkin: row || null, weekOf, enabled: getCheckinEnabled() });
+});
+
+// ---- Funding Requests -------------------------------------------------------
+app.get('/api/funding', (req, res) => {
+  const isPrivileged = req.user.role === 'admin' || req.user.role === 'manager';
+  let rows;
+  if (isPrivileged) {
+    rows = db.prepare(`SELECT fr.*, u.displayName as submitterName, rv.displayName as reviewerName
+      FROM funding_requests fr
+      JOIN users u ON u.id=fr.submittedById
+      LEFT JOIN users rv ON rv.id=fr.reviewedById
+      ORDER BY fr.createdAt DESC`).all();
+  } else {
+    rows = db.prepare(`SELECT fr.*, u.displayName as submitterName, rv.displayName as reviewerName
+      FROM funding_requests fr
+      JOIN users u ON u.id=fr.submittedById
+      LEFT JOIN users rv ON rv.id=fr.reviewedById
+      WHERE fr.submittedById=?
+      ORDER BY fr.createdAt DESC`).all(req.user.id);
+  }
+  res.json({ requests: rows });
+});
+
+app.post('/api/funding', (req, res) => {
+  const { title, description, amount } = req.body || {};
+  if (!title) return res.status(400).json({ error: 'Title required' });
+  const info = db.prepare(`INSERT INTO funding_requests (submittedById,title,description,amount)
+    VALUES (?,?,?,?)`).run(req.user.id, String(title).trim(), String(description||'').trim(), Number(amount)||0);
+  res.status(201).json({ request: db.prepare('SELECT * FROM funding_requests WHERE id=?').get(info.lastInsertRowid) });
+});
+
+app.patch('/api/funding/:id', (req, res) => {
+  const isPrivileged = req.user.role === 'admin' || req.user.role === 'manager';
+  const fr = db.prepare('SELECT * FROM funding_requests WHERE id=?').get(Number(req.params.id));
+  if (!fr) return res.status(404).json({ error: 'Not found' });
+  const { action, reviewNotes } = req.body || {};
+  if (!isPrivileged) return res.status(403).json({ error: 'Not allowed' });
+  if (action === 'approve') {
+    db.prepare(`UPDATE funding_requests SET status='approved', reviewedById=?, reviewedAt=datetime('now'), reviewNotes=COALESCE(?,reviewNotes) WHERE id=?`).run(req.user.id, reviewNotes??null, fr.id);
+  } else if (action === 'deny') {
+    db.prepare(`UPDATE funding_requests SET status='denied', reviewedById=?, reviewedAt=datetime('now'), reviewNotes=COALESCE(?,reviewNotes) WHERE id=?`).run(req.user.id, reviewNotes??null, fr.id);
+  } else if (action === 'purchased') {
+    db.prepare(`UPDATE funding_requests SET status='purchased', purchasedById=?, purchasedAt=datetime('now') WHERE id=?`).run(req.user.id, fr.id);
+  }
+  res.json({ request: db.prepare('SELECT * FROM funding_requests WHERE id=?').get(fr.id) });
+});
+
+// ---- Board Applications -----------------------------------------------------
+app.get('/api/board-apps', (req, res) => {
+  const isPrivileged = req.user.role === 'admin' || req.user.role === 'manager';
+  let rows;
+  if (isPrivileged) {
+    rows = db.prepare(`SELECT ba.*, u.displayName as applicantName, u.title as applicantTitle
+      FROM board_applications ba JOIN users u ON u.id=ba.userId
+      ORDER BY ba.createdAt DESC`).all();
+  } else {
+    rows = db.prepare(`SELECT ba.*, u.displayName as applicantName, u.title as applicantTitle
+      FROM board_applications ba JOIN users u ON u.id=ba.userId
+      WHERE ba.userId=? ORDER BY ba.createdAt DESC`).all(req.user.id);
+  }
+  res.json({ applications: rows });
+});
+
+app.post('/api/board-apps', (req, res) => {
+  const { positionTitle, statement } = req.body || {};
+  if (!positionTitle) return res.status(400).json({ error: 'Position title required' });
+  const info = db.prepare(`INSERT INTO board_applications (userId,positionTitle,statement) VALUES (?,?,?)`).run(
+    req.user.id, String(positionTitle).trim(), String(statement||'').trim()
+  );
+  res.status(201).json({ application: db.prepare('SELECT * FROM board_applications WHERE id=?').get(info.lastInsertRowid) });
+});
+
+app.patch('/api/board-apps/:id', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const ba = db.prepare('SELECT * FROM board_applications WHERE id=?').get(Number(req.params.id));
+  if (!ba) return res.status(404).json({ error: 'Not found' });
+  const { action } = req.body || {};
+  if (action === 'accept' || action === 'decline') {
+    const status = action === 'accept' ? 'accepted' : 'declined';
+    db.prepare(`UPDATE board_applications SET status=?, reviewedById=?, reviewedAt=datetime('now') WHERE id=?`).run(status, req.user.id, ba.id);
+  }
+  res.json({ application: db.prepare('SELECT * FROM board_applications WHERE id=?').get(ba.id) });
+});
+
+// ---- Manager Dashboard aggregate --------------------------------------------
+app.get('/api/dashboard', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const pendingFunding = db.prepare(`SELECT fr.*, u.displayName as submitterName
+    FROM funding_requests fr JOIN users u ON u.id=fr.submittedById
+    WHERE fr.status='pending' ORDER BY fr.createdAt DESC`).all();
+  const pendingApps = db.prepare(`SELECT ba.*, u.displayName as applicantName, u.title as applicantTitle
+    FROM board_applications ba JOIN users u ON u.id=ba.userId
+    WHERE ba.status='pending' ORDER BY ba.createdAt DESC`).all();
+  const recentCheckins = db.prepare(`SELECT wc.*, u.displayName as userName, u.title as userTitle
+    FROM weekly_checkins wc JOIN users u ON u.id=wc.userId
+    ORDER BY wc.submittedAt DESC LIMIT 50`).all();
+  let pendingTasks;
+  if (req.user.role === 'admin') {
+    pendingTasks = db.prepare("SELECT * FROM tasks WHERE approvalStatus='pending' ORDER BY createdAt DESC").all();
+  } else {
+    pendingTasks = db.prepare("SELECT * FROM tasks WHERE approvalStatus='pending' AND approverId=? ORDER BY createdAt DESC").all(req.user.id);
+  }
+  const pendingTasksNamed = pendingTasks.map(taskWithNames);
+  res.json({ pendingFunding, pendingApps, recentCheckins, pendingTasks: pendingTasksNamed,
+    counts: { funding: pendingFunding.length, apps: pendingApps.length, tasks: pendingTasksNamed.length } });
+});
+
+// ---- page-settings: also support bio fields ---------------------------------
+// (existing PUT /api/users/:id/page-settings already handles bioEnabled/bioText via COALESCE)
+// Extend getPageSettings to include bio fields.
 
 // ---- Tasks ------------------------------------------------------------------
 // A user's task page.
@@ -453,15 +718,31 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
 app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
   const user = getUser(Number(req.params.id));
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { role, title, managerId } = req.body || {};
+  const { role, title, managerId, canManageRoster, managedGrade, canAnnounce, canEditHome } = req.body || {};
   const prevManager = user.managerId;
 
   const newRole = ROLES.includes(role) ? role : user.role;
   const newManagerId = managerId === undefined ? user.managerId : (managerId || null);
   if (newManagerId === user.id) return res.status(400).json({ error: 'A user cannot manage themselves' });
 
-  db.prepare('UPDATE users SET role = ?, title = COALESCE(?, title), managerId = ? WHERE id = ?')
-    .run(newRole, title ?? null, newManagerId, user.id);
+  db.prepare(`UPDATE users SET
+    role = ?,
+    title = COALESCE(?, title),
+    managerId = ?,
+    canManageRoster = COALESCE(?, canManageRoster),
+    managedGrade    = COALESCE(?, managedGrade),
+    canAnnounce     = COALESCE(?, canAnnounce),
+    canEditHome     = COALESCE(?, canEditHome)
+  WHERE id = ?`).run(
+    newRole,
+    title ?? null,
+    newManagerId,
+    canManageRoster !== undefined ? (canManageRoster ? 1 : 0) : null,
+    managedGrade !== undefined ? (managedGrade || null) : user.managedGrade,
+    canAnnounce !== undefined ? (canAnnounce ? 1 : 0) : null,
+    canEditHome !== undefined ? (canEditHome ? 1 : 0) : null,
+    user.id,
+  );
 
   // Recompute manager flags for affected supervisors.
   if (prevManager) refreshRole(prevManager);
