@@ -3369,7 +3369,183 @@ function LogisticsPage() {
 }
 
 // ---------------------------------------------------------------------------
-function Sidebar({ me, reports, approvalsCount, submissionsCount, checkinEnabled, view, setView, onLogout, open, onClose }) {
+// ---------------------------------------------------------------------------
+// AI Notes panel (modal overlay — visible to all non-logistics users)
+// ---------------------------------------------------------------------------
+function AINotesPanel({ onClose, onRead }) {
+  const [notes, setNotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api('/ai/notes')
+      .then((d) => setNotes(d.notes || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function markRead(id) {
+    await api(`/ai/notes/${id}/read`, { method: 'PATCH' }).catch(() => {});
+    setNotes((prev) => prev.map((n) => n.id === id ? { ...n, isRead: 1 } : n));
+    onRead();
+  }
+
+  return (
+    <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+      <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-lg w-full p-6 relative max-h-[80vh] overflow-y-auto">
+        <button onClick={onClose} aria-label="Close" className="absolute top-2 right-4 text-cream/60 hover:text-cream text-3xl leading-none">×</button>
+        <div className="font-display text-2xl text-gold mb-1">AI Notes</div>
+        <p className="text-cream/40 text-xs mb-4">Private notes left by the AI when it notices something worth your attention.</p>
+        {loading && <div className="text-cream/40 text-sm">Loading…</div>}
+        {!loading && notes.length === 0 && (
+          <div className="text-cream/40 text-sm">No AI notes yet — you're all caught up.</div>
+        )}
+        <div className="space-y-3">
+          {notes.map((n) => (
+            <div key={n.id} className={`rounded-lg p-4 border ${n.isRead ? 'border-cream/10 bg-navy' : 'border-gold/40 bg-gold/5'}`}>
+              <div className="text-sm text-cream/85 whitespace-pre-wrap leading-relaxed">{n.content}</div>
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-xs text-cream/35">{new Date(n.createdAt).toLocaleDateString()}</span>
+                {!n.isRead && (
+                  <button onClick={() => markRead(n.id)} className="text-xs text-gold/70 hover:text-gold">Mark read</button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AI Chat page (admin only)
+// ---------------------------------------------------------------------------
+function AIChatPage({ me }) {
+  const [messages, setMessages] = useState([]);
+  const [sessionId, setSessionId] = useState(null);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [analyzeStatus, setAnalyzeStatus] = useState('');
+  const bottomRef = useRef(null);
+
+  useEffect(() => {
+    api('/ai/chat/history')
+      .then((d) => {
+        if (d.messages && d.messages.length) {
+          setMessages(d.messages);
+          setSessionId(d.sessionId);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (bottomRef.current) bottomRef.current.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  async function send(e) {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text || busy) return;
+    setInput('');
+    setBusy(true);
+    setError('');
+    const tempId = Date.now();
+    setMessages((prev) => [...prev, { _tempId: tempId, role: 'user', content: text }]);
+    try {
+      const d = await api('/ai/chat', { method: 'POST', body: { message: text, sessionId } });
+      setSessionId(d.sessionId);
+      setMessages((prev) => [
+        ...prev.filter((m) => m._tempId !== tempId),
+        { role: 'user', content: text },
+        { role: 'assistant', content: d.reply },
+      ]);
+    } catch (err) {
+      setError(err.message || 'Request failed');
+      setMessages((prev) => prev.filter((m) => m._tempId !== tempId));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function newChat() {
+    setMessages([]);
+    setSessionId(`${me.id}-${Date.now()}`);
+    setError('');
+  }
+
+  async function runAnalysis() {
+    setAnalyzeStatus('Running…');
+    try {
+      const d = await api('/ai/analyze', { method: 'POST' });
+      setAnalyzeStatus(d.skipped ? 'AI not configured (no API key).' : 'Analysis complete — check your team members\' AI Notes.');
+    } catch (err) {
+      setAnalyzeStatus('Analysis failed: ' + (err.message || 'unknown error'));
+    }
+    setTimeout(() => setAnalyzeStatus(''), 6000);
+  }
+
+  return (
+    <div className="max-w-3xl mx-auto flex flex-col" style={{ height: 'calc(100vh - 120px)' }}>
+      <div className="flex items-end justify-between mb-4 flex-wrap gap-2">
+        <div>
+          <h1 className="font-display text-4xl text-cream leading-none">AI Assistant</h1>
+          <p className="text-cream/50 text-sm mt-1">Ask about team health, tasks, check-ins, or get a summary.</p>
+        </div>
+        <div className="flex gap-2 items-center flex-wrap">
+          {analyzeStatus && <span className="text-xs text-cream/60">{analyzeStatus}</span>}
+          <Button variant="ghost" onClick={runAnalysis} className="text-xs">Run Analysis Now</Button>
+          <Button variant="ghost" onClick={newChat} className="text-xs">New Chat</Button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto bg-navy2 border border-cream/10 rounded-xl p-4 space-y-4 mb-4">
+        {messages.length === 0 && (
+          <div className="text-cream/30 text-sm text-center pt-8">
+            Ask something — e.g. "Who has the most overdue tasks?" or "Summarize this week's check-ins."
+          </div>
+        )}
+        {messages.map((m, i) => (
+          <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[82%] rounded-xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap
+              ${m.role === 'user'
+                ? 'bg-red/20 text-cream border border-red/30'
+                : 'bg-navy3 text-cream/90 border border-cream/10'}`}>
+              {m.role === 'assistant' && (
+                <div className="text-gold/60 text-xs font-medium mb-1 uppercase tracking-wider">AI</div>
+              )}
+              {m.content}
+            </div>
+          </div>
+        ))}
+        {busy && (
+          <div className="flex justify-start">
+            <div className="bg-navy3 border border-cream/10 rounded-xl px-4 py-3 text-cream/40 text-sm">Thinking…</div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {error && <div className="text-red text-sm mb-2">{error}</div>}
+
+      <form onSubmit={send} className="flex gap-2">
+        <input
+          className={inputCls + ' flex-1'}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Ask about the team…"
+          disabled={busy}
+        />
+        <Button type="submit" variant="gold" disabled={busy || !input.trim()}>
+          {busy ? '…' : 'Send'}
+        </Button>
+      </form>
+    </div>
+  );
+}
+
+function Sidebar({ me, reports, approvalsCount, submissionsCount, checkinEnabled, view, setView, onLogout, open, onClose, aiNotesCount, onAINotes }) {
   const [reportsOpen, setReportsOpen] = useState(true);
   const isManager = me.role === 'manager' || me.role === 'admin';
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
@@ -3491,6 +3667,12 @@ function Sidebar({ me, reports, approvalsCount, submissionsCount, checkinEnabled
         {me.role === 'admin' && (
           <NavItem active={view.type === 'admin'} onClick={() => setView({ type: 'admin' })}>Admin Panel</NavItem>
         )}
+
+        {me.role === 'admin' && (
+          <NavItem active={view.type === 'ai'} onClick={() => setView({ type: 'ai' })}>
+            🤖 AI Assistant
+          </NavItem>
+        )}
           </React.Fragment>
         )}
       </nav>
@@ -3503,6 +3685,15 @@ function Sidebar({ me, reports, approvalsCount, submissionsCount, checkinEnabled
           <button onClick={() => setView({ type: 'password' })} className="text-xs text-gold/80 hover:text-gold">Change password</button>
           <button onClick={onLogout} className="text-xs text-red/80 hover:text-red ml-auto">Log out</button>
         </div>
+        {me.username !== 'logistics' && (
+          <button onClick={onAINotes} className="mt-2 w-full text-left text-xs text-cream/60 hover:text-gold flex items-center gap-1">
+            <span>🔔</span>
+            <span>AI Notes</span>
+            {aiNotesCount > 0 && (
+              <span className="ml-1 bg-gold text-navy text-xs font-semibold rounded-full px-1.5 py-0.5 leading-none">{aiNotesCount}</span>
+            )}
+          </button>
+        )}
       </div>
       </aside>
     </React.Fragment>
@@ -3522,6 +3713,8 @@ function App() {
   const [submissionsCount, setSubmissionsCount] = useState(0);
   const [checkinEnabled, setCheckinEnabled] = useState(false);
   const [refreshSignal, setRefreshSignal] = useState(0);
+  const [aiNotesCount, setAiNotesCount] = useState(0);
+  const [aiNotesOpen, setAiNotesOpen] = useState(false);
 
   // Detect /survey path for public survey
   const isSurveyPath = window.location.pathname === '/survey';
@@ -3547,6 +3740,8 @@ function App() {
       } else {
         setSubmissionsCount(0);
       }
+      const noteData = await api('/ai/notes').catch(() => ({ notes: [] }));
+      setAiNotesCount((noteData.notes || []).filter((n) => !n.isRead).length);
     } catch (_) {}
   }, []);
 
@@ -3612,15 +3807,18 @@ function App() {
   else if (view.type === 'logistics') content = <LogisticsPage />;
   else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); setView({ type: 'mytasks' }); }} />;
   else if (view.type === 'profile') content = <ProfileSetup me={me} onDone={(u) => { setMe(u); setView({ type: 'mytasks' }); }} />;
+  else if (view.type === 'ai') content = me.role === 'admin' ? <AIChatPage me={me} /> : null;
 
   // Navigating from the sidebar also closes the mobile drawer.
   const navigate = (v) => { setView(v); setSidebarOpen(false); };
 
   return (
     <div className="lg:flex">
+      {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={() => { setAiNotesOpen(false); bump(); }} />}
       <Sidebar me={me} reports={reports} approvalsCount={approvalsCount} submissionsCount={submissionsCount} checkinEnabled={checkinEnabled}
         view={view} setView={navigate} onLogout={logout}
-        open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+        open={sidebarOpen} onClose={() => setSidebarOpen(false)}
+        aiNotesCount={aiNotesCount} onAINotes={() => setAiNotesOpen(true)} />
       <div className="flex-1 min-w-0">
         {/* Mobile top bar with hamburger — hidden on desktop */}
         <header className="lg:hidden sticky top-0 z-20 flex items-center gap-3 bg-navy2/95 backdrop-blur border-b border-cream/10 px-4 py-3">
