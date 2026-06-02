@@ -2066,20 +2066,51 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
     );
   }
 
-  // In-portal "Home" view.
+  // In-portal "Home" view — mirrors the public landing page exactly, minus the standalone login header.
   if (mode === 'portal') {
     return (
-      <div className="max-w-5xl space-y-8">
-        <div>
-          <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Home</h1>
-          <p className="text-cream/50 mt-1">This is the public-facing page at <span className="text-gold/80">/home</span>.</p>
+      <div className="min-h-screen">
+        <div style={{ background: 'radial-gradient(900px 400px at 50% -10%, rgba(204,28,46,0.25), transparent 60%)' }}>
+          <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-10 pb-8 text-center">
+            <h1 className="font-display text-6xl sm:text-8xl text-cream leading-none">CLUB AMERICA</h1>
+            <p className="text-gold font-display text-2xl sm:text-3xl tracking-[0.25em] mt-1">PARK CITY HIGH SCHOOL</p>
+            <p className="text-cream/70 max-w-2xl mx-auto mt-4">
+              Faith, freedom, and community. Join us at our next meeting and tune into the Club America podcast.
+            </p>
+            {home.instagramUrl && (
+              <div className="mt-6 flex justify-center">
+                <InstagramLink url={home.instagramUrl} />
+              </div>
+            )}
+          </section>
         </div>
-        <HomeAnnouncementBanner home={home} />
-        <AboutSection home={home} />
-        {cards}
-        {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
-        {canAnnounce && <HomeAnnouncementEditor home={home} onSaved={(h) => setHome(h)} />}
-        {editable && <HomeEditor onSaved={load} />}
+        {home.homeAnnouncementEnabled && home.homeAnnouncement && (
+          <div className="max-w-5xl mx-auto px-4 sm:px-6 pt-6">
+            <HomeAnnouncementBanner home={home} />
+          </div>
+        )}
+        <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-16 space-y-6">
+          <AboutSection home={home} />
+          {cards}
+          <MeetTheBoard />
+          <GetInvolved />
+        </main>
+        {canAnnounce && (
+          <div className="max-w-5xl mx-auto px-4 sm:px-6 pb-8">
+            <HomeAnnouncementEditor home={home} onSaved={(h) => setHome(h)} />
+          </div>
+        )}
+        <footer className="border-t border-cream/10 py-6 text-center text-cream/40 text-sm space-y-3">
+          {home.instagramUrl && (
+            <div className="flex justify-center">
+              <a href={home.instagramUrl} target="_blank" rel="noopener"
+                className="inline-flex items-center gap-2 text-cream/60 hover:text-gold transition-colors">
+                <InstagramIcon className="w-5 h-5" /> @ our Instagram
+              </a>
+            </div>
+          )}
+          <div>Club America at Park City High School · Powered by TPUSA</div>
+        </footer>
       </div>
     );
   }
@@ -3960,7 +3991,7 @@ function App() {
             )}
           </button>
         </header>
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-x-hidden">{content}</main>
+        <main className={`flex-1 overflow-x-hidden ${view.type === 'home' ? '' : 'p-4 sm:p-6 lg:p-8'}`}>{content}</main>
       </div>
     </>
   );
