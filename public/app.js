@@ -1116,27 +1116,36 @@ function OrgChart() {
         <OrgNode title="Vice President" name="Derek Eddy" tone="red" />
         <div className="w-px h-5 bg-cream/20" />
         <div className="flex flex-wrap justify-center gap-6">
-          <OrgNode title="Chair Public Eng." name="Max Flachsmann">
+          <OrgNode title="Chair Public Eng." name="Max Flachsmann" tone="red">
             <OrgNode title="Public Engagement" name="Ledger Moffat" tone="slate" />
           </OrgNode>
-          <OrgNode title="CFO" name="Hudson Fossey">
+          <OrgNode title="CFO" name="Hudson Fossey" tone="red">
             <OrgNode title="Fundraising & Vol." name="Will Haladin" tone="slate" />
           </OrgNode>
-          <OrgNode title="Secretary" name="Campbell" tone="slate" />
+          <OrgNode title="Secretary" name="Campbell" tone="red" />
           <OrgNode title="Hospitality" name="Andrew Perillo" tone="slate" />
           <OrgNode title="Swag Manager" name="Audrey Fox" tone="slate" />
-          <OrgNode title="Digital Presence" name="Dane Hays">
+          <OrgNode title="Digital Presence" name="Dane Hays" tone="red">
             <OrgNode title="Content Editor" name="Jacob Kindt" tone="slate" />
             <OrgNode title="Historian" name="Sosie Gavin" tone="slate" />
           </OrgNode>
         </div>
         <div className="w-full mt-6">
-          <div className="font-display text-2xl text-gold text-center mb-3">Grade Representatives</div>
+          <div className="font-display text-2xl text-gold text-center mb-1">Grade Representatives</div>
+          <div className="text-center text-cream/40 text-xs mb-3 tracking-wide uppercase">On the Board · Grade Reps</div>
           <div className="flex flex-wrap justify-center gap-3">
             {['Davis Hughes', 'Liam McNalley', 'Thomas Summers', 'Ben Anderson', 'Nola Neath', 'Ben Hastings'].map((n) => (
-              <div key={n} className="bg-navy2 border border-cream/20 rounded-md px-3 py-1.5 text-sm text-cream/80">{n}</div>
+              <div key={n} className="bg-navy2 border-2 border-gold/60 rounded-lg px-4 py-2 text-center min-w-[140px]">
+                <div className="text-xs uppercase tracking-wider text-gold/70 mb-0.5">Grade Rep</div>
+                <div className="text-sm text-cream/90 font-medium">{n}</div>
+              </div>
             ))}
           </div>
+        </div>
+        <div className="flex flex-wrap justify-center gap-6 text-xs text-cream/40 mt-6 pt-4 border-t border-cream/10">
+          <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm border-2 border-red" /> Big Board</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm border-2 border-gold/60" /> Grade Representative</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm border-2 border-cream/30" /> Board Member</span>
         </div>
       </div>
       </div>
