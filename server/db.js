@@ -162,6 +162,14 @@ function init() {
       createdAt     TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    -- Public click / engagement tracking.
+    CREATE TABLE IF NOT EXISTS page_events (
+      id       INTEGER PRIMARY KEY AUTOINCREMENT,
+      event    TEXT NOT NULL,
+      label    TEXT NOT NULL DEFAULT '',
+      loggedAt TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     -- Login event log for productivity tracking (logistics view only).
     CREATE TABLE IF NOT EXISTS login_logs (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -199,6 +207,7 @@ function init() {
   if (!siteCols.includes('homeAnnouncement'))         db.exec("ALTER TABLE site_settings ADD COLUMN homeAnnouncement TEXT NOT NULL DEFAULT ''");
   if (!siteCols.includes('homeAnnouncementEnabled'))  db.exec("ALTER TABLE site_settings ADD COLUMN homeAnnouncementEnabled INTEGER NOT NULL DEFAULT 0");
   if (!siteCols.includes('weeklyCheckinEnabled'))     db.exec("ALTER TABLE site_settings ADD COLUMN weeklyCheckinEnabled INTEGER NOT NULL DEFAULT 0");
+  if (!siteCols.includes('announcementPostedAt'))     db.exec("ALTER TABLE site_settings ADD COLUMN announcementPostedAt TEXT");
 
   // user_page_settings column migrations.
   const upsCols = db.prepare("PRAGMA table_info(user_page_settings)").all().map((c) => c.name);

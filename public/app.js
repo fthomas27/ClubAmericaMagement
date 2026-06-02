@@ -26,6 +26,15 @@ async function api(path, { method = 'GET', body } = {}) {
   return data;
 }
 
+// Fire-and-forget click tracking — never blocks the UI.
+function track(event, label = '') {
+  fetch('/api/track', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event, label }),
+  }).catch(() => {});
+}
+
 // ---------------------------------------------------------------------------
 // Small UI primitives
 // ---------------------------------------------------------------------------
@@ -1450,6 +1459,7 @@ function PodcastCard({ home }) {
           </div>
           {home.podcastUrl && (
             <a href={home.podcastUrl} target="_blank" rel="noopener"
+              onClick={() => track('podcast_watch', home.podcastUrl)}
               className="mt-4 inline-block bg-gold hover:bg-gold/85 text-navy font-semibold text-sm px-4 py-2 rounded-md transition-colors">
               ▶ Watch on YouTube
             </a>
@@ -1752,7 +1762,7 @@ function MeetTheBoard() {
   const tree = buildBoardTree(members);
   const renderNode = (node) => (
     <div key={node.id} className="flex flex-col items-center">
-      <button onClick={() => setSel(node)}
+      <button onClick={() => { setSel(node); track('board_profile', node.displayName); }}
         className="bg-navy2 border border-cream/15 rounded-xl px-4 py-3 flex flex-col items-center gap-2 w-36 hover:border-gold transition-colors">
         <Avatar member={node} size={56} />
         <div className="text-cream text-sm font-medium text-center leading-tight">{node.displayName}</div>
@@ -2946,10 +2956,28 @@ function LogisticsPage() {
   if (error) return <div className="p-8 text-red text-sm">{error}</div>;
   if (!data) return null;
 
-  const { stats, recentLogins } = data;
-  const totalToday = stats.reduce((s, r) => s + Number(r.todayLogins || 0), 0);
-  const activeToday = stats.filter(r => Number(r.todayLogins) > 0).length;
+  const { stats, perUserDaily = [], teamDaily = [], recentLogins, demographics, engagementSummary = [], recentEvents = [] } = data;
+
+  // Build a map: userId -> { 'YYYY-MM-DD': count }
+  const dailyMap = {};
+  for (const row of perUserDaily) {
+    if (!dailyMap[row.userId]) dailyMap[row.userId] = {};
+    dailyMap[row.userId][row.day] = row.count;
+  }
+  // Last 7 UTC dates as strings (index 0 = oldest, 6 = today)
+  const last7 = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - (6 - i));
+    return d.toISOString().slice(0, 10);
+  });
+  const DAY_LABELS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+  const dayLabel = (iso) => DAY_LABELS[new Date(iso + 'T12:00:00Z').getUTCDay()];
+
   const allTime = stats.reduce((s, r) => s + Number(r.totalLogins || 0), 0);
+  // Today = last entry in last7
+  const todayStr = last7[6];
+  const totalToday = perUserDaily.filter(r => r.day === todayStr).reduce((s, r) => s + r.count, 0);
+  const activeToday = new Set(perUserDaily.filter(r => r.day === todayStr).map(r => r.userId)).size;
   const neverIn = stats.filter(r => !r.lastLogin).length;
 
   const filtered = filter
@@ -3003,10 +3031,12 @@ function LogisticsPage() {
       <div className="flex gap-0 border-b border-cream/10">
         <TabBtn id="members" label={`Members (${stats.length})`} />
         <TabBtn id="log" label={`Login Log (${recentLogins.length})`} />
+        <TabBtn id="demographics" label="Club Breakdown" />
+        <TabBtn id="engagement" label="Site Engagement" />
       </div>
 
       {tab === 'members' && (
-        <div className="space-y-3">
+        <div className="space-y-4">
           <input
             type="text"
             placeholder="Search by name or username…"
@@ -3014,44 +3044,85 @@ function LogisticsPage() {
             onChange={e => setFilter(e.target.value)}
             className="w-full max-w-xs bg-navy2 border border-cream/20 rounded px-3 py-1.5 text-cream text-sm placeholder-cream/30 focus:outline-none focus:border-gold/60"
           />
+
+          {/* 14-day team trend bar chart */}
+          {teamDaily.length > 0 && (() => {
+            const maxCount = Math.max(...teamDaily.map(d => d.count), 1);
+            return (
+              <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+                <div className="text-cream/50 text-xs mb-3">Team logins — last 14 days</div>
+                <div className="flex items-end gap-1 h-12">
+                  {teamDaily.map(d => {
+                    const h = Math.max(4, Math.round((d.count / maxCount) * 48));
+                    const isToday = d.day === todayStr;
+                    return (
+                      <div key={d.day} className="flex-1 flex flex-col items-center gap-0.5 group relative">
+                        <div
+                          className={`w-full rounded-sm ${isToday ? 'bg-gold' : 'bg-cream/25 group-hover:bg-cream/40'} transition-colors`}
+                          style={{ height: h }}
+                          title={`${d.day}: ${d.count} login${d.count !== 1 ? 's' : ''}`}
+                        />
+                        {isToday && <div className="absolute -bottom-4 text-gold text-[9px]">today</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
-                  <th className="pb-2 pr-4 font-medium">Member</th>
+                  <th className="pb-2 pr-6 font-medium">Member</th>
                   <th className="pb-2 pr-4 font-medium">Title / Role</th>
-                  <th className="pb-2 pr-4 font-medium text-center">Today</th>
-                  <th className="pb-2 pr-4 font-medium text-center">Total</th>
-                  <th className="pb-2 font-medium">Last Login</th>
+                  {/* 7 day columns */}
+                  {last7.map(d => (
+                    <th key={d} className={`pb-2 px-1 font-medium text-center w-7 ${d === todayStr ? 'text-gold' : ''}`}>
+                      {dayLabel(d)}
+                    </th>
+                  ))}
+                  <th className="pb-2 px-3 font-medium text-center">Total</th>
+                  <th className="pb-2 pl-3 font-medium">Last Login</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(r => (
-                  <tr key={r.userId} className="border-b border-cream/5 hover:bg-cream/3">
-                    <td className="py-3 pr-4">
-                      <div className="text-cream font-medium text-sm">{r.displayName}</div>
-                      <div className="text-cream/35 text-xs">@{r.username}</div>
-                    </td>
-                    <td className="py-3 pr-4 text-cream/55 text-xs">{r.title || r.role}</td>
-                    <td className="py-3 pr-4 text-center">
-                      {Number(r.todayLogins) > 0
-                        ? <span className="text-emerald-400 font-semibold">{r.todayLogins}</span>
-                        : <span className="text-cream/20">—</span>}
-                    </td>
-                    <td className="py-3 pr-4 text-center">
-                      {Number(r.totalLogins) > 0
-                        ? <span className="text-gold font-semibold">{r.totalLogins}</span>
-                        : <span className="text-cream/20">0</span>}
-                    </td>
-                    <td className="py-3">
-                      {r.lastLogin
-                        ? <span className="text-cream/60 text-xs">{fmtDate(r.lastLogin)}</span>
-                        : <span className="inline-block text-xs text-red/70 bg-red/10 border border-red/20 rounded px-1.5 py-0.5">Never</span>}
-                    </td>
-                  </tr>
-                ))}
+                {filtered.map(r => {
+                  const days = dailyMap[r.userId] || {};
+                  return (
+                    <tr key={r.userId} className="border-b border-cream/5 hover:bg-cream/3">
+                      <td className="py-3 pr-6">
+                        <div className="text-cream font-medium text-sm">{r.displayName}</div>
+                        <div className="text-cream/35 text-xs">@{r.username}</div>
+                      </td>
+                      <td className="py-3 pr-4 text-cream/55 text-xs">{r.title || r.role}</td>
+                      {last7.map(d => {
+                        const cnt = days[d] || 0;
+                        const isToday = d === todayStr;
+                        return (
+                          <td key={d} className="py-3 px-1 text-center">
+                            {cnt > 0
+                              ? <span className={`text-xs font-semibold ${isToday ? 'text-gold' : 'text-emerald-400'}`}>{cnt}</span>
+                              : <span className="text-cream/15 text-xs">·</span>}
+                          </td>
+                        );
+                      })}
+                      <td className="py-3 px-3 text-center">
+                        <span className={Number(r.totalLogins) > 0 ? 'text-cream/70 font-medium text-xs' : 'text-cream/20 text-xs'}>
+                          {r.totalLogins}
+                        </span>
+                      </td>
+                      <td className="py-3 pl-3">
+                        {r.lastLogin
+                          ? <span className="text-cream/50 text-xs">{fmtDate(r.lastLogin)}</span>
+                          : <span className="inline-block text-xs text-red/70 bg-red/10 border border-red/20 rounded px-1.5 py-0.5">Never</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
                 {filtered.length === 0 && (
-                  <tr><td colSpan={5} className="py-8 text-center text-cream/25 text-sm">No results.</td></tr>
+                  <tr><td colSpan={11} className="py-8 text-center text-cream/25 text-sm">No results.</td></tr>
                 )}
               </tbody>
             </table>
@@ -3089,6 +3160,156 @@ function LogisticsPage() {
           </table>
         </div>
       )}
+
+      {tab === 'engagement' && (() => {
+        const totalClicks = engagementSummary.reduce((s, r) => s + r.count, 0);
+        const todayClicks = engagementSummary.reduce((s, r) => s + (r.todayCount || 0), 0);
+
+        const podcastRows = engagementSummary.filter(r => r.event === 'podcast_watch');
+        const podcastTotal = podcastRows.reduce((s, r) => s + r.count, 0);
+
+        const boardRows = engagementSummary.filter(r => r.event === 'board_profile')
+          .sort((a, b) => b.count - a.count);
+        const boardMax = boardRows[0]?.count || 1;
+
+        const eventLabel = (e) => e === 'podcast_watch' ? '▶ Podcast' : e === 'board_profile' ? '👤 Profile' : e;
+
+        return (
+          <div className="space-y-8 max-w-2xl">
+            {/* Summary */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: 'Total Clicks', value: totalClicks, color: 'text-gold' },
+                { label: 'Today', value: todayClicks, color: 'text-emerald-400' },
+                { label: 'Podcast Clicks', value: podcastTotal, color: 'text-sky-400' },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="bg-navy2 rounded-lg p-4 border border-cream/10">
+                  <div className={`text-2xl font-bold ${color}`}>{value}</div>
+                  <div className="text-cream/50 text-xs mt-0.5">{label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Board profiles */}
+            <div>
+              <div className="text-cream/60 text-sm font-medium mb-3">Board Profile Views</div>
+              {boardRows.length === 0 ? (
+                <div className="text-cream/25 text-sm">No profile clicks recorded yet.</div>
+              ) : (
+                <div className="space-y-2.5">
+                  {boardRows.map(r => {
+                    const pct = Math.round((r.count / boardMax) * 100);
+                    return (
+                      <div key={r.label}>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-cream/70">{r.label}</span>
+                          <span className="text-cream/50">{r.count} click{r.count !== 1 ? 's' : ''} <span className="text-cream/30">· today: {r.todayCount || 0}</span></span>
+                        </div>
+                        <div className="h-2 bg-navy rounded-full overflow-hidden">
+                          <div className="h-full rounded-full bg-gold transition-all" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Recent event log */}
+            <div>
+              <div className="text-cream/60 text-sm font-medium mb-3">Recent Clicks</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
+                      <th className="pb-2 pr-4 font-medium">Time</th>
+                      <th className="pb-2 pr-4 font-medium">Event</th>
+                      <th className="pb-2 font-medium">Detail</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recentEvents.map(e => (
+                      <tr key={e.id} className="border-b border-cream/5 hover:bg-cream/3">
+                        <td className="py-2 pr-4 text-cream/45 text-xs whitespace-nowrap">{fmtDate(e.loggedAt)}</td>
+                        <td className="py-2 pr-4 text-xs">
+                          <span className="inline-block bg-navy2 border border-cream/15 rounded px-1.5 py-0.5 text-cream/70">{eventLabel(e.event)}</span>
+                        </td>
+                        <td className="py-2 text-cream/55 text-xs max-w-xs truncate">{e.label || '—'}</td>
+                      </tr>
+                    ))}
+                    {recentEvents.length === 0 && (
+                      <tr><td colSpan={3} className="py-8 text-center text-cream/25 text-sm">No clicks recorded yet.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {tab === 'demographics' && (() => {
+        const { totalMembers, genderBreakdown, gradeBreakdown } = demographics || {};
+        const gradeLabel = (g) => {
+          if (g === 'Unknown') return 'Unknown';
+          const n = Number(g);
+          if (n === 9) return '9th Grade';
+          if (n === 10) return '10th Grade';
+          if (n === 11) return '11th Grade';
+          if (n === 12) return '12th Grade';
+          return `Grade ${g}`;
+        };
+        const genderColors = ['bg-sky-400', 'bg-emerald-400', 'bg-gold', 'bg-red/70', 'bg-cream/30'];
+        const gradeColors = ['bg-red', 'bg-gold', 'bg-sky-400', 'bg-emerald-400', 'bg-cream/30'];
+
+        const BreakdownSection = ({ title, rows, colors }) => {
+          const total = rows.reduce((s, r) => s + r.count, 0);
+          if (total === 0) return (
+            <div>
+              <div className="text-cream/60 text-sm font-medium mb-3">{title}</div>
+              <div className="text-cream/25 text-sm">No data yet.</div>
+            </div>
+          );
+          return (
+            <div>
+              <div className="flex items-baseline gap-2 mb-3">
+                <span className="text-cream/60 text-sm font-medium">{title}</span>
+                <span className="text-cream/30 text-xs">{total} onboarded members</span>
+              </div>
+              <div className="space-y-2.5">
+                {rows.map((r, i) => {
+                  const pct = total > 0 ? Math.round((r.count / total) * 100) : 0;
+                  return (
+                    <div key={r.label}>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-cream/70">{r.label}</span>
+                        <span className="text-cream/50">{pct}% <span className="text-cream/30">({r.count})</span></span>
+                      </div>
+                      <div className="h-2 bg-navy rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${colors[i % colors.length]}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        };
+
+        return (
+          <div className="space-y-8 max-w-lg">
+            <div className="bg-navy2 rounded-lg p-4 border border-cream/10 inline-block">
+              <div className="text-2xl font-bold text-gold">{totalMembers ?? '—'}</div>
+              <div className="text-cream/50 text-xs mt-0.5">Total Onboarded Members</div>
+            </div>
+            <BreakdownSection title="Gender Breakdown" rows={genderBreakdown || []} colors={genderColors} />
+            <BreakdownSection title="Grade Breakdown" rows={(gradeBreakdown || []).map(r => ({ ...r, label: gradeLabel(r.label) }))} colors={gradeColors} />
+          </div>
+        );
+      })()}
     </div>
   );
 }
