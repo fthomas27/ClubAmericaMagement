@@ -1232,6 +1232,36 @@ function OrgNode({ title, name, tone = 'gold', children }) {
 }
 
 function OrgChart() {
+  const [users, setUsers] = useState(null);
+
+  useEffect(() => {
+    api('/orgchart').then((d) => setUsers(d.users)).catch(() => setUsers([]));
+  }, []);
+
+  if (!users) return <div className="text-cream/50 py-10 text-center">Loading…</div>;
+
+  const isGradeRep = (u) => (u.title || '').toLowerCase().includes('grade rep');
+  const gradeReps = users.filter(isGradeRep);
+  const boardMembers = users.filter((u) => !isGradeRep(u));
+
+  const byId = {};
+  boardMembers.forEach((u) => { byId[u.id] = { ...u, children: [] }; });
+  const roots = [];
+  boardMembers.forEach((u) => {
+    if (u.managerId && byId[u.managerId]) byId[u.managerId].children.push(byId[u.id]);
+    else roots.push(byId[u.id]);
+  });
+
+  function renderNode(node) {
+    const tone = node.bigBoard ? 'red' : 'slate';
+    const childNodes = node.children.length > 0 ? node.children.map(renderNode) : null;
+    return (
+      <OrgNode key={node.id} title={node.title || roleLabel(node.role)} name={node.displayName} tone={tone}>
+        {childNodes}
+      </OrgNode>
+    );
+  }
+
   return (
     <div>
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Org Chart</h1>
@@ -1239,38 +1269,28 @@ function OrgChart() {
 
       <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
       <div className="flex flex-col items-center gap-5 pb-10 min-w-max sm:min-w-0 mx-auto">
-        <OrgNode title="President" name="Finley Thomas" tone="red" />
-        <div className="w-px h-5 bg-cream/20" />
-        <OrgNode title="Vice President" name="Derek Eddy" tone="red" />
-        <div className="w-px h-5 bg-cream/20" />
-        <div className="flex flex-wrap justify-center gap-6">
-          <OrgNode title="Chair Public Eng." name="Max Flachsmann" tone="red">
-            <OrgNode title="Public Engagement" name="Ledger Moffat" tone="slate" />
-          </OrgNode>
-          <OrgNode title="CFO" name="Hudson Fossey" tone="red">
-            <OrgNode title="Fundraising & Vol." name="Will Haladin" tone="slate" />
-          </OrgNode>
-          <OrgNode title="Secretary" name="Campbell" tone="red" />
-          <OrgNode title="Hospitality" name="Andrew Perillo" tone="slate" />
-          <OrgNode title="Swag Manager" name="Audrey Fox" tone="slate" />
-          <OrgNode title="Digital Presence" name="Dane Hays" tone="red">
-            <OrgNode title="Content Editor" name="Jacob Kindt" tone="slate" />
-            <OrgNode title="Historian" name="Gavin Bergen" tone="slate" />
-            <OrgNode title="Historian" name="Sosie Sheffert" tone="slate" />
-          </OrgNode>
-        </div>
-        <div className="w-full mt-6">
-          <div className="font-display text-2xl text-gold text-center mb-1">Grade Representatives</div>
-          <div className="text-center text-cream/40 text-xs mb-3 tracking-wide uppercase">On the Board · Grade Reps</div>
-          <div className="flex flex-wrap justify-center gap-3">
-            {['Davis Hughes', 'Liam McNalley', 'Thomas Summers', 'Ben Anderson', 'Nola Neath', 'Ben Hastings'].map((n) => (
-              <div key={n} className="bg-navy2 border-2 border-gold/60 rounded-lg px-4 py-2 text-center min-w-[140px]">
-                <div className="text-xs uppercase tracking-wider text-gold/70 mb-0.5">Grade Rep</div>
-                <div className="text-sm text-cream/90 font-medium">{n}</div>
-              </div>
-            ))}
+        {roots.map((r, i) => (
+          <React.Fragment key={r.id}>
+            {i > 0 && <div className="w-px h-5 bg-cream/20" />}
+            {renderNode(r)}
+          </React.Fragment>
+        ))}
+
+        {gradeReps.length > 0 && (
+          <div className="w-full mt-6">
+            <div className="font-display text-2xl text-gold text-center mb-1">Grade Representatives</div>
+            <div className="text-center text-cream/40 text-xs mb-3 tracking-wide uppercase">On the Board · Grade Reps</div>
+            <div className="flex flex-wrap justify-center gap-3">
+              {gradeReps.map((u) => (
+                <div key={u.id} className="bg-navy2 border-2 border-gold/60 rounded-lg px-4 py-2 text-center min-w-[140px]">
+                  <div className="text-xs uppercase tracking-wider text-gold/70 mb-0.5">Grade Rep</div>
+                  <div className="text-sm text-cream/90 font-medium">{u.displayName}</div>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
+
         <div className="flex flex-wrap justify-center gap-6 text-xs text-cream/40 mt-6 pt-4 border-t border-cream/10">
           <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm border-2 border-red" /> Big Board</span>
           <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm border-2 border-gold/60" /> Grade Representative</span>
@@ -1517,6 +1537,7 @@ function AdminPanel({ users, reload }) {
               <div className="space-y-1.5">
                 <div className="text-cream/50 uppercase tracking-wider mb-1">Permissions</div>
                 {[
+                  { key: 'bigBoard', label: 'Big Board' },
                   { key: 'canManageRoster', label: 'Manage Roster' },
                   { key: 'canAnnounce', label: 'Announce' },
                   { key: 'canEditHome', label: 'Edit Site' },
@@ -1666,6 +1687,18 @@ function HomeEditor({ onSaved }) {
   const [form, setForm] = useState(null);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  const [calRefreshing, setCalRefreshing] = useState(false);
+  const [calMsg, setCalMsg] = useState('');
+
+  async function refreshCalendar() {
+    setCalRefreshing(true); setCalMsg('');
+    try {
+      const d = await api('/home/calendar/refresh', { method: 'POST' });
+      setCalMsg(`✓ Refreshed — ${d.events.length} upcoming event${d.events.length === 1 ? '' : 's'} loaded.`);
+      onSaved && onSaved();
+    } catch (err) { setCalMsg('✗ ' + err.message); }
+    finally { setCalRefreshing(false); }
+  }
 
   async function start() {
     setError(''); setSaved(false);
@@ -1713,7 +1746,18 @@ function HomeEditor({ onSaved }) {
             <Field label="Calendar feed URL (iCal / .ics — e.g. Google Calendar public address)">
               <input className={inputCls} value={form.calendarUrl || ''} onChange={set('calendarUrl')} placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" />
             </Field>
-            <p className="text-xs text-cream/40 mt-1">When set, the homepage shows the next 3 events from this calendar automatically. Leave blank to use the manual meeting fields below.</p>
+            <div className="flex items-center gap-3 mt-2 flex-wrap">
+              <p className="text-xs text-cream/40 flex-1">When set, the homepage shows the next 3 events from this calendar automatically. Leave blank to use the manual meeting fields below. Events cache for 5 minutes.</p>
+              {form.calendarUrl && (
+                <button type="button" onClick={refreshCalendar} disabled={calRefreshing}
+                  className="text-xs px-3 py-1.5 rounded-md border border-gold/40 text-gold/80 hover:border-gold hover:text-gold transition-colors disabled:opacity-40 shrink-0">
+                  {calRefreshing ? 'Refreshing…' : '↺ Force Reload'}
+                </button>
+              )}
+            </div>
+            {calMsg && (
+              <p className={`text-xs mt-1 ${calMsg.startsWith('✓') ? 'text-emerald-300' : 'text-red'}`}>{calMsg}</p>
+            )}
           </div>
           <Field label="Meeting date (fallback)"><input className={inputCls} value={form.meetingDate || ''} onChange={set('meetingDate')} placeholder="e.g. Thursday, June 12" /></Field>
           <Field label="Meeting time (fallback)"><input className={inputCls} value={form.meetingTime || ''} onChange={set('meetingTime')} placeholder="e.g. 3:30 PM" /></Field>
@@ -3492,152 +3536,125 @@ function LogisticsPage() {
 }
 
 // ---------------------------------------------------------------------------
-function Sidebar({ me, reports, approvalsCount, submissionsCount, checkinEnabled, view, setView, onLogout, open, onClose }) {
-  const [reportsOpen, setReportsOpen] = useState(true);
+function AppIcon({ name }) {
+  const p = { width: 24, height: 24, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', className: 'text-cream/60 group-hover:text-gold transition-colors duration-150' };
+  switch (name) {
+    case 'person':    return <svg {...p}><circle cx="12" cy="8" r="3.5"/><path d="M4 20c0-3.866 3.582-7 8-7s8 3.134 8 7"/></svg>;
+    case 'home':      return <svg {...p}><path d="M3 11.5 12 3l9 8.5"/><path d="M5 10.5v10h5v-5h4v5h5v-10"/></svg>;
+    case 'edit':      return <svg {...p}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5Z"/></svg>;
+    case 'megaphone': return <svg {...p}><path d="M18 4v16c-3-3-9-4.5-13-4.5V8.5C9 8.5 15 7 18 4Z"/><path d="M3 11v2"/><path d="M7 16.5v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3"/></svg>;
+    case 'team':      return <svg {...p}><circle cx="8" cy="7" r="3"/><path d="M2 20c0-3 2.686-5.5 6-5.5s6 2.5 6 5.5"/><circle cx="18" cy="8" r="2.5"/><path d="M15.5 20c0-2.5 2.239-4.5 5-4.5"/></svg>;
+    case 'check':     return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-5"/></svg>;
+    case 'inbox':     return <svg {...p}><path d="M22 12H16l-2 3H10L8 12H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 17 4H7a2 2 0 0 0-1.55.89Z"/></svg>;
+    case 'roster':    return <svg {...p}><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>;
+    case 'calendar':  return <svg {...p}><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="m9 16 2 2 4-4"/></svg>;
+    case 'funding':   return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5a2.5 2.5 0 0 1 5 0c0 1.5-1 2-2.5 2.5-1.5.5-2.5 1-2.5 2.5a2.5 2.5 0 0 0 5 0"/></svg>;
+    case 'apply':     return <svg {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>;
+    case 'dashboard': return <svg {...p}><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>;
+    case 'org':       return <svg {...p}><circle cx="12" cy="4" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 6v5M12 11H5v6M12 11h7v6"/></svg>;
+    case 'admin':     return <svg {...p}><path d="M12 2 3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7Z"/><path d="m9 12 2 2 4-4"/></svg>;
+    case 'activity':  return <svg {...p}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>;
+    default:          return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
+  }
+}
+
+function AppTile({ label, icon, badge, onClick }) {
+  return (
+    <button onClick={onClick}
+      className="group relative bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/30 rounded-2xl p-5 flex flex-col items-center gap-3 transition-all duration-150 active:scale-95 w-full">
+      <div className="relative">
+        <div className="w-14 h-14 rounded-xl bg-navy/60 flex items-center justify-center group-hover:bg-navy2 transition-colors duration-150">
+          <AppIcon name={icon} />
+        </div>
+        {badge > 0 && (
+          <span className="absolute -top-1 -right-1 bg-red text-cream text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">{badge}</span>
+        )}
+      </div>
+      <span className="text-cream/80 text-xs font-medium text-center leading-tight group-hover:text-cream transition-colors">{label}</span>
+    </button>
+  );
+}
+
+function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, onNavigate, onLogout }) {
   const isManager = me.role === 'manager' || me.role === 'admin';
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
   const canSeeSubmissions = me.role === 'admin' || !!me.grade;
   const canRoster = isManager || !!me.canManageRoster;
 
-  const NavItem = ({ active, onClick, children, badge }) => (
-    <button onClick={onClick}
-      className={`w-full text-left px-3 py-2 rounded-md flex items-center justify-between transition-colors ${
-        active ? 'bg-red text-cream' : 'text-cream/80 hover:bg-navy3'}`}>
-      <span>{children}</span>
-      {badge != null && badge > 0 && <span className="bg-gold text-navy text-xs font-semibold rounded-full px-2 py-0.5">{badge}</span>}
-    </button>
-  );
+  const tiles = me.username === 'logistics'
+    ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }]
+    : [
+        { type: 'mytasks',  label: 'My Page',        icon: 'person'    },
+        { type: 'home',     label: 'Club Home',       icon: 'home'      },
+        ...(canEditSite       ? [{ type: 'website',     label: 'Edit Website',     icon: 'edit'      }] : []),
+        ...(isManager         ? [{ type: 'announce',    label: 'Announcement',     icon: 'megaphone' }] : []),
+        ...(isManager         ? [{ type: 'myteam',      label: 'My Team',          icon: 'team'      }] : []),
+        ...(isManager         ? [{ type: 'approvals',   label: 'Approvals',        icon: 'check',    badge: approvalsCount   }] : []),
+        ...(canSeeSubmissions ? [{ type: 'submissions', label: 'Get Involved',     icon: 'inbox',    badge: submissionsCount }] : []),
+        ...(canRoster         ? [{ type: 'roster',      label: 'Roster',           icon: 'roster'    }] : []),
+        ...((checkinEnabled || isManager) ? [{ type: 'checkin', label: checkinEnabled ? 'Check-In' : 'Check-In Settings', icon: 'calendar' }] : []),
+        { type: 'funding',  label: 'Funding',          icon: 'funding'   },
+        { type: 'apply',    label: 'Apply',             icon: 'apply'     },
+        ...(isManager         ? [{ type: 'dashboard',   label: 'Dashboard',        icon: 'dashboard' }] : []),
+        { type: 'org',      label: 'Org Chart',         icon: 'org'       },
+        ...(me.role === 'admin' ? [{ type: 'admin',     label: 'Admin Panel',      icon: 'admin'     }] : []),
+      ];
 
   return (
-    <React.Fragment>
-      {/* Dim overlay behind the drawer on small screens */}
-      <div
-        onClick={onClose}
-        className={`fixed inset-0 bg-black/60 z-30 lg:hidden transition-opacity ${open ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-      />
-      <aside
-        className={`w-72 max-w-[85vw] lg:w-64 shrink-0 bg-navy2 border-r border-cream/10 flex flex-col h-screen fixed lg:sticky top-0 left-0 z-40 transform transition-transform duration-200 ${
-          open ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
-      >
-      <div className="p-4 border-b border-cream/10 flex items-start justify-between gap-2">
+    <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
+      <header className="px-6 py-5 flex items-center justify-between border-b border-cream/10">
         <Logo size="sidebar" />
-        <button onClick={onClose} aria-label="Close menu" className="lg:hidden text-cream/60 hover:text-cream text-3xl leading-none -mt-1">×</button>
-      </div>
-
-      <nav className="flex-1 overflow-y-auto p-3 space-y-1">
-        {me.username === 'logistics' ? (
-          <NavItem active={view.type === 'logistics'} onClick={() => setView({ type: 'logistics' })}>
-            Login Activity
-          </NavItem>
-        ) : (
-          <React.Fragment>
-        <NavItem active={view.type === 'home'} onClick={() => setView({ type: 'home' })}>Home</NavItem>
-        {canEditSite && (
-          <NavItem active={view.type === 'website'} onClick={() => setView({ type: 'website' })}>Edit Website</NavItem>
-        )}
-        <NavItem active={view.type === 'mytasks'} onClick={() => setView({ type: 'mytasks' })}>My Page</NavItem>
-
-        {isManager && (
-          <NavItem active={view.type === 'announce'} onClick={() => setView({ type: 'announce' })}>
-            📢 Team Announcement
-          </NavItem>
-        )}
-
-        {isManager && (
-          <div>
-            <button onClick={() => setReportsOpen((o) => !o)}
-              className="w-full text-left px-3 py-2 rounded-md text-cream/80 hover:bg-navy3 flex items-center justify-between">
-              <span>People I Manage</span>
-              <span className="text-cream/40">{reportsOpen ? '▾' : '▸'}</span>
-            </button>
-            {reportsOpen && (
-              <div className="ml-3 border-l border-cream/10 pl-2 space-y-1">
-                {reports.length === 0 && <div className="text-cream/30 text-sm px-2 py-1">No direct reports</div>}
-                {reports.map((r) => (
-                  <button key={r.id} onClick={() => setView({ type: 'person', userId: r.id })}
-                    className={`w-full text-left px-2 py-1.5 rounded text-sm transition-colors ${
-                      view.type === 'person' && view.userId === r.id ? 'bg-navy3 text-gold' : 'text-cream/70 hover:bg-navy3'}`}>
-                    {r.displayName}
-                    <span className="block text-[11px] text-cream/35">{r.title || roleLabel(r.role)}</span>
-                  </button>
-                ))}
-              </div>
-            )}
+        <div className="flex flex-col items-end gap-1">
+          <span className="text-cream text-sm font-medium">{me.displayName}</span>
+          <span className="text-cream/40 text-xs">{me.title || roleLabel(me.role)}</span>
+          <div className="flex gap-3 mt-0.5">
+            <button onClick={() => onNavigate({ type: 'profile' })} className="text-[11px] text-gold/60 hover:text-gold transition-colors">Profile</button>
+            <button onClick={() => onNavigate({ type: 'password' })} className="text-[11px] text-gold/60 hover:text-gold transition-colors">Password</button>
+            <button onClick={onLogout} className="text-[11px] text-red/60 hover:text-red transition-colors">Log out</button>
           </div>
-        )}
-
-        {isManager && (
-          <NavItem active={view.type === 'approvals'} onClick={() => setView({ type: 'approvals' })} badge={approvalsCount}>
-            Pending Approvals
-          </NavItem>
-        )}
-
-        {canSeeSubmissions && (
-          <NavItem active={view.type === 'submissions'} onClick={() => setView({ type: 'submissions' })} badge={submissionsCount}>
-            Get Involved
-          </NavItem>
-        )}
-
-        {canRoster && (
-          <NavItem active={view.type === 'roster'} onClick={() => setView({ type: 'roster' })}>
-            📋 Roster
-          </NavItem>
-        )}
-
-        {checkinEnabled && (
-          <NavItem active={view.type === 'checkin'} onClick={() => setView({ type: 'checkin' })}>
-            ✅ Weekly Check-In
-          </NavItem>
-        )}
-        {isManager && !checkinEnabled && (
-          <NavItem active={view.type === 'checkin'} onClick={() => setView({ type: 'checkin' })}>
-            ✅ Check-In Settings
-          </NavItem>
-        )}
-
-        <NavItem active={view.type === 'funding'} onClick={() => setView({ type: 'funding' })}>
-          💰 Funding Requests
-        </NavItem>
-
-        <NavItem active={view.type === 'apply'} onClick={() => setView({ type: 'apply' })}>
-          📝 Apply for Position
-        </NavItem>
-
-        {isManager && (
-          <NavItem active={view.type === 'dashboard'} onClick={() => setView({ type: 'dashboard' })}>
-            📊 Dashboard
-          </NavItem>
-        )}
-
-        <NavItem active={view.type === 'org'} onClick={() => setView({ type: 'org' })}>Org Chart</NavItem>
-
-        {me.role === 'admin' && (
-          <NavItem active={view.type === 'admin'} onClick={() => setView({ type: 'admin' })}>Admin Panel</NavItem>
-        )}
-          </React.Fragment>
-        )}
-      </nav>
-
-      <div className="p-3 border-t border-cream/10">
-        <div className="text-sm text-cream">{me.displayName}</div>
-        <div className="text-xs text-cream/40 mb-2">{me.title || roleLabel(me.role)} · {roleLabel(me.role)}</div>
-        <div className="flex gap-x-3 gap-y-1 flex-wrap">
-          <button onClick={() => setView({ type: 'profile' })} className="text-xs text-gold/80 hover:text-gold">Edit profile</button>
-          <button onClick={() => setView({ type: 'password' })} className="text-xs text-gold/80 hover:text-gold">Change password</button>
-          <button onClick={onLogout} className="text-xs text-red/80 hover:text-red ml-auto">Log out</button>
+        </div>
+      </header>
+      <div className="flex-1 px-4 py-8">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          {tiles.map(t => (
+            <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge} onClick={() => onNavigate({ type: t.type })} />
+          ))}
         </div>
       </div>
-      </aside>
-    </React.Fragment>
+    </div>
+  );
+}
+
+function MyTeamView({ reports, onNavigate }) {
+  return (
+    <div>
+      <h2 className="text-xl font-semibold text-cream mb-6">My Team</h2>
+      {reports.length === 0 ? (
+        <p className="text-cream/40">No direct reports.</p>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-w-2xl">
+          {reports.map(r => (
+            <button key={r.id} onClick={() => onNavigate({ type: 'person', userId: r.id })}
+              className="group bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/30 rounded-xl p-4 flex items-center gap-3 text-left transition-all duration-150 active:scale-95">
+              <div className="w-10 h-10 rounded-full bg-navy3 flex items-center justify-center text-cream/60 text-sm font-semibold shrink-0">
+                {r.displayName.charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <div className="text-cream text-sm font-medium group-hover:text-gold transition-colors">{r.displayName}</div>
+                <div className="text-cream/40 text-xs">{r.title || roleLabel(r.role)}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
 function App() {
   const [me, setMe] = useState(null);
   const [booted, setBooted] = useState(false);
-  const [view, setView] = useState({ type: 'mytasks' });
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  // The site lands on the public homepage; the portal opens on demand.
+  const [view, setView] = useState({ type: 'apphome' });
   const [enterPortal, setEnterPortal] = useState(false);
   const [users, setUsers] = useState([]);
   const [reports, setReports] = useState([]);
@@ -3646,9 +3663,7 @@ function App() {
   const [checkinEnabled, setCheckinEnabled] = useState(false);
   const [refreshSignal, setRefreshSignal] = useState(0);
 
-  // Detect /survey path for public survey
   const isSurveyPath = window.location.pathname === '/survey';
-
   const bump = () => setRefreshSignal((n) => n + 1);
 
   const loadShared = useCallback(async (user) => {
@@ -3673,7 +3688,6 @@ function App() {
     } catch (_) {}
   }, []);
 
-  // Boot: restore session from token.
   useEffect(() => {
     (async () => {
       const token = localStorage.getItem(TOKEN_KEY);
@@ -3694,34 +3708,43 @@ function App() {
   function logout() {
     localStorage.removeItem(TOKEN_KEY);
     setMe(null);
-    setView({ type: 'mytasks' });
+    setView({ type: 'apphome' });
     setEnterPortal(false);
   }
 
   if (!booted) return <div className="min-h-screen flex items-center justify-center text-cream/40">Loading…</div>;
-
-  // Public interest survey at /survey
   if (isSurveyPath) return <InterestSurvey onBack={() => { window.history.pushState(null, '', '/'); window.location.reload(); }} />;
-
-  // Default landing: the public homepage. The portal opens via the login button.
   if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;
-
   if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); if (u.username === 'logistics') setView({ type: 'logistics' }); }} onBack={() => setEnterPortal(false)} />;
   if (me.firstLogin) return <ChangePassword user={me} forced onDone={(u) => { setMe(u); loadShared(u); }} />;
-  // Right after the password step: prompt for a profile photo + intro bio.
   if (!me.profileComplete && me.username !== 'logistics') return <ProfileSetup me={me} forced
     onDone={(u) => { setMe(u); loadShared(u); }}
     onSkip={() => setMe({ ...me, profileComplete: true })} />;
 
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
+  const navigate = (v) => setView(v);
+
+  if (view.type === 'apphome') return (
+    <AppHome me={me} reports={reports} approvalsCount={approvalsCount} submissionsCount={submissionsCount}
+      checkinEnabled={checkinEnabled} onNavigate={navigate} onLogout={logout} />
+  );
+
+  const PAGE_TITLES = {
+    home: 'Club Home', website: 'Edit Website', mytasks: 'My Page',
+    person: (reports.find(r => r.id === view.userId) || {}).displayName || 'Team Member',
+    myteam: 'My Team', announce: 'Team Announcement', approvals: 'Pending Approvals',
+    submissions: 'Get Involved', roster: 'Roster', checkin: 'Weekly Check-In',
+    funding: 'Funding Requests', apply: 'Apply for Position', dashboard: 'Dashboard',
+    org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity',
+    password: 'Change Password', profile: 'Edit Profile',
+  };
 
   let content;
   if (view.type === 'home') content = <Home mode="portal" me={me} />;
-  else if (view.type === 'website') content = canEditSite
-    ? <Home mode="editor" me={me} editable={true} />
-    : <Home mode="portal" me={me} />;
+  else if (view.type === 'website') content = canEditSite ? <Home mode="editor" me={me} editable={true} /> : <Home mode="portal" me={me} />;
   else if (view.type === 'mytasks') content = <TaskPage me={me} userId={me.id} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'person') content = <TaskPage me={me} userId={view.userId} users={users} refreshSignal={refreshSignal} />;
+  else if (view.type === 'myteam') content = <MyTeamView reports={reports} onNavigate={navigate} />;
   else if (view.type === 'announce') content = <TeamAnnouncementView me={me} reports={reports} />;
   else if (view.type === 'approvals') content = <Approvals onChanged={bump} refreshSignal={refreshSignal} />;
   else if (view.type === 'submissions') content = <SubmissionsInbox onChanged={bump} refreshSignal={refreshSignal} />;
@@ -3733,26 +3756,21 @@ function App() {
   else if (view.type === 'org') content = <OrgChart />;
   else if (view.type === 'admin') content = <AdminPanel users={users} reload={bump} />;
   else if (view.type === 'logistics') content = <LogisticsPage />;
-  else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); setView({ type: 'mytasks' }); }} />;
-  else if (view.type === 'profile') content = <ProfileSetup me={me} onDone={(u) => { setMe(u); setView({ type: 'mytasks' }); }} />;
-
-  // Navigating from the sidebar also closes the mobile drawer.
-  const navigate = (v) => { setView(v); setSidebarOpen(false); };
+  else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;
+  else if (view.type === 'profile') content = <ProfileSetup me={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;
 
   return (
-    <div className="lg:flex">
-      <Sidebar me={me} reports={reports} approvalsCount={approvalsCount} submissionsCount={submissionsCount} checkinEnabled={checkinEnabled}
-        view={view} setView={navigate} onLogout={logout}
-        open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-      <div className="flex-1 min-w-0">
-        {/* Mobile top bar with hamburger — hidden on desktop */}
-        <header className="lg:hidden sticky top-0 z-20 flex items-center gap-3 bg-navy2/95 backdrop-blur border-b border-cream/10 px-4 py-3">
-          <button onClick={() => setSidebarOpen(true)} aria-label="Open menu"
-            className="text-cream text-2xl leading-none w-8 h-8 flex items-center justify-center rounded hover:bg-navy3">☰</button>
-          <span className="font-display text-2xl text-red leading-none">CLUB AMERICA</span>
-        </header>
-        <main className="p-4 sm:p-6 lg:p-8 overflow-x-hidden">{content}</main>
-      </div>
+    <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
+      <header className="sticky top-0 z-20 flex items-center gap-3 bg-navy2/95 backdrop-blur border-b border-cream/10 px-4 py-3">
+        <button onClick={() => navigate({ type: 'apphome' })} aria-label="Back to home"
+          className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-cream hover:bg-navy3 transition-colors">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 12H5M12 5l-7 7 7 7"/>
+          </svg>
+        </button>
+        <span className="text-cream font-semibold text-base">{PAGE_TITLES[view.type] || ''}</span>
+      </header>
+      <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-x-hidden">{content}</main>
     </div>
   );
 }
