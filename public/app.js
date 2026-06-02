@@ -292,14 +292,121 @@ function resizeImage(file, max, cb) {
   reader.readAsDataURL(file);
 }
 
+// Interactive square-crop modal backed by a canvas.
+// `src` is the raw (full-size) image data URL; `onCrop` receives the cropped JPEG data URL.
+function CropModal({ src, onCrop, onCancel }) {
+  const [crop, setCrop] = useState(null);
+  const [drag, setDrag] = useState(null);
+  const imgRef = useRef(null);
+  const [imgSize, setImgSize] = useState({ w: 0, h: 0 });
+
+  function initCrop(img) {
+    const dw = img.offsetWidth, dh = img.offsetHeight;
+    setImgSize({ w: dw, h: dh });
+    const size = Math.round(Math.min(dw, dh) * 0.8);
+    setCrop({ x: Math.round((dw - size) / 2), y: Math.round((dh - size) / 2), size });
+  }
+
+  function onImgLoad(e) { initCrop(e.target); }
+
+  function startDrag(e, type) {
+    e.preventDefault();
+    setDrag({ type, sx: e.clientX, sy: e.clientY, crop: { ...crop } });
+  }
+
+  function onMove(e) {
+    if (!drag) return;
+    const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+    const { x: ox, y: oy, size: os } = drag.crop;
+    const { w: dw, h: dh } = imgSize;
+    if (drag.type === 'move') {
+      setCrop({ x: Math.max(0, Math.min(dw - os, ox + dx)), y: Math.max(0, Math.min(dh - os, oy + dy)), size: os });
+      return;
+    }
+    let d;
+    if (drag.type === 'se') d = Math.min(dx, dy);
+    else if (drag.type === 'sw') d = Math.min(-dx, dy);
+    else if (drag.type === 'ne') d = Math.min(dx, -dy);
+    else d = Math.min(-dx, -dy);
+    let ns = Math.max(50, os + d), nx = ox, ny = oy;
+    if (drag.type === 'se') {
+      ns = Math.min(ns, dw - ox, dh - oy);
+    } else if (drag.type === 'sw') {
+      nx = ox + os - ns; if (nx < 0) { ns += nx; nx = 0; } ns = Math.min(ns, dh - oy);
+    } else if (drag.type === 'ne') {
+      ny = oy + os - ns; if (ny < 0) { ns += ny; ny = 0; } ns = Math.min(ns, dw - ox);
+    } else {
+      nx = ox + os - ns; ny = oy + os - ns;
+      if (nx < 0) { ns += nx; nx = 0; ny = oy + os - ns; }
+      if (ny < 0) { ns += ny; ny = 0; nx = ox + os - ns; }
+    }
+    if (nx + ns > dw) ns = dw - nx;
+    if (ny + ns > dh) ns = dh - ny;
+    setCrop({ x: Math.round(nx), y: Math.round(ny), size: Math.max(50, Math.round(ns)) });
+  }
+
+  function applyCrop() {
+    const img = imgRef.current;
+    if (!img || !crop) return;
+    const sx = img.naturalWidth / imgSize.w, sy = img.naturalHeight / imgSize.h;
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 512;
+    c.getContext('2d').drawImage(img, crop.x * sx, crop.y * sy, crop.size * sx, crop.size * sy, 0, 0, 512, 512);
+    onCrop(c.toDataURL('image/jpeg', 0.82));
+  }
+
+  const HS = 14;
+  return (
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
+      onMouseMove={onMove} onMouseUp={() => setDrag(null)} onMouseLeave={() => setDrag(null)}>
+      <div className="bg-navy2 border border-cream/10 rounded-xl p-5 max-w-2xl w-full">
+        <div className="font-display text-xl text-gold mb-1">Crop Photo</div>
+        <p className="text-xs text-cream/50 mb-3">Drag the circle to reposition · drag a corner to resize</p>
+        <div className="relative inline-block select-none">
+          <img ref={imgRef} src={src} alt="" className="block max-h-96 max-w-full rounded" onLoad={onImgLoad} draggable={false} />
+          {crop && imgSize.w > 0 && (
+            <>
+              <svg className="absolute inset-0 pointer-events-none" width={imgSize.w} height={imgSize.h}>
+                <defs>
+                  <mask id="cm">
+                    <rect width={imgSize.w} height={imgSize.h} fill="white" />
+                    <circle cx={crop.x + crop.size / 2} cy={crop.y + crop.size / 2} r={crop.size / 2} fill="black" />
+                  </mask>
+                </defs>
+                <rect width={imgSize.w} height={imgSize.h} fill="rgba(0,0,0,0.6)" mask="url(#cm)" />
+                <circle cx={crop.x + crop.size / 2} cy={crop.y + crop.size / 2} r={crop.size / 2}
+                  fill="none" stroke="white" strokeWidth="2" strokeDasharray="6 3" />
+              </svg>
+              <div className="absolute rounded-full cursor-move"
+                style={{ left: crop.x, top: crop.y, width: crop.size, height: crop.size }}
+                onMouseDown={(e) => startDrag(e, 'move')} />
+              {[['nw', 0, 0], ['ne', crop.size - HS, 0], ['sw', 0, crop.size - HS], ['se', crop.size - HS, crop.size - HS]].map(([id, cx, cy]) => (
+                <div key={id} className="absolute bg-white border border-gold/60 rounded-sm"
+                  style={{ left: crop.x + cx, top: crop.y + cy, width: HS, height: HS, cursor: `${id}-resize`, zIndex: 10 }}
+                  onMouseDown={(e) => { e.stopPropagation(); startDrag(e, id); }} />
+              ))}
+            </>
+          )}
+        </div>
+        <div className="flex gap-2 mt-4">
+          <button type="button" className="bg-gold text-navy font-semibold px-4 py-2 rounded-md text-sm hover:bg-gold/90" onClick={applyCrop}>Apply Crop</button>
+          <button type="button" className="border border-cream/25 text-cream px-4 py-2 rounded-md text-sm hover:border-cream/50" onClick={onCancel}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Profile setup — runs right after the password step on first login, and is
 // reachable later via "Edit profile". Collects a photo and an intro bio.
 function ProfileSetup({ me, forced, onDone, onSkip }) {
   const [photo, setPhoto] = useState('');
+  const [rawSrc, setRawSrc] = useState(''); // original file src for re-cropping
   const [bio, setBio] = useState('');
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [cropping, setCropping] = useState(false);
 
   useEffect(() => {
     api('/me/profile').then((d) => { setPhoto(d.photo || ''); setBio(d.bio || ''); setEmail(d.email || ''); }).catch(() => {});
@@ -307,13 +414,14 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
 
   function onFile(e) {
     const f = e.target.files && e.target.files[0];
+    e.target.value = '';
     if (!f) return;
     if (!f.type.startsWith('image/')) { setError('Please choose an image file.'); return; }
     setError('');
-    resizeImage(f, 512, (dataUrl) => {
-      if (dataUrl) setPhoto(dataUrl);
-      else setError("Couldn't read that image — try another.");
-    });
+    const reader = new FileReader();
+    reader.onload = (ev) => { setRawSrc(ev.target.result); setCropping(true); };
+    reader.onerror = () => setError("Couldn't read that image — try another.");
+    reader.readAsDataURL(f);
   }
 
   async function submit(e) {
@@ -342,11 +450,17 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
             ? <img src={photo} alt="preview" className="w-full h-full object-cover" />
             : <span className="text-cream/40 text-xs text-center px-2">No photo</span>}
         </div>
-        <label className="cursor-pointer">
-          <span className="inline-block bg-transparent border border-cream/25 hover:border-gold text-cream text-sm px-4 py-2 rounded-md">Choose photo…</span>
-          <input type="file" accept="image/*" className="hidden" onChange={onFile} />
-          <div className="text-xs text-cream/40 mt-1">A clear, professional headshot.</div>
-        </label>
+        <div className="space-y-2">
+          <label className="cursor-pointer block">
+            <span className="inline-block bg-transparent border border-cream/25 hover:border-gold text-cream text-sm px-4 py-2 rounded-md">Choose photo…</span>
+            <input type="file" accept="image/*" className="hidden" onChange={onFile} />
+          </label>
+          {photo && rawSrc && (
+            <button type="button" className="text-xs text-gold/80 hover:text-gold underline-offset-2 hover:underline"
+              onClick={() => setCropping(true)}>Re-crop</button>
+          )}
+          <div className="text-xs text-cream/40">A clear, professional headshot.</div>
+        </div>
       </div>
 
       <Field label="Email (for task & approval notifications)">
@@ -367,10 +481,18 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
     </div>
   );
 
+  const cropModal = cropping && rawSrc && (
+    <CropModal
+      src={rawSrc}
+      onCrop={(cropped) => { setPhoto(cropped); setCropping(false); }}
+      onCancel={() => setCropping(false)}
+    />
+  );
+
   if (forced) {
-    return <form onSubmit={submit} className="min-h-screen flex items-center justify-center p-4">{card}</form>;
+    return <>{cropModal}<form onSubmit={submit} className="min-h-screen flex items-center justify-center p-4">{card}</form></>;
   }
-  return <form onSubmit={submit} className="max-w-lg">{card}</form>;
+  return <>{cropModal}<form onSubmit={submit} className="max-w-lg">{card}</form></>;
 }
 
 // ---------------------------------------------------------------------------
@@ -990,6 +1112,12 @@ function TaskPage({ me, userId, users, refreshSignal }) {
           </div>
         ))}
       </div>
+
+      {isSelf && (
+        <div className="mt-10">
+          <MeetTheBoard />
+        </div>
+      )}
     </div>
   );
 }
@@ -1227,6 +1355,55 @@ function PodcastToggle() {
   );
 }
 
+function EditMemberModal({ user, onSaved, onClose }) {
+  const [firstName, setFirstName] = useState(user.displayName.split(' ')[0] || '');
+  const [lastName, setLastName] = useState(user.displayName.split(' ').slice(1).join(' ') || '');
+  const [username, setUsername] = useState(user.username || '');
+  const [title, setTitle] = useState(user.title || '');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function save(e) {
+    e.preventDefault();
+    setError('');
+    setSaving(true);
+    try {
+      await api(`/admin/users/${user.id}`, { method: 'PATCH', body: { firstName, lastName, username, title } });
+      onSaved();
+      onClose();
+    } catch (err) { setError(err.message); } finally { setSaving(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <form onSubmit={save} onClick={(e) => e.stopPropagation()}
+        className="bg-navy2 border border-gold/30 rounded-xl p-6 max-w-md w-full space-y-4">
+        <div className="font-display text-2xl text-gold">Edit Profile</div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="First Name">
+            <input className={inputCls} value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
+          </Field>
+          <Field label="Last Name">
+            <input className={inputCls} value={lastName} onChange={(e) => setLastName(e.target.value)} />
+          </Field>
+        </div>
+        <Field label="Username">
+          <input className={inputCls} value={username} onChange={(e) => setUsername(e.target.value.toLowerCase())}
+            pattern="[a-z0-9._\-]+" title="Letters, numbers, dots, hyphens, underscores only" required />
+        </Field>
+        <Field label="Title / Position">
+          <input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Grade Rep" />
+        </Field>
+        {error && <div className="text-red text-sm">{error}</div>}
+        <div className="flex gap-2">
+          <Button type="submit" variant="gold" disabled={saving}>{saving ? 'Saving…' : 'Save Changes'}</Button>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function AdminPanel({ users, reload }) {
   const [first, setFirst] = useState('');
   const [last, setLast] = useState('');
@@ -1237,6 +1414,7 @@ function AdminPanel({ users, reload }) {
   const [email, setEmail] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [editTarget, setEditTarget] = useState(null);
 
   async function addUser(e) {
     e.preventDefault();
@@ -1247,7 +1425,6 @@ function AdminPanel({ users, reload }) {
       }});
       setNotice(`Added ${d.user.displayName} — username "${d.user.username}", default password "${d.defaultPassword}".`);
       setFirst(''); setLast(''); setTitle(''); setRole('member'); setManagerId(''); setGrade(''); setEmail('');
-      rosterNeedsSync = true; // new portal user → re-import to roster next time it opens
       reload();
     } catch (err) { setError(err.message); }
   }
@@ -1318,6 +1495,7 @@ function AdminPanel({ users, reload }) {
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 {u.firstLogin ? <Badge tone="red">First login</Badge> : <Badge tone="green">Active</Badge>}
+                <button onClick={() => setEditTarget(u)} className="text-xs text-cream/60 hover:text-cream">Edit Profile</button>
                 <button onClick={() => resetPw(u)} className="text-xs text-gold/80 hover:text-gold">Reset PW</button>
                 <button onClick={() => removeUser(u)} className="text-xs text-red/80 hover:text-red">Remove</button>
               </div>
@@ -1376,6 +1554,9 @@ function AdminPanel({ users, reload }) {
           </div>
         ))}
       </div>
+      {editTarget && (
+        <EditMemberModal user={editTarget} onSaved={reload} onClose={() => setEditTarget(null)} />
+      )}
     </div>
   );
 }
@@ -2057,9 +2238,6 @@ function InterestSurvey({ onBack }) {
 // Roster Page
 // ---------------------------------------------------------------------------
 const ROSTER_STATUSES = ['Prospect', 'Contacted', 'Onboarded', 'Declined'];
-// Triggers auto-import of board members into the roster. Starts true (run on first visit),
-// resets to true after a roster delete or new portal user is created.
-let rosterNeedsSync = true;
 
 function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
   const [busy, setBusy] = useState(false);
@@ -2381,16 +2559,6 @@ function RosterPage({ me }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // Auto-import board portal members — runs once per session; resets when a member is
-  // deleted from the roster or when a new portal user is created (see rosterNeedsSync).
-  useEffect(() => {
-    if ((isPrivileged || me.canManageRoster) && rosterNeedsSync) {
-      rosterNeedsSync = false;
-      api('/roster/import-board', { method: 'POST' }).then(() => load()).catch(() => {});
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // Grade reps default to their assigned grade filter
   useEffect(() => {
     if (me.managedGrade && !isPrivileged) setGradeFilter(String(me.managedGrade));
@@ -2400,7 +2568,6 @@ function RosterPage({ me }) {
     if (action === 'delete') {
       if (!confirm('Delete this member from the roster?')) return;
       await api(`/roster/${memberId}`, { method: 'DELETE' });
-      rosterNeedsSync = true; // re-import board members on next roster visit
     } else {
       await api(`/roster/${memberId}/${action}`, { method: 'POST', body: body || undefined });
     }
@@ -3369,10 +3536,9 @@ function LogisticsPage() {
 }
 
 // ---------------------------------------------------------------------------
+// AI Notes page (full page — visible to all non-logistics users)
 // ---------------------------------------------------------------------------
-// AI Notes panel (modal overlay — visible to all non-logistics users)
-// ---------------------------------------------------------------------------
-function AINotesPanel({ onClose, onRead }) {
+function AINotesPage({ onRead }) {
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -3390,28 +3556,24 @@ function AINotesPanel({ onClose, onRead }) {
   }
 
   return (
-    <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
-      <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-lg w-full p-6 relative max-h-[80vh] overflow-y-auto">
-        <button onClick={onClose} aria-label="Close" className="absolute top-2 right-4 text-cream/60 hover:text-cream text-3xl leading-none">×</button>
-        <div className="font-display text-2xl text-gold mb-1">AI Notes</div>
-        <p className="text-cream/40 text-xs mb-4">Private notes left by the AI when it notices something worth your attention.</p>
-        {loading && <div className="text-cream/40 text-sm">Loading…</div>}
-        {!loading && notes.length === 0 && (
-          <div className="text-cream/40 text-sm">No AI notes yet — you're all caught up.</div>
-        )}
-        <div className="space-y-3">
-          {notes.map((n) => (
-            <div key={n.id} className={`rounded-lg p-4 border ${n.isRead ? 'border-cream/10 bg-navy' : 'border-gold/40 bg-gold/5'}`}>
-              <div className="text-sm text-cream/85 whitespace-pre-wrap leading-relaxed">{n.content}</div>
-              <div className="flex items-center justify-between mt-2">
-                <span className="text-xs text-cream/35">{new Date(n.createdAt).toLocaleDateString()}</span>
-                {!n.isRead && (
-                  <button onClick={() => markRead(n.id)} className="text-xs text-gold/70 hover:text-gold">Mark read</button>
-                )}
-              </div>
+    <div className="max-w-lg">
+      <p className="text-cream/40 text-sm mb-4">Private notes left by the AI when it notices something worth your attention.</p>
+      {loading && <div className="text-cream/40 text-sm">Loading…</div>}
+      {!loading && notes.length === 0 && (
+        <div className="text-cream/40 text-sm">No AI notes yet — you're all caught up.</div>
+      )}
+      <div className="space-y-3">
+        {notes.map((n) => (
+          <div key={n.id} className={`rounded-lg p-4 border ${n.isRead ? 'border-cream/10 bg-navy2' : 'border-gold/40 bg-gold/5'}`}>
+            <div className="text-sm text-cream/85 whitespace-pre-wrap leading-relaxed">{n.content}</div>
+            <div className="flex items-center justify-between mt-2">
+              <span className="text-xs text-cream/35">{new Date(n.createdAt).toLocaleDateString()}</span>
+              {!n.isRead && (
+                <button onClick={() => markRead(n.id)} className="text-xs text-gold/70 hover:text-gold">Mark read</button>
+              )}
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -3479,20 +3641,17 @@ function AIChatPage({ me }) {
     setAnalyzeStatus('Running…');
     try {
       const d = await api('/ai/analyze', { method: 'POST' });
-      setAnalyzeStatus(d.skipped ? 'AI not configured (no API key).' : 'Analysis complete — check your team members\' AI Notes.');
+      setAnalyzeStatus(d.skipped ? 'AI not configured (no API key).' : 'Analysis complete — check AI Notes.');
     } catch (err) {
-      setAnalyzeStatus('Analysis failed: ' + (err.message || 'unknown error'));
+      setAnalyzeStatus('Failed: ' + (err.message || 'unknown error'));
     }
     setTimeout(() => setAnalyzeStatus(''), 6000);
   }
 
   return (
     <div className="max-w-3xl mx-auto flex flex-col" style={{ height: 'calc(100vh - 120px)' }}>
-      <div className="flex items-end justify-between mb-4 flex-wrap gap-2">
-        <div>
-          <h1 className="font-display text-4xl text-cream leading-none">AI Assistant</h1>
-          <p className="text-cream/50 text-sm mt-1">Ask about team health, tasks, check-ins, or get a summary.</p>
-        </div>
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <p className="text-cream/50 text-sm">Ask about team health, tasks, check-ins, or get a summary.</p>
         <div className="flex gap-2 items-center flex-wrap">
           {analyzeStatus && <span className="text-xs text-cream/60">{analyzeStatus}</span>}
           <Button variant="ghost" onClick={runAnalysis} className="text-xs">Run Analysis Now</Button>
@@ -3545,167 +3704,130 @@ function AIChatPage({ me }) {
   );
 }
 
-function Sidebar({ me, reports, approvalsCount, submissionsCount, checkinEnabled, view, setView, onLogout, open, onClose, aiNotesCount, onAINotes }) {
-  const [reportsOpen, setReportsOpen] = useState(true);
+// ---------------------------------------------------------------------------
+function AppIcon({ name }) {
+  const p = { width: 24, height: 24, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', className: 'text-cream/60 group-hover:text-gold transition-colors duration-150' };
+  switch (name) {
+    case 'person':    return <svg {...p}><circle cx="12" cy="8" r="3.5"/><path d="M4 20c0-3.866 3.582-7 8-7s8 3.134 8 7"/></svg>;
+    case 'home':      return <svg {...p}><path d="M3 11.5 12 3l9 8.5"/><path d="M5 10.5v10h5v-5h4v5h5v-10"/></svg>;
+    case 'edit':      return <svg {...p}><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5Z"/></svg>;
+    case 'megaphone': return <svg {...p}><path d="M18 4v16c-3-3-9-4.5-13-4.5V8.5C9 8.5 15 7 18 4Z"/><path d="M3 11v2"/><path d="M7 16.5v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3"/></svg>;
+    case 'team':      return <svg {...p}><circle cx="8" cy="7" r="3"/><path d="M2 20c0-3 2.686-5.5 6-5.5s6 2.5 6 5.5"/><circle cx="18" cy="8" r="2.5"/><path d="M15.5 20c0-2.5 2.239-4.5 5-4.5"/></svg>;
+    case 'check':     return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-5"/></svg>;
+    case 'inbox':     return <svg {...p}><path d="M22 12H16l-2 3H10L8 12H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 17 4H7a2 2 0 0 0-1.55.89Z"/></svg>;
+    case 'roster':    return <svg {...p}><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>;
+    case 'calendar':  return <svg {...p}><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="m9 16 2 2 4-4"/></svg>;
+    case 'funding':   return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5a2.5 2.5 0 0 1 5 0c0 1.5-1 2-2.5 2.5-1.5.5-2.5 1-2.5 2.5a2.5 2.5 0 0 0 5 0"/></svg>;
+    case 'apply':     return <svg {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>;
+    case 'dashboard': return <svg {...p}><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>;
+    case 'org':       return <svg {...p}><circle cx="12" cy="4" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 6v5M12 11H5v6M12 11h7v6"/></svg>;
+    case 'admin':     return <svg {...p}><path d="M12 2 3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7Z"/><path d="m9 12 2 2 4-4"/></svg>;
+    case 'activity':  return <svg {...p}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>;
+    case 'ai':        return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M9 9h.01M15 9h.01M9.5 14a3.5 3.5 0 0 0 5 0"/></svg>;
+    case 'ainotes':   return <svg {...p}><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8Z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>;
+    default:          return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
+  }
+}
+
+function AppTile({ label, icon, badge, onClick }) {
+  return (
+    <button onClick={onClick}
+      className="group relative bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/30 rounded-2xl p-5 flex flex-col items-center gap-3 transition-all duration-150 active:scale-95 w-full">
+      <div className="relative">
+        <div className="w-14 h-14 rounded-xl bg-navy/60 flex items-center justify-center group-hover:bg-navy2 transition-colors duration-150">
+          <AppIcon name={icon} />
+        </div>
+        {badge > 0 && (
+          <span className="absolute -top-1 -right-1 bg-red text-cream text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">{badge}</span>
+        )}
+      </div>
+      <span className="text-cream/80 text-xs font-medium text-center leading-tight group-hover:text-cream transition-colors">{label}</span>
+    </button>
+  );
+}
+
+function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, aiNotesCount, onNavigate, onLogout }) {
   const isManager = me.role === 'manager' || me.role === 'admin';
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
   const canSeeSubmissions = me.role === 'admin' || !!me.grade;
   const canRoster = isManager || !!me.canManageRoster;
 
-  const NavItem = ({ active, onClick, children, badge }) => (
-    <button onClick={onClick}
-      className={`w-full text-left px-3 py-2 rounded-md flex items-center justify-between transition-colors ${
-        active ? 'bg-red text-cream' : 'text-cream/80 hover:bg-navy3'}`}>
-      <span>{children}</span>
-      {badge != null && badge > 0 && <span className="bg-gold text-navy text-xs font-semibold rounded-full px-2 py-0.5">{badge}</span>}
-    </button>
-  );
+  const tiles = me.username === 'logistics'
+    ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }]
+    : [
+        { type: 'mytasks',  label: 'My Page',        icon: 'person'    },
+        { type: 'home',     label: 'Club Home',       icon: 'home'      },
+        ...(canEditSite       ? [{ type: 'website',     label: 'Edit Website',     icon: 'edit'      }] : []),
+        ...(isManager         ? [{ type: 'announce',    label: 'Announcement',     icon: 'megaphone' }] : []),
+        ...(isManager         ? [{ type: 'myteam',      label: 'My Team',          icon: 'team'      }] : []),
+        ...(isManager         ? [{ type: 'approvals',   label: 'Approvals',        icon: 'check',    badge: approvalsCount   }] : []),
+        ...(canSeeSubmissions ? [{ type: 'submissions', label: 'Get Involved',     icon: 'inbox',    badge: submissionsCount }] : []),
+        ...(canRoster         ? [{ type: 'roster',      label: 'Roster',           icon: 'roster'    }] : []),
+        ...((checkinEnabled || isManager) ? [{ type: 'checkin', label: checkinEnabled ? 'Check-In' : 'Check-In Settings', icon: 'calendar' }] : []),
+        { type: 'funding',  label: 'Funding',          icon: 'funding'   },
+        { type: 'apply',    label: 'Apply',             icon: 'apply'     },
+        ...(isManager         ? [{ type: 'dashboard',   label: 'Dashboard',        icon: 'dashboard' }] : []),
+        { type: 'org',      label: 'Org Chart',         icon: 'org'       },
+        ...(me.role === 'admin' ? [{ type: 'admin',     label: 'Admin Panel',      icon: 'admin'     }] : []),
+        ...(me.role === 'admin' ? [{ type: 'ai',        label: 'AI Assistant',     icon: 'ai'        }] : []),
+        { type: 'ainotes',  label: 'AI Notes',          icon: 'ainotes',  badge: aiNotesCount },
+      ];
 
   return (
-    <React.Fragment>
-      {/* Dim overlay behind the drawer on small screens */}
-      <div
-        onClick={onClose}
-        className={`fixed inset-0 bg-black/60 z-30 lg:hidden transition-opacity ${open ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-      />
-      <aside
-        className={`w-72 max-w-[85vw] lg:w-64 shrink-0 bg-navy2 border-r border-cream/10 flex flex-col h-screen fixed lg:sticky top-0 left-0 z-40 transform transition-transform duration-200 ${
-          open ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
-      >
-      <div className="p-4 border-b border-cream/10 flex items-start justify-between gap-2">
+    <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
+      <header className="px-6 py-5 flex items-center justify-between border-b border-cream/10">
         <Logo size="sidebar" />
-        <button onClick={onClose} aria-label="Close menu" className="lg:hidden text-cream/60 hover:text-cream text-3xl leading-none -mt-1">×</button>
-      </div>
-
-      <nav className="flex-1 overflow-y-auto p-3 space-y-1">
-        {me.username === 'logistics' ? (
-          <NavItem active={view.type === 'logistics'} onClick={() => setView({ type: 'logistics' })}>
-            Login Activity
-          </NavItem>
-        ) : (
-          <React.Fragment>
-        <NavItem active={view.type === 'home'} onClick={() => setView({ type: 'home' })}>Home</NavItem>
-        {canEditSite && (
-          <NavItem active={view.type === 'website'} onClick={() => setView({ type: 'website' })}>Edit Website</NavItem>
-        )}
-        <NavItem active={view.type === 'mytasks'} onClick={() => setView({ type: 'mytasks' })}>My Page</NavItem>
-
-        {isManager && (
-          <NavItem active={view.type === 'announce'} onClick={() => setView({ type: 'announce' })}>
-            📢 Team Announcement
-          </NavItem>
-        )}
-
-        {isManager && (
-          <div>
-            <button onClick={() => setReportsOpen((o) => !o)}
-              className="w-full text-left px-3 py-2 rounded-md text-cream/80 hover:bg-navy3 flex items-center justify-between">
-              <span>People I Manage</span>
-              <span className="text-cream/40">{reportsOpen ? '▾' : '▸'}</span>
-            </button>
-            {reportsOpen && (
-              <div className="ml-3 border-l border-cream/10 pl-2 space-y-1">
-                {reports.length === 0 && <div className="text-cream/30 text-sm px-2 py-1">No direct reports</div>}
-                {reports.map((r) => (
-                  <button key={r.id} onClick={() => setView({ type: 'person', userId: r.id })}
-                    className={`w-full text-left px-2 py-1.5 rounded text-sm transition-colors ${
-                      view.type === 'person' && view.userId === r.id ? 'bg-navy3 text-gold' : 'text-cream/70 hover:bg-navy3'}`}>
-                    {r.displayName}
-                    <span className="block text-[11px] text-cream/35">{r.title || roleLabel(r.role)}</span>
-                  </button>
-                ))}
-              </div>
-            )}
+        <div className="flex flex-col items-end gap-1">
+          <span className="text-cream text-sm font-medium">{me.displayName}</span>
+          <span className="text-cream/40 text-xs">{me.title || roleLabel(me.role)}</span>
+          <div className="flex gap-3 mt-0.5">
+            <button onClick={() => onNavigate({ type: 'profile' })} className="text-[11px] text-gold/60 hover:text-gold transition-colors">Profile</button>
+            <button onClick={() => onNavigate({ type: 'password' })} className="text-[11px] text-gold/60 hover:text-gold transition-colors">Password</button>
+            <button onClick={onLogout} className="text-[11px] text-red/60 hover:text-red transition-colors">Log out</button>
           </div>
-        )}
-
-        {isManager && (
-          <NavItem active={view.type === 'approvals'} onClick={() => setView({ type: 'approvals' })} badge={approvalsCount}>
-            Pending Approvals
-          </NavItem>
-        )}
-
-        {canSeeSubmissions && (
-          <NavItem active={view.type === 'submissions'} onClick={() => setView({ type: 'submissions' })} badge={submissionsCount}>
-            Get Involved
-          </NavItem>
-        )}
-
-        {canRoster && (
-          <NavItem active={view.type === 'roster'} onClick={() => setView({ type: 'roster' })}>
-            📋 Roster
-          </NavItem>
-        )}
-
-        {checkinEnabled && (
-          <NavItem active={view.type === 'checkin'} onClick={() => setView({ type: 'checkin' })}>
-            ✅ Weekly Check-In
-          </NavItem>
-        )}
-        {isManager && !checkinEnabled && (
-          <NavItem active={view.type === 'checkin'} onClick={() => setView({ type: 'checkin' })}>
-            ✅ Check-In Settings
-          </NavItem>
-        )}
-
-        <NavItem active={view.type === 'funding'} onClick={() => setView({ type: 'funding' })}>
-          💰 Funding Requests
-        </NavItem>
-
-        <NavItem active={view.type === 'apply'} onClick={() => setView({ type: 'apply' })}>
-          📝 Apply for Position
-        </NavItem>
-
-        {isManager && (
-          <NavItem active={view.type === 'dashboard'} onClick={() => setView({ type: 'dashboard' })}>
-            📊 Dashboard
-          </NavItem>
-        )}
-
-        <NavItem active={view.type === 'org'} onClick={() => setView({ type: 'org' })}>Org Chart</NavItem>
-
-        {me.role === 'admin' && (
-          <NavItem active={view.type === 'admin'} onClick={() => setView({ type: 'admin' })}>Admin Panel</NavItem>
-        )}
-
-        {me.role === 'admin' && (
-          <NavItem active={view.type === 'ai'} onClick={() => setView({ type: 'ai' })}>
-            🤖 AI Assistant
-          </NavItem>
-        )}
-          </React.Fragment>
-        )}
-      </nav>
-
-      <div className="p-3 border-t border-cream/10">
-        <div className="text-sm text-cream">{me.displayName}</div>
-        <div className="text-xs text-cream/40 mb-2">{me.title || roleLabel(me.role)} · {roleLabel(me.role)}</div>
-        <div className="flex gap-x-3 gap-y-1 flex-wrap">
-          <button onClick={() => setView({ type: 'profile' })} className="text-xs text-gold/80 hover:text-gold">Edit profile</button>
-          <button onClick={() => setView({ type: 'password' })} className="text-xs text-gold/80 hover:text-gold">Change password</button>
-          <button onClick={onLogout} className="text-xs text-red/80 hover:text-red ml-auto">Log out</button>
         </div>
-        {me.username !== 'logistics' && (
-          <button onClick={onAINotes} className="mt-2 w-full text-left text-xs text-cream/60 hover:text-gold flex items-center gap-1">
-            <span>🔔</span>
-            <span>AI Notes</span>
-            {aiNotesCount > 0 && (
-              <span className="ml-1 bg-gold text-navy text-xs font-semibold rounded-full px-1.5 py-0.5 leading-none">{aiNotesCount}</span>
-            )}
-          </button>
-        )}
+      </header>
+      <div className="flex-1 px-4 py-8">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          {tiles.map(t => (
+            <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge} onClick={() => onNavigate({ type: t.type })} />
+          ))}
+        </div>
       </div>
-      </aside>
-    </React.Fragment>
+    </div>
+  );
+}
+
+function MyTeamView({ reports, onNavigate }) {
+  return (
+    <div>
+      <h2 className="text-xl font-semibold text-cream mb-6">My Team</h2>
+      {reports.length === 0 ? (
+        <p className="text-cream/40">No direct reports.</p>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-w-2xl">
+          {reports.map(r => (
+            <button key={r.id} onClick={() => onNavigate({ type: 'person', userId: r.id })}
+              className="group bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/30 rounded-xl p-4 flex items-center gap-3 text-left transition-all duration-150 active:scale-95">
+              <div className="w-10 h-10 rounded-full bg-navy3 flex items-center justify-center text-cream/60 text-sm font-semibold shrink-0">
+                {r.displayName.charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <div className="text-cream text-sm font-medium group-hover:text-gold transition-colors">{r.displayName}</div>
+                <div className="text-cream/40 text-xs">{r.title || roleLabel(r.role)}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
 function App() {
   const [me, setMe] = useState(null);
   const [booted, setBooted] = useState(false);
-  const [view, setView] = useState({ type: 'mytasks' });
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  // The site lands on the public homepage; the portal opens on demand.
+  const [view, setView] = useState({ type: 'apphome' });
   const [enterPortal, setEnterPortal] = useState(false);
   const [users, setUsers] = useState([]);
   const [reports, setReports] = useState([]);
@@ -3714,11 +3836,8 @@ function App() {
   const [checkinEnabled, setCheckinEnabled] = useState(false);
   const [refreshSignal, setRefreshSignal] = useState(0);
   const [aiNotesCount, setAiNotesCount] = useState(0);
-  const [aiNotesOpen, setAiNotesOpen] = useState(false);
 
-  // Detect /survey path for public survey
   const isSurveyPath = window.location.pathname === '/survey';
-
   const bump = () => setRefreshSignal((n) => n + 1);
 
   const loadShared = useCallback(async (user) => {
@@ -3745,7 +3864,6 @@ function App() {
     } catch (_) {}
   }, []);
 
-  // Boot: restore session from token.
   useEffect(() => {
     (async () => {
       const token = localStorage.getItem(TOKEN_KEY);
@@ -3766,34 +3884,44 @@ function App() {
   function logout() {
     localStorage.removeItem(TOKEN_KEY);
     setMe(null);
-    setView({ type: 'mytasks' });
+    setView({ type: 'apphome' });
     setEnterPortal(false);
   }
 
   if (!booted) return <div className="min-h-screen flex items-center justify-center text-cream/40">Loading…</div>;
-
-  // Public interest survey at /survey
   if (isSurveyPath) return <InterestSurvey onBack={() => { window.history.pushState(null, '', '/'); window.location.reload(); }} />;
-
-  // Default landing: the public homepage. The portal opens via the login button.
   if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;
-
   if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); if (u.username === 'logistics') setView({ type: 'logistics' }); }} onBack={() => setEnterPortal(false)} />;
   if (me.firstLogin) return <ChangePassword user={me} forced onDone={(u) => { setMe(u); loadShared(u); }} />;
-  // Right after the password step: prompt for a profile photo + intro bio.
   if (!me.profileComplete && me.username !== 'logistics') return <ProfileSetup me={me} forced
     onDone={(u) => { setMe(u); loadShared(u); }}
     onSkip={() => setMe({ ...me, profileComplete: true })} />;
 
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
+  const navigate = (v) => setView(v);
+
+  if (view.type === 'apphome') return (
+    <AppHome me={me} reports={reports} approvalsCount={approvalsCount} submissionsCount={submissionsCount}
+      checkinEnabled={checkinEnabled} aiNotesCount={aiNotesCount} onNavigate={navigate} onLogout={logout} />
+  );
+
+  const PAGE_TITLES = {
+    home: 'Club Home', website: 'Edit Website', mytasks: 'My Page',
+    person: (reports.find(r => r.id === view.userId) || {}).displayName || 'Team Member',
+    myteam: 'My Team', announce: 'Team Announcement', approvals: 'Pending Approvals',
+    submissions: 'Get Involved', roster: 'Roster', checkin: 'Weekly Check-In',
+    funding: 'Funding Requests', apply: 'Apply for Position', dashboard: 'Dashboard',
+    org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity',
+    password: 'Change Password', profile: 'Edit Profile',
+    ai: 'AI Assistant', ainotes: 'AI Notes',
+  };
 
   let content;
   if (view.type === 'home') content = <Home mode="portal" me={me} />;
-  else if (view.type === 'website') content = canEditSite
-    ? <Home mode="editor" me={me} editable={true} />
-    : <Home mode="portal" me={me} />;
+  else if (view.type === 'website') content = canEditSite ? <Home mode="editor" me={me} editable={true} /> : <Home mode="portal" me={me} />;
   else if (view.type === 'mytasks') content = <TaskPage me={me} userId={me.id} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'person') content = <TaskPage me={me} userId={view.userId} users={users} refreshSignal={refreshSignal} />;
+  else if (view.type === 'myteam') content = <MyTeamView reports={reports} onNavigate={navigate} />;
   else if (view.type === 'announce') content = <TeamAnnouncementView me={me} reports={reports} />;
   else if (view.type === 'approvals') content = <Approvals onChanged={bump} refreshSignal={refreshSignal} />;
   else if (view.type === 'submissions') content = <SubmissionsInbox onChanged={bump} refreshSignal={refreshSignal} />;
@@ -3805,29 +3933,23 @@ function App() {
   else if (view.type === 'org') content = <OrgChart />;
   else if (view.type === 'admin') content = <AdminPanel users={users} reload={bump} />;
   else if (view.type === 'logistics') content = <LogisticsPage />;
-  else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); setView({ type: 'mytasks' }); }} />;
-  else if (view.type === 'profile') content = <ProfileSetup me={me} onDone={(u) => { setMe(u); setView({ type: 'mytasks' }); }} />;
+  else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;
+  else if (view.type === 'profile') content = <ProfileSetup me={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;
   else if (view.type === 'ai') content = me.role === 'admin' ? <AIChatPage me={me} /> : null;
-
-  // Navigating from the sidebar also closes the mobile drawer.
-  const navigate = (v) => { setView(v); setSidebarOpen(false); };
+  else if (view.type === 'ainotes') content = <AINotesPage onRead={bump} />;
 
   return (
-    <div className="lg:flex">
-      {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={() => { setAiNotesOpen(false); bump(); }} />}
-      <Sidebar me={me} reports={reports} approvalsCount={approvalsCount} submissionsCount={submissionsCount} checkinEnabled={checkinEnabled}
-        view={view} setView={navigate} onLogout={logout}
-        open={sidebarOpen} onClose={() => setSidebarOpen(false)}
-        aiNotesCount={aiNotesCount} onAINotes={() => setAiNotesOpen(true)} />
-      <div className="flex-1 min-w-0">
-        {/* Mobile top bar with hamburger — hidden on desktop */}
-        <header className="lg:hidden sticky top-0 z-20 flex items-center gap-3 bg-navy2/95 backdrop-blur border-b border-cream/10 px-4 py-3">
-          <button onClick={() => setSidebarOpen(true)} aria-label="Open menu"
-            className="text-cream text-2xl leading-none w-8 h-8 flex items-center justify-center rounded hover:bg-navy3">☰</button>
-          <span className="font-display text-2xl text-red leading-none">CLUB AMERICA</span>
-        </header>
-        <main className="p-4 sm:p-6 lg:p-8 overflow-x-hidden">{content}</main>
-      </div>
+    <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
+      <header className="sticky top-0 z-20 flex items-center gap-3 bg-navy2/95 backdrop-blur border-b border-cream/10 px-4 py-3">
+        <button onClick={() => navigate({ type: 'apphome' })} aria-label="Back to home"
+          className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-cream hover:bg-navy3 transition-colors">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 12H5M12 5l-7 7 7 7"/>
+          </svg>
+        </button>
+        <span className="text-cream font-semibold text-base">{PAGE_TITLES[view.type] || ''}</span>
+      </header>
+      <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-x-hidden">{content}</main>
     </div>
   );
 }
