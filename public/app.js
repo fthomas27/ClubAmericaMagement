@@ -1112,6 +1112,12 @@ function TaskPage({ me, userId, users, refreshSignal }) {
           </div>
         ))}
       </div>
+
+      {isSelf && (
+        <div className="mt-10">
+          <MeetTheBoard />
+        </div>
+      )}
     </div>
   );
 }
@@ -1349,6 +1355,55 @@ function PodcastToggle() {
   );
 }
 
+function EditMemberModal({ user, onSaved, onClose }) {
+  const [firstName, setFirstName] = useState(user.displayName.split(' ')[0] || '');
+  const [lastName, setLastName] = useState(user.displayName.split(' ').slice(1).join(' ') || '');
+  const [username, setUsername] = useState(user.username || '');
+  const [title, setTitle] = useState(user.title || '');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function save(e) {
+    e.preventDefault();
+    setError('');
+    setSaving(true);
+    try {
+      await api(`/admin/users/${user.id}`, { method: 'PATCH', body: { firstName, lastName, username, title } });
+      onSaved();
+      onClose();
+    } catch (err) { setError(err.message); } finally { setSaving(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <form onSubmit={save} onClick={(e) => e.stopPropagation()}
+        className="bg-navy2 border border-gold/30 rounded-xl p-6 max-w-md w-full space-y-4">
+        <div className="font-display text-2xl text-gold">Edit Profile</div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="First Name">
+            <input className={inputCls} value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
+          </Field>
+          <Field label="Last Name">
+            <input className={inputCls} value={lastName} onChange={(e) => setLastName(e.target.value)} />
+          </Field>
+        </div>
+        <Field label="Username">
+          <input className={inputCls} value={username} onChange={(e) => setUsername(e.target.value.toLowerCase())}
+            pattern="[a-z0-9._\-]+" title="Letters, numbers, dots, hyphens, underscores only" required />
+        </Field>
+        <Field label="Title / Position">
+          <input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Grade Rep" />
+        </Field>
+        {error && <div className="text-red text-sm">{error}</div>}
+        <div className="flex gap-2">
+          <Button type="submit" variant="gold" disabled={saving}>{saving ? 'Saving…' : 'Save Changes'}</Button>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function AdminPanel({ users, reload }) {
   const [first, setFirst] = useState('');
   const [last, setLast] = useState('');
@@ -1359,6 +1414,7 @@ function AdminPanel({ users, reload }) {
   const [email, setEmail] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [editTarget, setEditTarget] = useState(null);
 
   async function addUser(e) {
     e.preventDefault();
@@ -1369,7 +1425,6 @@ function AdminPanel({ users, reload }) {
       }});
       setNotice(`Added ${d.user.displayName} — username "${d.user.username}", default password "${d.defaultPassword}".`);
       setFirst(''); setLast(''); setTitle(''); setRole('member'); setManagerId(''); setGrade(''); setEmail('');
-      rosterNeedsSync = true; // new portal user → re-import to roster next time it opens
       reload();
     } catch (err) { setError(err.message); }
   }
@@ -1440,6 +1495,7 @@ function AdminPanel({ users, reload }) {
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 {u.firstLogin ? <Badge tone="red">First login</Badge> : <Badge tone="green">Active</Badge>}
+                <button onClick={() => setEditTarget(u)} className="text-xs text-cream/60 hover:text-cream">Edit Profile</button>
                 <button onClick={() => resetPw(u)} className="text-xs text-gold/80 hover:text-gold">Reset PW</button>
                 <button onClick={() => removeUser(u)} className="text-xs text-red/80 hover:text-red">Remove</button>
               </div>
@@ -1498,6 +1554,9 @@ function AdminPanel({ users, reload }) {
           </div>
         ))}
       </div>
+      {editTarget && (
+        <EditMemberModal user={editTarget} onSaved={reload} onClose={() => setEditTarget(null)} />
+      )}
     </div>
   );
 }
@@ -2179,9 +2238,6 @@ function InterestSurvey({ onBack }) {
 // Roster Page
 // ---------------------------------------------------------------------------
 const ROSTER_STATUSES = ['Prospect', 'Contacted', 'Onboarded', 'Declined'];
-// Triggers auto-import of board members into the roster. Starts true (run on first visit),
-// resets to true after a roster delete or new portal user is created.
-let rosterNeedsSync = true;
 
 function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
   const [busy, setBusy] = useState(false);
@@ -2503,16 +2559,6 @@ function RosterPage({ me }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // Auto-import board portal members — runs once per session; resets when a member is
-  // deleted from the roster or when a new portal user is created (see rosterNeedsSync).
-  useEffect(() => {
-    if ((isPrivileged || me.canManageRoster) && rosterNeedsSync) {
-      rosterNeedsSync = false;
-      api('/roster/import-board', { method: 'POST' }).then(() => load()).catch(() => {});
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // Grade reps default to their assigned grade filter
   useEffect(() => {
     if (me.managedGrade && !isPrivileged) setGradeFilter(String(me.managedGrade));
@@ -2522,7 +2568,6 @@ function RosterPage({ me }) {
     if (action === 'delete') {
       if (!confirm('Delete this member from the roster?')) return;
       await api(`/roster/${memberId}`, { method: 'DELETE' });
-      rosterNeedsSync = true; // re-import board members on next roster visit
     } else {
       await api(`/roster/${memberId}/${action}`, { method: 'POST', body: body || undefined });
     }

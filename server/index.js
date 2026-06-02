@@ -942,8 +942,17 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
 app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
   const user = getUser(Number(req.params.id));
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { role, title, managerId, grade, email, canManageRoster, managedGrade, canAnnounce, canEditHome, bigBoard } = req.body || {};
+  const { role, title, managerId, grade, email, canManageRoster, managedGrade, canAnnounce, canEditHome, bigBoard, username, firstName, lastName } = req.body || {};
   const prevManager = user.managerId;
+
+  // Validate and normalize username if provided.
+  let newUsername = null;
+  if (username !== undefined) {
+    newUsername = String(username).trim().toLowerCase();
+    if (!/^[a-z0-9._-]+$/.test(newUsername)) return res.status(400).json({ error: 'Username may only contain letters, numbers, dots, hyphens, and underscores' });
+    const clash = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(newUsername, user.id);
+    if (clash) return res.status(400).json({ error: 'That username is already taken' });
+  }
 
   const newRole = ROLES.includes(role) ? role : user.role;
   const newManagerId = managerId === undefined ? user.managerId : (managerId || null);
@@ -951,6 +960,13 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
 
   // managedGrade is nullable, so handle it directly (COALESCE can't clear a value).
   const newManagedGrade = managedGrade === undefined ? user.managedGrade : (managedGrade || null);
+
+  // Recompute displayName when first or last name changes.
+  const newFirst = firstName !== undefined ? String(firstName).trim() : null;
+  const newLast  = lastName  !== undefined ? String(lastName).trim()  : null;
+  const newDisplayName = (newFirst !== null || newLast !== null)
+    ? [newFirst ?? user.firstName, newLast ?? user.lastName].filter(Boolean).join(' ')
+    : null;
 
   db.prepare(`UPDATE users SET
     role = ?,
@@ -962,7 +978,11 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     managedGrade    = ?,
     canAnnounce     = COALESCE(?, canAnnounce),
     canEditHome     = COALESCE(?, canEditHome),
-    bigBoard        = COALESCE(?, bigBoard)
+    bigBoard        = COALESCE(?, bigBoard),
+    username        = COALESCE(?, username),
+    firstName       = COALESCE(?, firstName),
+    lastName        = COALESCE(?, lastName),
+    displayName     = COALESCE(?, displayName)
   WHERE id = ?`).run(
     newRole,
     title ?? null,
@@ -974,6 +994,10 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     canAnnounce !== undefined ? (canAnnounce ? 1 : 0) : null,
     canEditHome !== undefined ? (canEditHome ? 1 : 0) : null,
     bigBoard !== undefined ? (bigBoard ? 1 : 0) : null,
+    newUsername,
+    newFirst,
+    newLast,
+    newDisplayName,
     user.id,
   );
 
