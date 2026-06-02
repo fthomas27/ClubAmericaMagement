@@ -197,6 +197,10 @@ function init() {
   if (!cols.includes('bio'))             db.exec("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''");
   if (!cols.includes('profileComplete')) db.exec("ALTER TABLE users ADD COLUMN profileComplete INTEGER NOT NULL DEFAULT 0");
   if (!cols.includes('email'))           db.exec("ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('bigBoard')) {
+    db.exec("ALTER TABLE users ADD COLUMN bigBoard INTEGER NOT NULL DEFAULT 0");
+    db.prepare("UPDATE users SET bigBoard = 1 WHERE role = 'admin' OR role = 'manager' OR title = 'Secretary'").run();
+  }
 
   // site_settings column migrations.
   const siteCols = db.prepare("PRAGMA table_info(site_settings)").all().map((c) => c.name);
@@ -289,6 +293,7 @@ function seed() {
     db.prepare("UPDATE users SET canEditHome = 1 WHERE username IN ('fthomas', 'deddy', 'dhays')").run();
     db.prepare("UPDATE users SET canAnnounce = 1 WHERE username IN ('campbell', 'dhays')").run();
     db.prepare("UPDATE users SET canManageRoster = 1 WHERE title IN ('Secretary', 'Grade Rep')").run();
+    db.prepare("UPDATE users SET bigBoard = 1 WHERE username IN ('fthomas','deddy','mflachsmann','hfossey','dhays','campbell')").run();
 
     // Grade reps: assign which grade they cover.
     const setGrade = db.prepare('UPDATE users SET grade = ? WHERE username = ?');
