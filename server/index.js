@@ -15,6 +15,7 @@ process.on('uncaughtException', (err) => {
 
 const { db, init, seed } = require('./db');
 const { fetchUpcoming } = require('./calendar');
+const { notify } = require('./email');
 const {
   signToken,
   publicUser,
@@ -27,8 +28,9 @@ init();
 const seeded = seed();
 
 const app = express();
+app.set('trust proxy', 1); // behind Railway's proxy
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '6mb' })); // profile photos travel as data URLs
 
 const STATUSES = ['Not Started', 'In Progress', 'Complete'];
 const ROLES = ['admin', 'manager', 'member'];
@@ -103,6 +105,10 @@ app.post('/api/auth/login', (req, res) => {
   if (!user || !bcrypt.compareSync(password, user.passwordHash)) {
     return res.status(401).json({ error: 'Invalid username or password' });
   }
+  try {
+    const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+    db.prepare('INSERT INTO login_logs (userId, username, ipAddress) VALUES (?, ?, ?)').run(user.id, user.username, ip);
+  } catch (_) {}
   res.json({ token: signToken(user), user: publicUser(user) });
 });
 
@@ -125,8 +131,17 @@ app.get('/api/me', authenticate, (req, res) => {
 
 // ---- Public homepage content (no auth) --------------------------------------
 function getHome() {
-  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, homeAnnouncement, homeAnnouncementEnabled, updatedAt FROM site_settings WHERE id = 1').get();
-  return { ...row, podcastEnabled: !!row.podcastEnabled, homeAnnouncementEnabled: !!row.homeAnnouncementEnabled };
+  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, aboutText, homeAnnouncement, homeAnnouncementEnabled, announcementPostedAt, updatedAt FROM site_settings WHERE id = 1').get();
+  // Auto-expire the announcement after 7 days.
+  let announcementEnabled = !!row.homeAnnouncementEnabled;
+  if (announcementEnabled && row.announcementPostedAt) {
+    const ageMs = Date.now() - new Date(row.announcementPostedAt + 'Z').getTime();
+    if (ageMs > 7 * 24 * 60 * 60 * 1000) {
+      announcementEnabled = false;
+      db.prepare("UPDATE site_settings SET homeAnnouncementEnabled = 0 WHERE id = 1").run();
+    }
+  }
+  return { ...row, podcastEnabled: !!row.podcastEnabled, homeAnnouncementEnabled: announcementEnabled };
 }
 app.get('/api/home', async (req, res) => {
   const home = getHome();
@@ -135,6 +150,47 @@ app.get('/api/home', async (req, res) => {
   // Don't leak the raw calendar URL to the public payload.
   const { calendarUrl, ...publicHome } = home;
   res.json({ home: { ...publicHome, calendarConfigured: !!calendarUrl }, events });
+});
+
+// Public board roster for the "Meet the Board" page (no private info, no auth).
+app.get('/api/board', (req, res) => {
+  const members = db
+    .prepare("SELECT id, displayName, title, role, grade, managerId, bio, photo FROM users WHERE username != 'logistics' ORDER BY displayName")
+    .all()
+    .map((m) => ({ ...m, photo: m.photo || null }));
+  res.json({ members });
+});
+
+// Public "Get Involved" submission (club-join or board application). No auth.
+app.post('/api/submissions', (req, res) => {
+  let { type, name, email, grade, message } = req.body || {};
+  type = type === 'board' ? 'board' : 'club';
+  name = String(name || '').trim().slice(0, 120);
+  email = String(email || '').trim().slice(0, 200);
+  grade = String(grade || '').trim().slice(0, 40);
+  message = String(message || '').trim().slice(0, 2000);
+  if (!name || !email) return res.status(400).json({ error: 'Name and email are required' });
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'Please enter a valid email' });
+  db.prepare('INSERT INTO submissions (type, name, email, grade, message) VALUES (?, ?, ?, ?, ?)')
+    .run(type, name, email, grade, message);
+
+  // Notify the board members this submission is routed to:
+  //  - club-join → that grade's grade reps + admins (President/VP)
+  //  - board application → admins only
+  let recipients;
+  if (type === 'club' && grade) {
+    recipients = db.prepare("SELECT email FROM users WHERE role = 'admin' OR grade = ?").all(grade);
+  } else {
+    recipients = db.prepare("SELECT email FROM users WHERE role = 'admin'").all();
+  }
+  const label = type === 'board' ? 'board application' : 'club-join request';
+  for (const r of recipients) {
+    notify(r.email, `New ${label}`,
+      `New ${label}`,
+      `<b>${name}</b>${grade ? ' (grade ' + grade + ')' : ''} submitted a ${label}.<br/>Email: ${email}${message ? '<br/>Message: ' + message : ''}<br/><br/>See it in the Get Involved inbox.`);
+  }
+
+  res.status(201).json({ ok: true });
 });
 
 // Public interest survey — no auth required.
@@ -149,8 +205,82 @@ app.post('/api/roster/survey', (req, res) => {
   res.status(201).json({ ok: true, id: info.lastInsertRowid });
 });
 
+// Public click tracking — no auth required (visitors haven't logged in).
+app.post('/api/track', (req, res) => {
+  const { event, label } = req.body || {};
+  if (!event || typeof event !== 'string') return res.status(400).json({ error: 'event required' });
+  db.prepare('INSERT INTO page_events (event, label) VALUES (?, ?)')
+    .run(String(event).slice(0, 80), String(label || '').slice(0, 200));
+  res.json({ ok: true });
+});
+
 // Everything past this point requires a changed password.
 app.use('/api', authenticate, requirePasswordChanged);
+
+// ---- Own profile (photo + intro bio) ----------------------------------------
+app.get('/api/me/profile', (req, res) => {
+  const row = db.prepare('SELECT photo, bio, email, profileComplete FROM users WHERE id = ?').get(req.user.id);
+  res.json({ photo: row.photo || '', bio: row.bio || '', email: row.email || '', profileComplete: !!row.profileComplete });
+});
+
+app.put('/api/me/profile', (req, res) => {
+  let { photo, bio, email } = req.body || {};
+  photo = typeof photo === 'string' ? photo : '';
+  bio = String(bio || '').trim().slice(0, 4000);
+  email = String(email || '').trim().slice(0, 200);
+  if (photo && !/^data:image\/(png|jpe?g|webp);base64,/.test(photo)) {
+    return res.status(400).json({ error: 'Photo must be an image' });
+  }
+  if (photo.length > 6 * 1024 * 1024) return res.status(400).json({ error: 'Photo is too large' });
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'Please enter a valid email' });
+  db.prepare('UPDATE users SET photo = COALESCE(?, photo), bio = ?, email = ?, profileComplete = 1 WHERE id = ?')
+    .run(photo === undefined ? null : photo, bio, email, req.user.id);
+  res.json({ user: publicUser(getUser(req.user.id)) });
+});
+
+// ---- Get Involved submissions inbox -----------------------------------------
+// Routing/visibility:
+//  - Admins (President/VP) see ALL submissions.
+//  - A grade rep (user.grade set) sees CLUB-join submissions for their grade.
+//  - Board applications go to admins only.
+function visibleSubmissionsFor(user) {
+  if (user.role === 'admin') {
+    return db.prepare('SELECT * FROM submissions ORDER BY handled ASC, createdAt DESC').all();
+  }
+  if (user.grade) {
+    return db
+      .prepare("SELECT * FROM submissions WHERE type = 'club' AND grade = ? ORDER BY handled ASC, createdAt DESC")
+      .all(user.grade);
+  }
+  return [];
+}
+function canSeeSubmission(user, row) {
+  if (!row) return false;
+  if (user.role === 'admin') return true;
+  return row.type === 'club' && !!user.grade && row.grade === user.grade;
+}
+function canAccessSubmissions(user) {
+  return user.role === 'admin' || !!user.grade;
+}
+
+app.get('/api/submissions', (req, res) => {
+  if (!canAccessSubmissions(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  res.json({ submissions: visibleSubmissionsFor(req.user) });
+});
+
+app.post('/api/submissions/:id/handled', (req, res) => {
+  const row = db.prepare('SELECT * FROM submissions WHERE id = ?').get(Number(req.params.id));
+  if (!canSeeSubmission(req.user, row)) return res.status(403).json({ error: 'Not allowed' });
+  db.prepare('UPDATE submissions SET handled = ? WHERE id = ?').run(row.handled ? 0 : 1, row.id);
+  res.json({ submission: db.prepare('SELECT * FROM submissions WHERE id = ?').get(row.id) });
+});
+
+app.delete('/api/submissions/:id', (req, res) => {
+  const row = db.prepare('SELECT * FROM submissions WHERE id = ?').get(Number(req.params.id));
+  if (!canSeeSubmission(req.user, row)) return res.status(403).json({ error: 'Not allowed' });
+  db.prepare('DELETE FROM submissions WHERE id = ?').run(row.id);
+  res.json({ ok: true });
+});
 
 // The full settings (including the calendar URL) for authorized editors.
 app.get('/api/home/settings', (req, res) => {
@@ -168,7 +298,7 @@ function canPostAnnouncement(user) {
 }
 app.put('/api/home', (req, res) => {
   if (!canEditHome(req.user)) return res.status(403).json({ error: 'Only the Digital Presence Manager can edit the homepage' });
-  const { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl } = req.body || {};
+  const { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, aboutText } = req.body || {};
   const podcastEnabledVal = podcastEnabled === undefined ? null : (podcastEnabled ? 1 : 0);
   db.prepare(`UPDATE site_settings SET
        meetingDate = COALESCE(?, meetingDate),
@@ -177,6 +307,8 @@ app.put('/api/home', (req, res) => {
        podcastUrl = COALESCE(?, podcastUrl),
        podcastEnabled = COALESCE(?, podcastEnabled),
        calendarUrl = COALESCE(?, calendarUrl),
+       instagramUrl = COALESCE(?, instagramUrl),
+       aboutText = COALESCE(?, aboutText),
        updatedAt = datetime('now')
      WHERE id = 1`)
     .run(
@@ -186,6 +318,8 @@ app.put('/api/home', (req, res) => {
       podcastUrl ?? null,
       podcastEnabledVal,
       calendarUrl ?? null,
+      instagramUrl ?? null,
+      aboutText ?? null,
     );
   res.json({ home: getHome() });
 });
@@ -197,14 +331,15 @@ app.put('/api/home/announcement', (req, res) => {
   db.prepare(`UPDATE site_settings SET
     homeAnnouncement = ?,
     homeAnnouncementEnabled = ?,
+    announcementPostedAt = CASE WHEN ? != '' THEN datetime('now') ELSE announcementPostedAt END,
     updatedAt = datetime('now')
-  WHERE id = 1`).run(text, text ? 1 : 0);
+  WHERE id = 1`).run(text, text ? 1 : 0, text);
   res.json({ home: getHome() });
 });
 
 // ---- Directory / org --------------------------------------------------------
 app.get('/api/users', (req, res) => {
-  const users = db.prepare('SELECT * FROM users ORDER BY displayName').all().map(publicUser);
+  const users = db.prepare("SELECT * FROM users WHERE username != 'logistics' ORDER BY displayName").all().map(publicUser);
   res.json({ users });
 });
 
@@ -213,7 +348,7 @@ app.get('/api/users', (req, res) => {
 app.get('/api/reports', (req, res) => {
   let reports;
   if (req.user.role === 'admin') {
-    reports = db.prepare('SELECT * FROM users WHERE id != ? ORDER BY displayName').all(req.user.id);
+    reports = db.prepare("SELECT * FROM users WHERE id != ? AND username != 'logistics' ORDER BY displayName").all(req.user.id);
   } else {
     reports = directReports(req.user.id);
   }
@@ -221,7 +356,7 @@ app.get('/api/reports', (req, res) => {
 });
 
 app.get('/api/orgchart', (req, res) => {
-  const users = db.prepare('SELECT * FROM users').all().map(publicUser);
+  const users = db.prepare("SELECT * FROM users WHERE username != 'logistics'").all().map(publicUser);
   res.json({ users });
 });
 
@@ -344,6 +479,40 @@ app.get('/api/roster', (req, res) => {
   if (status) { sql += ' AND r.status = ?'; params.push(status); }
   sql += ' ORDER BY r.createdAt DESC';
   res.json({ members: db.prepare(sql).all(...params), myGrade: req.user.managedGrade || null });
+});
+
+// Import all portal users (board members) as Onboarded roster entries, skipping duplicates.
+app.post('/api/roster/import-board', (req, res) => {
+  if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const users = db.prepare('SELECT * FROM users').all();
+  const existing = db.prepare('SELECT email, firstName, lastName FROM roster_members').all();
+  const existingEmails = new Set(existing.map((r) => r.email?.toLowerCase()).filter(Boolean));
+  const existingNames = new Set(existing.map((r) => `${r.firstName?.toLowerCase()}|${r.lastName?.toLowerCase()}`));
+
+  const insert = db.prepare(`INSERT INTO roster_members (firstName, lastName, email, grade, roleDescription, status)
+    VALUES (?, ?, ?, ?, 'Board Member', 'Onboarded')`);
+
+  let imported = 0;
+  let skipped = 0;
+  const importMany = db.transaction(() => {
+    for (const u of users) {
+      const email = (u.email || '').trim().toLowerCase();
+      const nameKey = `${(u.firstName || '').toLowerCase()}|${(u.lastName || '').toLowerCase()}`;
+      if ((email && existingEmails.has(email)) || existingNames.has(nameKey)) {
+        skipped++;
+        continue;
+      }
+      insert.run(
+        u.firstName || u.displayName, u.lastName || '',
+        u.email || '', u.grade ? String(u.grade) : null
+      );
+      if (email) existingEmails.add(email);
+      existingNames.add(nameKey);
+      imported++;
+    }
+  });
+  importMany();
+  res.json({ imported, skipped });
 });
 
 app.post('/api/roster', (req, res) => {
@@ -635,6 +804,23 @@ app.post('/api/tasks', (req, res) => {
               VALUES (?, ?, ?, ?, 'Not Started', ?, ?, ?)`)
     .run(ownerId, String(name).trim(), description || '', dueDate || null, req.user.id, approvalStatus, approverId);
 
+  // Notifications
+  if (!isSelf) {
+    const taskName = String(name).trim();
+    if (approvalStatus === 'approved') {
+      // Assigned directly (by an admin) — tell the assignee.
+      notify(owner.email, 'New task assigned to you',
+        'You have a new task',
+        `<b>${req.user.displayName}</b> assigned you a task: <b>${taskName}</b>.`);
+    } else if (approverId) {
+      // Pending — tell the approver they have something to review.
+      const approver = getUser(approverId);
+      notify(approver && approver.email, 'A task needs your approval',
+        'Task awaiting your approval',
+        `<b>${req.user.displayName}</b> wants to assign <b>${owner.displayName}</b> the task <b>${taskName}</b>. Approve it in Pending Approvals.`);
+    }
+  }
+
   res.status(201).json({ task: taskWithNames(getTask(info.lastInsertRowid)) });
 });
 
@@ -694,6 +880,12 @@ app.post('/api/tasks/:id/approve', (req, res) => {
   if (task.approvalStatus !== 'pending') return res.status(400).json({ error: 'Task is not pending' });
   if (!canApprove(req.user, task)) return res.status(403).json({ error: 'Not allowed to approve' });
   db.prepare("UPDATE tasks SET approvalStatus = 'approved' WHERE id = ?").run(task.id);
+  // Now that it's approved, the assignee should know about their new task.
+  const owner = getUser(task.userId);
+  const assigner = task.assignedById ? getUser(task.assignedById) : null;
+  notify(owner && owner.email, 'New task assigned to you',
+    'You have a new task',
+    `${assigner ? '<b>' + assigner.displayName + '</b> assigned' : 'You were assigned'} the task <b>${task.name}</b> (approved by ${req.user.displayName}).`);
   res.json({ task: taskWithNames(getTask(task.id)) });
 });
 
@@ -708,11 +900,13 @@ app.post('/api/tasks/:id/reject', (req, res) => {
 
 // ---- Admin Panel ------------------------------------------------------------
 app.post('/api/admin/users', requireAdmin, (req, res) => {
-  let { firstName, lastName, role, title, managerId } = req.body || {};
+  let { firstName, lastName, role, title, managerId, grade, email } = req.body || {};
   firstName = (firstName || '').trim();
   lastName = (lastName || '').trim();
+  email = String(email || '').trim().slice(0, 200);
   if (!firstName) return res.status(400).json({ error: 'First name required' });
   role = ROLES.includes(role) ? role : 'member';
+  grade = String(grade || '').trim().slice(0, 40);
 
   const base = ((firstName[0] || '') + lastName).toLowerCase().replace(/[^a-z0-9]/g, '');
   let username = base || 'member';
@@ -722,9 +916,9 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
   }
   const displayName = lastName ? `${firstName} ${lastName}` : firstName;
   const info = db
-    .prepare(`INSERT INTO users (username, firstName, lastName, displayName, passwordHash, role, title, managerId, firstLogin)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`)
-    .run(username, firstName, lastName, displayName, bcrypt.hashSync(username, 10), role, title || '', managerId || null);
+    .prepare(`INSERT INTO users (username, firstName, lastName, displayName, passwordHash, role, title, managerId, grade, email, firstLogin)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
+    .run(username, firstName, lastName, displayName, bcrypt.hashSync(username, 10), role, title || '', managerId || null, grade, email);
 
   if (managerId) refreshRole(Number(managerId));
   res.status(201).json({ user: publicUser(getUser(info.lastInsertRowid)), defaultPassword: username });
@@ -733,7 +927,7 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
 app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
   const user = getUser(Number(req.params.id));
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { role, title, managerId, canManageRoster, managedGrade, canAnnounce, canEditHome } = req.body || {};
+  const { role, title, managerId, grade, email, canManageRoster, managedGrade, canAnnounce, canEditHome } = req.body || {};
   const prevManager = user.managerId;
 
   const newRole = ROLES.includes(role) ? role : user.role;
@@ -747,6 +941,8 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     role = ?,
     title = COALESCE(?, title),
     managerId = ?,
+    grade = COALESCE(?, grade),
+    email = COALESCE(?, email),
     canManageRoster = COALESCE(?, canManageRoster),
     managedGrade    = ?,
     canAnnounce     = COALESCE(?, canAnnounce),
@@ -755,6 +951,8 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     newRole,
     title ?? null,
     newManagerId,
+    grade ?? null,
+    email ?? null,
     canManageRoster !== undefined ? (canManageRoster ? 1 : 0) : null,
     newManagedGrade,
     canAnnounce !== undefined ? (canAnnounce ? 1 : 0) : null,
@@ -787,6 +985,67 @@ app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
   db.prepare('UPDATE users SET passwordHash = ?, firstLogin = 1 WHERE id = ?')
     .run(bcrypt.hashSync(target.username, 10), target.id);
   res.json({ ok: true, defaultPassword: target.username });
+});
+
+// ---- Logistics login tracking (logistics user only) -------------------------
+app.get('/api/logistics/stats', (req, res) => {
+  if (req.user.username !== 'logistics') return res.status(403).json({ error: 'Access denied' });
+  const stats = db.prepare(`
+    SELECT
+      u.id         AS userId,
+      u.username,
+      u.displayName,
+      u.title,
+      u.role,
+      COALESCE(COUNT(l.id), 0) AS totalLogins,
+      MAX(l.loginAt)           AS lastLogin,
+      COALESCE(SUM(CASE WHEN date(l.loginAt) = date('now') THEN 1 ELSE 0 END), 0) AS todayLogins
+    FROM users u
+    LEFT JOIN login_logs l ON l.userId = u.id
+    WHERE u.username != 'logistics'
+    GROUP BY u.id
+    ORDER BY totalLogins DESC, u.displayName
+  `).all();
+  const recentLogins = db.prepare(`
+    SELECT l.id, l.userId, l.username, l.loginAt, l.ipAddress,
+           u.displayName, u.title, u.role
+    FROM login_logs l
+    JOIN users u ON u.id = l.userId
+    WHERE u.username != 'logistics'
+    ORDER BY l.loginAt DESC
+    LIMIT 200
+  `).all();
+  const engagementSummary = db.prepare(`
+    SELECT event, label, COUNT(*) AS count,
+           MAX(loggedAt) AS lastSeen,
+           SUM(CASE WHEN date(loggedAt) = date('now') THEN 1 ELSE 0 END) AS todayCount
+    FROM page_events
+    GROUP BY event, label
+    ORDER BY count DESC
+  `).all();
+  const recentEvents = db.prepare(
+    'SELECT id, event, label, loggedAt FROM page_events ORDER BY loggedAt DESC LIMIT 300'
+  ).all();
+  const totalMembers = db.prepare("SELECT COUNT(*) AS n FROM roster_members WHERE status = 'Onboarded'").get().n;
+  const genderBreakdown = db.prepare(`
+    SELECT
+      CASE WHEN gender = '' OR gender IS NULL THEN 'Unknown' ELSE gender END AS label,
+      COUNT(*) AS count
+    FROM roster_members
+    WHERE status = 'Onboarded'
+    GROUP BY label
+    ORDER BY count DESC
+  `).all();
+  const gradeBreakdown = db.prepare(`
+    SELECT
+      CASE WHEN grade IS NULL OR grade = '' THEN 'Unknown' ELSE CAST(grade AS TEXT) END AS label,
+      COUNT(*) AS count
+    FROM roster_members
+    WHERE status = 'Onboarded'
+    GROUP BY label
+    ORDER BY CAST(label AS INTEGER) ASC, label ASC
+  `).all();
+  res.json({ stats, recentLogins, demographics: { totalMembers, genderBreakdown, gradeBreakdown }, engagementSummary, recentEvents });
 });
 
 // ---- Static frontend --------------------------------------------------------

@@ -26,6 +26,15 @@ async function api(path, { method = 'GET', body } = {}) {
   return data;
 }
 
+// Fire-and-forget click tracking — never blocks the UI.
+function track(event, label = '') {
+  fetch('/api/track', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event, label }),
+  }).catch(() => {});
+}
+
 // ---------------------------------------------------------------------------
 // Small UI primitives
 // ---------------------------------------------------------------------------
@@ -260,6 +269,108 @@ function ChangePassword({ user, onDone, forced }) {
       </form>
     </div>
   );
+}
+
+// Read an image file and downscale it to a square-ish data URL (keeps payload small).
+function resizeImage(file, max, cb) {
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      const scale = Math.min(1, max / Math.max(width, height));
+      const w = Math.round(width * scale), h = Math.round(height * scale);
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      cb(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => cb(null);
+    img.src = ev.target.result;
+  };
+  reader.onerror = () => cb(null);
+  reader.readAsDataURL(file);
+}
+
+// Profile setup — runs right after the password step on first login, and is
+// reachable later via "Edit profile". Collects a photo and an intro bio.
+function ProfileSetup({ me, forced, onDone, onSkip }) {
+  const [photo, setPhoto] = useState('');
+  const [bio, setBio] = useState('');
+  const [email, setEmail] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    api('/me/profile').then((d) => { setPhoto(d.photo || ''); setBio(d.bio || ''); setEmail(d.email || ''); }).catch(() => {});
+  }, []);
+
+  function onFile(e) {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    if (!f.type.startsWith('image/')) { setError('Please choose an image file.'); return; }
+    setError('');
+    resizeImage(f, 512, (dataUrl) => {
+      if (dataUrl) setPhoto(dataUrl);
+      else setError("Couldn't read that image — try another.");
+    });
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    setError('');
+    if (forced && !photo) { setError('Please add a professional headshot.'); return; }
+    if (forced && bio.trim().length < 40) { setError('Please write a short intro — a sentence or two about yourself.'); return; }
+    if (forced && !email.trim()) { setError('Please add an email so you get notified about tasks and approvals.'); return; }
+    setLoading(true);
+    try {
+      const d = await api('/me/profile', { method: 'PUT', body: { photo, bio, email } });
+      onDone(d.user);
+    } catch (err) { setError(err.message); } finally { setLoading(false); }
+  }
+
+  const card = (
+    <div className="w-full max-w-lg bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4">
+      <div>
+        <div className="font-display text-3xl text-gold">{forced ? 'Set Up Your Profile' : 'Edit Profile'}</div>
+        {forced && <p className="text-sm text-cream/60 mt-1">Welcome, {me.displayName.split(' ')[0]}! Add a professional photo and a short intro — this is what the public sees on the Meet the Board page.</p>}
+      </div>
+
+      <div className="flex items-center gap-4">
+        <div className="w-24 h-24 rounded-full bg-navy3 border-2 border-gold/40 overflow-hidden flex items-center justify-center shrink-0">
+          {photo
+            ? <img src={photo} alt="preview" className="w-full h-full object-cover" />
+            : <span className="text-cream/40 text-xs text-center px-2">No photo</span>}
+        </div>
+        <label className="cursor-pointer">
+          <span className="inline-block bg-transparent border border-cream/25 hover:border-gold text-cream text-sm px-4 py-2 rounded-md">Choose photo…</span>
+          <input type="file" accept="image/*" className="hidden" onChange={onFile} />
+          <div className="text-xs text-cream/40 mt-1">A clear, professional headshot.</div>
+        </label>
+      </div>
+
+      <Field label="Email (for task & approval notifications)">
+        <input type="email" className={inputCls} value={email}
+          onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
+      </Field>
+
+      <Field label="Introduce yourself (a paragraph or two)">
+        <textarea className={inputCls + ' min-h-[140px] resize-y'} value={bio}
+          onChange={(e) => setBio(e.target.value)} placeholder="Tell the club a bit about you — your year, what you're involved in, and why you're part of Club America." />
+      </Field>
+
+      {error && <div className="text-red text-sm">{error}</div>}
+      <div className="flex gap-2">
+        <Button type="submit" variant="gold" disabled={loading}>{loading ? 'Saving…' : 'Save Profile'}</Button>
+        {forced && onSkip && <Button variant="ghost" onClick={onSkip}>Skip for now</Button>}
+      </div>
+    </div>
+  );
+
+  if (forced) {
+    return <form onSubmit={submit} className="min-h-screen flex items-center justify-center p-4">{card}</form>;
+  }
+  return <form onSubmit={submit} className="max-w-lg">{card}</form>;
 }
 
 // ---------------------------------------------------------------------------
@@ -924,6 +1035,57 @@ function Approvals({ onChanged, refreshSignal }) {
   );
 }
 
+// "Get Involved" inbox — club-join + board-application submissions routed here.
+function SubmissionsInbox({ onChanged, refreshSignal }) {
+  const [items, setItems] = useState([]);
+  const load = useCallback(async () => {
+    const d = await api('/submissions');
+    setItems(d.submissions);
+  }, []);
+  useEffect(() => { load(); }, [load, refreshSignal]);
+
+  async function toggle(s) {
+    await api(`/submissions/${s.id}/handled`, { method: 'POST' });
+    await load();
+    onChanged && onChanged();
+  }
+  async function remove(s) {
+    if (!confirm('Delete this submission?')) return;
+    await api(`/submissions/${s.id}`, { method: 'DELETE' });
+    await load();
+    onChanged && onChanged();
+  }
+
+  return (
+    <div className="max-w-3xl">
+      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Get Involved</h1>
+      <p className="text-cream/50 mb-6">Club-join and board applications submitted from the public homepage.</p>
+      {items.length === 0 && <div className="text-cream/40">No submissions yet.</div>}
+      <div className="space-y-3">
+        {items.map((s) => (
+          <div key={s.id} className={`bg-navy2 border rounded-lg p-4 ${s.handled ? 'border-cream/10 opacity-70' : 'border-gold/30'}`}>
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="font-medium text-cream">{s.name} <span className="text-cream/40 text-sm">· {s.email}</span></div>
+              <div className="flex gap-2 flex-wrap">
+                <Badge tone={s.type === 'board' ? 'red' : 'blue'}>{s.type === 'board' ? 'Board Application' : 'Join the Club'}</Badge>
+                {s.grade && <Badge tone="gold">Grade {s.grade}</Badge>}
+                {s.handled ? <Badge tone="green">Handled</Badge> : <Badge tone="slate">New</Badge>}
+              </div>
+            </div>
+            {s.message && <div className="text-sm text-cream/70 mt-2 whitespace-pre-line">{s.message}</div>}
+            <div className="text-xs text-cream/40 mt-2">{(s.createdAt || '').replace('T', ' ').slice(0, 16)}</div>
+            <div className="flex gap-2 mt-3 items-center">
+              <a href={`mailto:${s.email}`} className="text-xs text-gold/80 hover:text-gold mr-auto">Email {s.name.split(' ')[0]}</a>
+              <Button variant={s.handled ? 'ghost' : 'gold'} onClick={() => toggle(s)}>{s.handled ? 'Reopen' : 'Mark handled'}</Button>
+              <Button variant="danger" onClick={() => remove(s)}>Delete</Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Org Chart
 // ---------------------------------------------------------------------------
@@ -931,12 +1093,12 @@ function OrgNode({ title, name, tone = 'gold', children }) {
   const ring = tone === 'red' ? 'border-red' : tone === 'gold' ? 'border-gold' : 'border-cream/30';
   return (
     <div className="flex flex-col items-center">
-      <div className={`bg-navy2 border-2 ${ring} rounded-lg px-4 py-2 text-center min-w-[160px] shadow-lg`}>
-        <div className="font-display text-lg text-gold leading-tight">{title}</div>
-        {name && <div className="text-sm text-cream/80">{name}</div>}
+      <div className={`bg-navy2 border-2 ${ring} rounded-lg px-3 sm:px-4 py-2 text-center min-w-[120px] sm:min-w-[160px] shadow-lg`}>
+        <div className="font-display text-base sm:text-lg text-gold leading-tight">{title}</div>
+        {name && <div className="text-xs sm:text-sm text-cream/80">{name}</div>}
       </div>
       {children && <div className="w-px h-5 bg-cream/20" />}
-      {children && <div className="flex flex-wrap justify-center gap-4">{children}</div>}
+      {children && <div className="flex flex-wrap justify-center gap-3 sm:gap-4">{children}</div>}
     </div>
   );
 }
@@ -947,7 +1109,8 @@ function OrgChart() {
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Org Chart</h1>
       <p className="text-cream/50 mb-8">Club America — 2025–26 Board</p>
 
-      <div className="flex flex-col items-center gap-5 pb-10">
+      <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+      <div className="flex flex-col items-center gap-5 pb-10 min-w-max sm:min-w-0 mx-auto">
         <OrgNode title="President" name="Finley Thomas" tone="red" />
         <div className="w-px h-5 bg-cream/20" />
         <OrgNode title="Vice President" name="Derek Eddy" tone="red" />
@@ -975,6 +1138,7 @@ function OrgChart() {
             ))}
           </div>
         </div>
+      </div>
       </div>
     </div>
   );
@@ -1039,6 +1203,8 @@ function AdminPanel({ users, reload }) {
   const [title, setTitle] = useState('');
   const [role, setRole] = useState('member');
   const [managerId, setManagerId] = useState('');
+  const [grade, setGrade] = useState('');
+  const [email, setEmail] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
 
@@ -1047,10 +1213,11 @@ function AdminPanel({ users, reload }) {
     setError(''); setNotice('');
     try {
       const d = await api('/admin/users', { method: 'POST', body: {
-        firstName: first, lastName: last, title, role, managerId: managerId ? Number(managerId) : null,
+        firstName: first, lastName: last, title, role, managerId: managerId ? Number(managerId) : null, grade, email,
       }});
       setNotice(`Added ${d.user.displayName} — username "${d.user.username}", default password "${d.defaultPassword}".`);
-      setFirst(''); setLast(''); setTitle(''); setRole('member'); setManagerId('');
+      setFirst(''); setLast(''); setTitle(''); setRole('member'); setManagerId(''); setGrade(''); setEmail('');
+      rosterNeedsSync = true; // new portal user → re-import to roster next time it opens
       reload();
     } catch (err) { setError(err.message); }
   }
@@ -1095,6 +1262,13 @@ function AdminPanel({ users, reload }) {
             {users.map((u) => <option key={u.id} value={u.id}>{u.displayName}</option>)}
           </select>
         </Field>
+        <Field label="Grade (for grade reps — receives that grade's join forms)">
+          <select className={inputCls} value={grade} onChange={(e) => setGrade(e.target.value)}>
+            <option value="">— n/a —</option>
+            {GRADES.map((g) => <option key={g} value={g}>{gradeOption(g)}</option>)}
+          </select>
+        </Field>
+        <Field label="Email (for notifications)"><input type="email" className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="optional" /></Field>
         <div className="sm:col-span-2 flex items-center gap-3">
           <Button type="submit" variant="gold">Add Member</Button>
           <span className="text-xs text-cream/40">Username & default password are generated as first-initial + last name.</span>
@@ -1118,7 +1292,7 @@ function AdminPanel({ users, reload }) {
                 <button onClick={() => removeUser(u)} className="text-xs text-red/80 hover:text-red">Remove</button>
               </div>
             </div>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+            <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
               <div>
                 <div className="text-cream/50 uppercase tracking-wider mb-1">Role</div>
                 <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full"
@@ -1137,6 +1311,14 @@ function AdminPanel({ users, reload }) {
                 </select>
               </div>
               <div>
+                <div className="text-cream/50 uppercase tracking-wider mb-1">Grade</div>
+                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full"
+                  value={u.grade || ''} onChange={(e) => updateUser(u, { grade: e.target.value })}>
+                  <option value="">—</option>
+                  {GRADES.map((g) => <option key={g} value={g}>{gradeOption(g)}</option>)}
+                </select>
+              </div>
+              <div>
                 <div className="text-cream/50 uppercase tracking-wider mb-1">Managed Grade</div>
                 <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full"
                   value={u.managedGrade || ''} onChange={(e) => updateUser(u, { managedGrade: e.target.value ? Number(e.target.value) : null })}>
@@ -1148,8 +1330,8 @@ function AdminPanel({ users, reload }) {
                 <div className="text-cream/50 uppercase tracking-wider mb-1">Permissions</div>
                 {[
                   { key: 'canManageRoster', label: 'Manage Roster' },
-                  { key: 'canAnnounce', label: 'Homepage Announce' },
-                  { key: 'canEditHome', label: 'Edit Website' },
+                  { key: 'canAnnounce', label: 'Announce' },
+                  { key: 'canEditHome', label: 'Edit Site' },
                 ].map(({ key, label }) => (
                   <label key={key} className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={!!u[key]}
@@ -1170,6 +1352,27 @@ function AdminPanel({ users, reload }) {
 // ---------------------------------------------------------------------------
 // Public homepage (/home) + in-portal editable view
 // ---------------------------------------------------------------------------
+function InstagramIcon({ className = 'w-5 h-5' }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="2" width="20" height="20" rx="5" ry="5" />
+      <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
+      <line x1="17.5" y1="6.5" x2="17.51" y2="6.5" />
+    </svg>
+  );
+}
+
+// A "Follow on Instagram" button, only rendered when a link is configured.
+function InstagramLink({ url, className = '' }) {
+  if (!url) return null;
+  return (
+    <a href={url} target="_blank" rel="noopener"
+      className={`inline-flex items-center gap-2 px-4 py-2 rounded-md bg-gradient-to-r from-red to-gold text-cream text-sm font-medium hover:opacity-90 transition-opacity ${className}`}>
+      <InstagramIcon className="w-4 h-4" /> Follow on Instagram
+    </a>
+  );
+}
+
 // Pull a YouTube video id from common URL shapes; null if it's just a page/channel.
 function ytId(url) {
   if (!url) return null;
@@ -1256,6 +1459,7 @@ function PodcastCard({ home }) {
           </div>
           {home.podcastUrl && (
             <a href={home.podcastUrl} target="_blank" rel="noopener"
+              onClick={() => track('podcast_watch', home.podcastUrl)}
               className="mt-4 inline-block bg-gold hover:bg-gold/85 text-navy font-semibold text-sm px-4 py-2 rounded-md transition-colors">
               ▶ Watch on YouTube
             </a>
@@ -1291,7 +1495,9 @@ function HomeEditor({ onSaved }) {
         meetingLocation: form.meetingLocation,
         podcastUrl: form.podcastUrl,
         calendarUrl: form.calendarUrl,
-        podcastEnabled: form.podcastEnabled,   // ← FIX: always send current value
+        instagramUrl: form.instagramUrl,
+        aboutText: form.aboutText,
+        podcastEnabled: form.podcastEnabled,
       }});
       onSaved(d.home);
       setSaved(true);
@@ -1322,6 +1528,8 @@ function HomeEditor({ onSaved }) {
           <Field label="Meeting time (fallback)"><input className={inputCls} value={form.meetingTime || ''} onChange={set('meetingTime')} placeholder="e.g. 3:30 PM" /></Field>
           <div className="sm:col-span-2"><Field label="Meeting location (fallback)"><input className={inputCls} value={form.meetingLocation || ''} onChange={set('meetingLocation')} placeholder="e.g. Room 214" /></Field></div>
           <div className="sm:col-span-2"><Field label="Podcast link (YouTube video or page URL)"><input className={inputCls} value={form.podcastUrl || ''} onChange={set('podcastUrl')} placeholder="https://www.youtube.com/watch?v=…" /></Field></div>
+          <div className="sm:col-span-2"><Field label="Instagram link"><input className={inputCls} value={form.instagramUrl || ''} onChange={set('instagramUrl')} placeholder="https://www.instagram.com/yourclub" /></Field></div>
+          <div className="sm:col-span-2"><Field label="About / Mission (shown on the public homepage)"><textarea className={inputCls + ' min-h-[120px] resize-y'} value={form.aboutText || ''} onChange={set('aboutText')} placeholder="Tell visitors who Club America is and what you stand for…" /></Field></div>
           {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
           <div className="sm:col-span-2 flex gap-2">
             <Button type="submit" variant="gold">Save</Button>
@@ -1330,6 +1538,95 @@ function HomeEditor({ onSaved }) {
         </form>
       )}
       {error && !open && <div className="text-red text-sm mt-3">{error}</div>}
+    </section>
+  );
+}
+
+const GRADES = ['9', '10', '11', '12'];
+const GRADE_LABELS = { '9': 'Freshman', '10': 'Sophomore', '11': 'Junior', '12': 'Senior' };
+const gradeOption = (g) => `${g}th — ${GRADE_LABELS[g] || ''}`;
+
+// "About Us" section, rendered only when the board has filled it in.
+function AboutSection({ home }) {
+  if (!home.aboutText) return null;
+  return (
+    <section className="bg-navy2 border border-cream/10 rounded-2xl p-6">
+      <h2 className="font-display text-2xl text-gold mb-2">About Us</h2>
+      <p className="text-cream/80 whitespace-pre-line leading-relaxed">{home.aboutText}</p>
+    </section>
+  );
+}
+
+// Public "Get Involved" — a join-the-club form and a board-application form.
+function GetInvolved() {
+  const [tab, setTab] = useState('club'); // club | board
+  const [form, setForm] = useState({ name: '', email: '', grade: '', message: '' });
+  const [error, setError] = useState('');
+  const [done, setDone] = useState(false);
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function submit(e) {
+    e.preventDefault();
+    setError('');
+    if (!form.grade) { setError('Please select your grade.'); return; }
+    try {
+      await api('/submissions', { method: 'POST', body: { ...form, type: tab } });
+      setDone(true);
+    } catch (err) { setError(err.message); }
+  }
+
+  const TabBtn = ({ id, children }) => (
+    <button type="button" onClick={() => { setTab(id); setDone(false); setError(''); }}
+      className={`px-4 py-2 rounded-md text-sm transition-colors ${tab === id ? 'bg-red text-cream' : 'bg-navy border border-cream/20 text-cream/70 hover:border-gold'}`}>
+      {children}
+    </button>
+  );
+
+  return (
+    <section className="bg-navy2 border border-gold/30 rounded-2xl p-6">
+      <h2 className="font-display text-3xl text-gold mb-1">Get Involved</h2>
+      <p className="text-cream/60 text-sm mb-4">Join the club or apply for the board — tell us your grade and we'll connect you with the right person.</p>
+
+      <div className="flex gap-2 mb-5">
+        <TabBtn id="club">Join the Club</TabBtn>
+        <TabBtn id="board">Board Application</TabBtn>
+      </div>
+
+      {done ? (
+        <div className="text-center py-6">
+          <div className="text-4xl mb-2">🎉</div>
+          <div className="font-display text-2xl text-gold">Thanks, {form.name.split(' ')[0] || 'friend'}!</div>
+          <p className="text-cream/70 mt-1">
+            {tab === 'club'
+              ? "We got your info — your grade rep or the VP will reach out soon."
+              : "We got your board application — the VP and President will be in touch."}
+          </p>
+          <button className="mt-4 text-gold/80 hover:text-gold text-sm"
+            onClick={() => { setForm({ name: '', email: '', grade: '', message: '' }); setDone(false); }}>
+            Submit another
+          </button>
+        </div>
+      ) : (
+        <form onSubmit={submit} className="grid sm:grid-cols-2 gap-4">
+          <Field label="Name"><input className={inputCls} value={form.name} onChange={set('name')} required /></Field>
+          <Field label="Email"><input type="email" className={inputCls} value={form.email} onChange={set('email')} required /></Field>
+          <Field label="Grade">
+            <select className={inputCls} value={form.grade} onChange={set('grade')} required>
+              <option value="">Select…</option>
+              {GRADES.map((g) => <option key={g} value={g}>{gradeOption(g)}</option>)}
+            </select>
+          </Field>
+          <div className="sm:col-span-2">
+            <Field label={tab === 'board' ? 'Why do you want to join the board?' : 'Anything you want us to know? (optional)'}>
+              <textarea className={inputCls + ' min-h-[90px]'} value={form.message} onChange={set('message')} />
+            </Field>
+          </div>
+          {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
+          <div className="sm:col-span-2">
+            <Button type="submit" variant="gold">{tab === 'board' ? 'Submit Application' : 'Join the Club'}</Button>
+          </div>
+        </form>
+      )}
     </section>
   );
 }
@@ -1408,6 +1705,88 @@ function HomeAnnouncementEditor({ home, onSaved }) {
   );
 }
 
+// ---- Meet the Board (public, data-driven org chart with click-for-bio) ------
+function Avatar({ member, size = 56 }) {
+  if (member.photo) {
+    return <img src={member.photo} alt={member.displayName}
+      style={{ width: size, height: size }} className="rounded-full object-cover border-2 border-gold/40" />;
+  }
+  const initials = (member.displayName || '?').split(/\s+/).map((s) => s[0]).slice(0, 2).join('').toUpperCase();
+  return (
+    <div style={{ width: size, height: size }}
+      className="rounded-full bg-navy3 border-2 border-gold/40 flex items-center justify-center text-gold font-display">
+      {initials}
+    </div>
+  );
+}
+
+function buildBoardTree(members) {
+  const byId = {};
+  members.forEach((m) => { byId[m.id] = { ...m, children: [] }; });
+  const roots = [];
+  members.forEach((m) => {
+    if (m.managerId && byId[m.managerId]) byId[m.managerId].children.push(byId[m.id]);
+    else roots.push(byId[m.id]);
+  });
+  return roots;
+}
+
+function BoardModal({ member, onClose }) {
+  return (
+    <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+      <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-md w-full p-6 relative">
+        <button onClick={onClose} aria-label="Close" className="absolute top-2 right-4 text-cream/60 hover:text-cream text-3xl leading-none">×</button>
+        <div className="flex items-center gap-4">
+          <Avatar member={member} size={84} />
+          <div className="min-w-0">
+            <div className="font-display text-2xl text-cream leading-tight">{member.displayName}</div>
+            <div className="text-gold">{member.title || roleLabel(member.role)}</div>
+            {member.grade && <div className="text-cream/40 text-xs mt-0.5">Grade {member.grade}</div>}
+          </div>
+        </div>
+        <p className="text-cream/80 mt-4 whitespace-pre-line leading-relaxed">
+          {member.bio || "This board member hasn't added an intro yet."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function MeetTheBoard() {
+  const [members, setMembers] = useState(null);
+  const [sel, setSel] = useState(null);
+
+  useEffect(() => { api('/board').then((d) => setMembers(d.members)).catch(() => setMembers([])); }, []);
+  if (!members || members.length === 0) return null;
+
+  const tree = buildBoardTree(members);
+  const renderNode = (node) => (
+    <div key={node.id} className="flex flex-col items-center">
+      <button onClick={() => { setSel(node); track('board_profile', node.displayName); }}
+        className="bg-navy2 border border-cream/15 rounded-xl px-4 py-3 flex flex-col items-center gap-2 w-36 hover:border-gold transition-colors">
+        <Avatar member={node} size={56} />
+        <div className="text-cream text-sm font-medium text-center leading-tight">{node.displayName}</div>
+        <div className="text-gold/80 text-xs text-center leading-tight">{node.title || roleLabel(node.role)}</div>
+      </button>
+      {node.children.length > 0 && <div className="w-px h-4 bg-cream/20" />}
+      {node.children.length > 0 && (
+        <div className="flex flex-wrap justify-center gap-4">{node.children.map(renderNode)}</div>
+      )}
+    </div>
+  );
+
+  return (
+    <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6">
+      <h2 className="font-display text-3xl text-gold mb-1">Meet the Board</h2>
+      <p className="text-cream/60 text-sm mb-6">Tap anyone to learn more about them.</p>
+      <div className="flex flex-col items-center gap-4 overflow-x-auto pb-2">
+        {tree.map(renderNode)}
+      </div>
+      {sel && <BoardModal member={sel} onClose={() => setSel(null)} />}
+    </section>
+  );
+}
+
 function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onBack }) {
   const [home, setHome] = useState(null);
   const [events, setEvents] = useState([]);
@@ -1440,10 +1819,12 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
           <p className="text-cream/50 mt-1">Update what visitors see on the public homepage at <span className="text-gold/80">/home</span>.</p>
         </div>
         <HomeEditor onSaved={load} />
-        <div>
-          <div className="font-display text-2xl text-gold mb-3">Live Preview</div>
+        <div className="space-y-6">
+          <div className="font-display text-2xl text-gold">Live Preview</div>
           <HomeAnnouncementBanner home={home} />
+          <AboutSection home={home} />
           {cards}
+          {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
         </div>
       </div>
     );
@@ -1458,7 +1839,9 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
           <p className="text-cream/50 mt-1">This is the public-facing page at <span className="text-gold/80">/home</span>.</p>
         </div>
         <HomeAnnouncementBanner home={home} />
+        <AboutSection home={home} />
         {cards}
+        {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
         {canAnnounce && <HomeAnnouncementEditor home={home} onSaved={(h) => setHome(h)} />}
         {editable && <HomeEditor onSaved={load} />}
       </div>
@@ -1479,6 +1862,11 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
           <p className="text-cream/70 max-w-2xl mx-auto mt-4">
             Faith, freedom, and community. Join us at our next meeting and tune into the Club America podcast.
           </p>
+          {home.instagramUrl && (
+            <div className="mt-6 flex justify-center">
+              <InstagramLink url={home.instagramUrl} />
+            </div>
+          )}
         </section>
       </div>
       {home.homeAnnouncementEnabled && home.homeAnnouncement && (
@@ -1486,9 +1874,22 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
           <HomeAnnouncementBanner home={home} />
         </div>
       )}
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-16 pt-6">{cards}</main>
-      <footer className="border-t border-cream/10 py-6 text-center text-cream/40 text-sm">
-        Club America at Park City High School · Powered by TPUSA
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-16 space-y-6">
+        <AboutSection home={home} />
+        {cards}
+        <MeetTheBoard />
+        <GetInvolved />
+      </main>
+      <footer className="border-t border-cream/10 py-6 text-center text-cream/40 text-sm space-y-3">
+        {home.instagramUrl && (
+          <div className="flex justify-center">
+            <a href={home.instagramUrl} target="_blank" rel="noopener"
+              className="inline-flex items-center gap-2 text-cream/60 hover:text-gold transition-colors">
+              <InstagramIcon className="w-5 h-5" /> @ our Instagram
+            </a>
+          </div>
+        )}
+        <div>Club America at Park City High School · Powered by TPUSA</div>
       </footer>
     </div>
   );
@@ -1602,6 +2003,9 @@ function InterestSurvey({ onBack }) {
 // Roster Page
 // ---------------------------------------------------------------------------
 const ROSTER_STATUSES = ['Prospect', 'Contacted', 'Onboarded', 'Declined'];
+// Triggers auto-import of board members into the roster. Starts true (run on first visit),
+// resets to true after a roster delete or new portal user is created.
+let rosterNeedsSync = true;
 
 function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
   const [busy, setBusy] = useState(false);
@@ -1699,7 +2103,7 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
 
 function AddRosterMemberForm({ me, onCreated }) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', roleDescription: '', status: 'Prospect', notes: '' });
+  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', status: 'Prospect', notes: '' });
   const [error, setError] = useState('');
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -1708,7 +2112,7 @@ function AddRosterMemberForm({ me, onCreated }) {
     e.preventDefault(); setError('');
     try {
       await api('/roster', { method: 'POST', body: { ...form, grade: form.grade ? Number(form.grade) : null } });
-      setForm({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', roleDescription: '', status: 'Prospect', notes: '' });
+      setForm({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', status: 'Prospect', notes: '' });
       setOpen(false); onCreated();
     } catch (err) { setError(err.message); }
   }
@@ -1735,7 +2139,6 @@ function AddRosterMemberForm({ me, onCreated }) {
             <option value="Female">Female</option>
           </select>
         </Field>
-        <Field label="Role Description"><input className={inputCls} value={form.roleDescription} onChange={set('roleDescription')} placeholder="e.g. Grade Rep" /></Field>
         <Field label="Status">
           <select className={inputCls} value={form.status} onChange={set('status')}>
             {ROSTER_STATUSES.map((s) => <option key={s}>{s}</option>)}
@@ -1924,6 +2327,16 @@ function RosterPage({ me }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Auto-import board portal members — runs once per session; resets when a member is
+  // deleted from the roster or when a new portal user is created (see rosterNeedsSync).
+  useEffect(() => {
+    if ((isPrivileged || me.canManageRoster) && rosterNeedsSync) {
+      rosterNeedsSync = false;
+      api('/roster/import-board', { method: 'POST' }).then(() => load()).catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Grade reps default to their assigned grade filter
   useEffect(() => {
     if (me.managedGrade && !isPrivileged) setGradeFilter(String(me.managedGrade));
@@ -1933,6 +2346,7 @@ function RosterPage({ me }) {
     if (action === 'delete') {
       if (!confirm('Delete this member from the roster?')) return;
       await api(`/roster/${memberId}`, { method: 'DELETE' });
+      rosterNeedsSync = true; // re-import board members on next roster visit
     } else {
       await api(`/roster/${memberId}/${action}`, { method: 'POST', body: body || undefined });
     }
@@ -2508,10 +2922,345 @@ function AdminDashboardPage({ me }) {
 // ---------------------------------------------------------------------------
 // Sidebar + Layout
 // ---------------------------------------------------------------------------
-function Sidebar({ me, reports, approvalsCount, checkinEnabled, view, setView, onLogout, open, onClose }) {
+// Logistics login-tracking dashboard (logistics user only)
+// ---------------------------------------------------------------------------
+function LogisticsPage() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [filter, setFilter] = useState('');
+  const [tab, setTab] = useState('members');
+
+  const load = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const d = await api('/logistics/stats');
+      setData(d);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  function fmtDate(dt) {
+    if (!dt) return '—';
+    const d = new Date(dt.includes('T') || dt.includes('Z') ? dt : dt + 'Z');
+    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+
+  if (loading) return <div className="p-8 text-cream/40 text-sm">Loading…</div>;
+  if (error) return <div className="p-8 text-red text-sm">{error}</div>;
+  if (!data) return null;
+
+  const { stats, recentLogins, demographics, engagementSummary = [], recentEvents = [] } = data;
+  const totalToday = stats.reduce((s, r) => s + Number(r.todayLogins || 0), 0);
+  const activeToday = stats.filter(r => Number(r.todayLogins) > 0).length;
+  const allTime = stats.reduce((s, r) => s + Number(r.totalLogins || 0), 0);
+  const neverIn = stats.filter(r => !r.lastLogin).length;
+
+  const filtered = filter
+    ? stats.filter(r =>
+        r.displayName.toLowerCase().includes(filter.toLowerCase()) ||
+        r.username.toLowerCase().includes(filter.toLowerCase()))
+    : stats;
+
+  const TabBtn = ({ id, label }) => (
+    <button
+      onClick={() => setTab(id)}
+      className={`text-sm px-4 py-2 border-b-2 transition-colors ${
+        tab === id ? 'border-gold text-gold' : 'border-transparent text-cream/50 hover:text-cream/80'
+      }`}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="p-6 max-w-6xl space-y-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold text-cream">Login Activity Dashboard</h1>
+          <p className="text-cream/45 text-xs mt-0.5">Productivity monitoring — confidential</p>
+        </div>
+        <button
+          onClick={load}
+          className="shrink-0 text-xs text-gold/80 hover:text-gold border border-gold/30 hover:border-gold/60 px-3 py-1.5 rounded transition-colors"
+        >
+          Refresh
+        </button>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[
+          { label: 'Logins Today', value: totalToday, color: 'text-gold' },
+          { label: 'Active Today', value: activeToday, color: 'text-emerald-400' },
+          { label: 'All-Time Logins', value: allTime, color: 'text-sky-400' },
+          { label: 'Never Logged In', value: neverIn, color: neverIn > 0 ? 'text-red' : 'text-cream/40' },
+        ].map(({ label, value, color }) => (
+          <div key={label} className="bg-navy2 rounded-lg p-4 border border-cream/10">
+            <div className={`text-2xl font-bold ${color}`}>{value}</div>
+            <div className="text-cream/50 text-xs mt-0.5">{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-0 border-b border-cream/10">
+        <TabBtn id="members" label={`Members (${stats.length})`} />
+        <TabBtn id="log" label={`Login Log (${recentLogins.length})`} />
+        <TabBtn id="demographics" label="Club Breakdown" />
+        <TabBtn id="engagement" label="Site Engagement" />
+      </div>
+
+      {tab === 'members' && (
+        <div className="space-y-3">
+          <input
+            type="text"
+            placeholder="Search by name or username…"
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            className="w-full max-w-xs bg-navy2 border border-cream/20 rounded px-3 py-1.5 text-cream text-sm placeholder-cream/30 focus:outline-none focus:border-gold/60"
+          />
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
+                  <th className="pb-2 pr-4 font-medium">Member</th>
+                  <th className="pb-2 pr-4 font-medium">Title / Role</th>
+                  <th className="pb-2 pr-4 font-medium text-center">Today</th>
+                  <th className="pb-2 pr-4 font-medium text-center">Total</th>
+                  <th className="pb-2 font-medium">Last Login</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(r => (
+                  <tr key={r.userId} className="border-b border-cream/5 hover:bg-cream/3">
+                    <td className="py-3 pr-4">
+                      <div className="text-cream font-medium text-sm">{r.displayName}</div>
+                      <div className="text-cream/35 text-xs">@{r.username}</div>
+                    </td>
+                    <td className="py-3 pr-4 text-cream/55 text-xs">{r.title || r.role}</td>
+                    <td className="py-3 pr-4 text-center">
+                      {Number(r.todayLogins) > 0
+                        ? <span className="text-emerald-400 font-semibold">{r.todayLogins}</span>
+                        : <span className="text-cream/20">—</span>}
+                    </td>
+                    <td className="py-3 pr-4 text-center">
+                      {Number(r.totalLogins) > 0
+                        ? <span className="text-gold font-semibold">{r.totalLogins}</span>
+                        : <span className="text-cream/20">0</span>}
+                    </td>
+                    <td className="py-3">
+                      {r.lastLogin
+                        ? <span className="text-cream/60 text-xs">{fmtDate(r.lastLogin)}</span>
+                        : <span className="inline-block text-xs text-red/70 bg-red/10 border border-red/20 rounded px-1.5 py-0.5">Never</span>}
+                    </td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr><td colSpan={5} className="py-8 text-center text-cream/25 text-sm">No results.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'log' && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
+                <th className="pb-2 pr-4 font-medium">Time</th>
+                <th className="pb-2 pr-4 font-medium">Member</th>
+                <th className="pb-2 pr-4 font-medium">Title</th>
+                <th className="pb-2 font-medium">IP Address</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentLogins.map(l => (
+                <tr key={l.id} className="border-b border-cream/5 hover:bg-cream/3">
+                  <td className="py-2.5 pr-4 text-cream/55 text-xs whitespace-nowrap">{fmtDate(l.loginAt)}</td>
+                  <td className="py-2.5 pr-4">
+                    <div className="text-cream font-medium">{l.displayName}</div>
+                    <div className="text-cream/35 text-xs">@{l.username}</div>
+                  </td>
+                  <td className="py-2.5 pr-4 text-cream/55 text-xs">{l.title}</td>
+                  <td className="py-2.5 text-cream/35 text-xs font-mono">{l.ipAddress || '—'}</td>
+                </tr>
+              ))}
+              {recentLogins.length === 0 && (
+                <tr><td colSpan={4} className="py-8 text-center text-cream/25 text-sm">No logins recorded yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {tab === 'engagement' && (() => {
+        const totalClicks = engagementSummary.reduce((s, r) => s + r.count, 0);
+        const todayClicks = engagementSummary.reduce((s, r) => s + (r.todayCount || 0), 0);
+
+        const podcastRows = engagementSummary.filter(r => r.event === 'podcast_watch');
+        const podcastTotal = podcastRows.reduce((s, r) => s + r.count, 0);
+
+        const boardRows = engagementSummary.filter(r => r.event === 'board_profile')
+          .sort((a, b) => b.count - a.count);
+        const boardMax = boardRows[0]?.count || 1;
+
+        const eventLabel = (e) => e === 'podcast_watch' ? '▶ Podcast' : e === 'board_profile' ? '👤 Profile' : e;
+
+        return (
+          <div className="space-y-8 max-w-2xl">
+            {/* Summary */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: 'Total Clicks', value: totalClicks, color: 'text-gold' },
+                { label: 'Today', value: todayClicks, color: 'text-emerald-400' },
+                { label: 'Podcast Clicks', value: podcastTotal, color: 'text-sky-400' },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="bg-navy2 rounded-lg p-4 border border-cream/10">
+                  <div className={`text-2xl font-bold ${color}`}>{value}</div>
+                  <div className="text-cream/50 text-xs mt-0.5">{label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Board profiles */}
+            <div>
+              <div className="text-cream/60 text-sm font-medium mb-3">Board Profile Views</div>
+              {boardRows.length === 0 ? (
+                <div className="text-cream/25 text-sm">No profile clicks recorded yet.</div>
+              ) : (
+                <div className="space-y-2.5">
+                  {boardRows.map(r => {
+                    const pct = Math.round((r.count / boardMax) * 100);
+                    return (
+                      <div key={r.label}>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-cream/70">{r.label}</span>
+                          <span className="text-cream/50">{r.count} click{r.count !== 1 ? 's' : ''} <span className="text-cream/30">· today: {r.todayCount || 0}</span></span>
+                        </div>
+                        <div className="h-2 bg-navy rounded-full overflow-hidden">
+                          <div className="h-full rounded-full bg-gold transition-all" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Recent event log */}
+            <div>
+              <div className="text-cream/60 text-sm font-medium mb-3">Recent Clicks</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
+                      <th className="pb-2 pr-4 font-medium">Time</th>
+                      <th className="pb-2 pr-4 font-medium">Event</th>
+                      <th className="pb-2 font-medium">Detail</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recentEvents.map(e => (
+                      <tr key={e.id} className="border-b border-cream/5 hover:bg-cream/3">
+                        <td className="py-2 pr-4 text-cream/45 text-xs whitespace-nowrap">{fmtDate(e.loggedAt)}</td>
+                        <td className="py-2 pr-4 text-xs">
+                          <span className="inline-block bg-navy2 border border-cream/15 rounded px-1.5 py-0.5 text-cream/70">{eventLabel(e.event)}</span>
+                        </td>
+                        <td className="py-2 text-cream/55 text-xs max-w-xs truncate">{e.label || '—'}</td>
+                      </tr>
+                    ))}
+                    {recentEvents.length === 0 && (
+                      <tr><td colSpan={3} className="py-8 text-center text-cream/25 text-sm">No clicks recorded yet.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {tab === 'demographics' && (() => {
+        const { totalMembers, genderBreakdown, gradeBreakdown } = demographics || {};
+        const gradeLabel = (g) => {
+          if (g === 'Unknown') return 'Unknown';
+          const n = Number(g);
+          if (n === 9) return '9th Grade';
+          if (n === 10) return '10th Grade';
+          if (n === 11) return '11th Grade';
+          if (n === 12) return '12th Grade';
+          return `Grade ${g}`;
+        };
+        const genderColors = ['bg-sky-400', 'bg-emerald-400', 'bg-gold', 'bg-red/70', 'bg-cream/30'];
+        const gradeColors = ['bg-red', 'bg-gold', 'bg-sky-400', 'bg-emerald-400', 'bg-cream/30'];
+
+        const BreakdownSection = ({ title, rows, colors }) => {
+          const total = rows.reduce((s, r) => s + r.count, 0);
+          if (total === 0) return (
+            <div>
+              <div className="text-cream/60 text-sm font-medium mb-3">{title}</div>
+              <div className="text-cream/25 text-sm">No data yet.</div>
+            </div>
+          );
+          return (
+            <div>
+              <div className="flex items-baseline gap-2 mb-3">
+                <span className="text-cream/60 text-sm font-medium">{title}</span>
+                <span className="text-cream/30 text-xs">{total} onboarded members</span>
+              </div>
+              <div className="space-y-2.5">
+                {rows.map((r, i) => {
+                  const pct = total > 0 ? Math.round((r.count / total) * 100) : 0;
+                  return (
+                    <div key={r.label}>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-cream/70">{r.label}</span>
+                        <span className="text-cream/50">{pct}% <span className="text-cream/30">({r.count})</span></span>
+                      </div>
+                      <div className="h-2 bg-navy rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${colors[i % colors.length]}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        };
+
+        return (
+          <div className="space-y-8 max-w-lg">
+            <div className="bg-navy2 rounded-lg p-4 border border-cream/10 inline-block">
+              <div className="text-2xl font-bold text-gold">{totalMembers ?? '—'}</div>
+              <div className="text-cream/50 text-xs mt-0.5">Total Onboarded Members</div>
+            </div>
+            <BreakdownSection title="Gender Breakdown" rows={genderBreakdown || []} colors={genderColors} />
+            <BreakdownSection title="Grade Breakdown" rows={(gradeBreakdown || []).map(r => ({ ...r, label: gradeLabel(r.label) }))} colors={gradeColors} />
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+function Sidebar({ me, reports, approvalsCount, submissionsCount, checkinEnabled, view, setView, onLogout, open, onClose }) {
   const [reportsOpen, setReportsOpen] = useState(true);
   const isManager = me.role === 'manager' || me.role === 'admin';
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
+  const canSeeSubmissions = me.role === 'admin' || !!me.grade;
   const canRoster = isManager || !!me.canManageRoster;
 
   const NavItem = ({ active, onClick, children, badge }) => (
@@ -2540,6 +3289,12 @@ function Sidebar({ me, reports, approvalsCount, checkinEnabled, view, setView, o
       </div>
 
       <nav className="flex-1 overflow-y-auto p-3 space-y-1">
+        {me.username === 'logistics' ? (
+          <NavItem active={view.type === 'logistics'} onClick={() => setView({ type: 'logistics' })}>
+            Login Activity
+          </NavItem>
+        ) : (
+          <React.Fragment>
         <NavItem active={view.type === 'home'} onClick={() => setView({ type: 'home' })}>Home</NavItem>
         {canEditSite && (
           <NavItem active={view.type === 'website'} onClick={() => setView({ type: 'website' })}>Edit Website</NavItem>
@@ -2581,6 +3336,12 @@ function Sidebar({ me, reports, approvalsCount, checkinEnabled, view, setView, o
           </NavItem>
         )}
 
+        {canSeeSubmissions && (
+          <NavItem active={view.type === 'submissions'} onClick={() => setView({ type: 'submissions' })} badge={submissionsCount}>
+            Get Involved
+          </NavItem>
+        )}
+
         {canRoster && (
           <NavItem active={view.type === 'roster'} onClick={() => setView({ type: 'roster' })}>
             📋 Roster
@@ -2617,12 +3378,15 @@ function Sidebar({ me, reports, approvalsCount, checkinEnabled, view, setView, o
         {me.role === 'admin' && (
           <NavItem active={view.type === 'admin'} onClick={() => setView({ type: 'admin' })}>Admin Panel</NavItem>
         )}
+          </React.Fragment>
+        )}
       </nav>
 
       <div className="p-3 border-t border-cream/10">
         <div className="text-sm text-cream">{me.displayName}</div>
         <div className="text-xs text-cream/40 mb-2">{me.title || roleLabel(me.role)} · {roleLabel(me.role)}</div>
-        <div className="flex gap-2">
+        <div className="flex gap-x-3 gap-y-1 flex-wrap">
+          <button onClick={() => setView({ type: 'profile' })} className="text-xs text-gold/80 hover:text-gold">Edit profile</button>
           <button onClick={() => setView({ type: 'password' })} className="text-xs text-gold/80 hover:text-gold">Change password</button>
           <button onClick={onLogout} className="text-xs text-red/80 hover:text-red ml-auto">Log out</button>
         </div>
@@ -2642,6 +3406,7 @@ function App() {
   const [users, setUsers] = useState([]);
   const [reports, setReports] = useState([]);
   const [approvalsCount, setApprovalsCount] = useState(0);
+  const [submissionsCount, setSubmissionsCount] = useState(0);
   const [checkinEnabled, setCheckinEnabled] = useState(false);
   const [refreshSignal, setRefreshSignal] = useState(0);
 
@@ -2651,7 +3416,7 @@ function App() {
   const bump = () => setRefreshSignal((n) => n + 1);
 
   const loadShared = useCallback(async (user) => {
-    if (!user || user.firstLogin) return;
+    if (!user || user.firstLogin || user.username === 'logistics') return;
     try {
       const [u, r, ci] = await Promise.all([api('/users'), api('/reports'), api('/checkins/settings').catch(() => ({ enabled: false }))]);
       setUsers(u.users);
@@ -2662,6 +3427,12 @@ function App() {
         setApprovalsCount(a.approvals.length);
       } else {
         setApprovalsCount(0);
+      }
+      if (user.role === 'admin' || user.grade) {
+        const s = await api('/submissions');
+        setSubmissionsCount(s.submissions.filter((x) => !x.handled).length);
+      } else {
+        setSubmissionsCount(0);
       }
     } catch (_) {}
   }, []);
@@ -2675,6 +3446,7 @@ function App() {
           const d = await api('/me');
           setMe(d.user);
           await loadShared(d.user);
+          if (d.user.username === 'logistics') setView({ type: 'logistics' });
         } catch (_) { localStorage.removeItem(TOKEN_KEY); }
       }
       setBooted(true);
@@ -2698,8 +3470,12 @@ function App() {
   // Default landing: the public homepage. The portal opens via the login button.
   if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;
 
-  if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); }} onBack={() => setEnterPortal(false)} />;
+  if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); if (u.username === 'logistics') setView({ type: 'logistics' }); }} onBack={() => setEnterPortal(false)} />;
   if (me.firstLogin) return <ChangePassword user={me} forced onDone={(u) => { setMe(u); loadShared(u); }} />;
+  // Right after the password step: prompt for a profile photo + intro bio.
+  if (!me.profileComplete && me.username !== 'logistics') return <ProfileSetup me={me} forced
+    onDone={(u) => { setMe(u); loadShared(u); }}
+    onSkip={() => setMe({ ...me, profileComplete: true })} />;
 
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
 
@@ -2712,6 +3488,7 @@ function App() {
   else if (view.type === 'person') content = <TaskPage me={me} userId={view.userId} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'announce') content = <TeamAnnouncementView me={me} reports={reports} />;
   else if (view.type === 'approvals') content = <Approvals onChanged={bump} refreshSignal={refreshSignal} />;
+  else if (view.type === 'submissions') content = <SubmissionsInbox onChanged={bump} refreshSignal={refreshSignal} />;
   else if (view.type === 'roster') content = <RosterPage me={me} />;
   else if (view.type === 'checkin') content = <WeeklyCheckinPage me={me} />;
   else if (view.type === 'funding') content = <FundingRequestPage me={me} />;
@@ -2719,14 +3496,16 @@ function App() {
   else if (view.type === 'dashboard') content = <AdminDashboardPage me={me} />;
   else if (view.type === 'org') content = <OrgChart />;
   else if (view.type === 'admin') content = <AdminPanel users={users} reload={bump} />;
+  else if (view.type === 'logistics') content = <LogisticsPage />;
   else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); setView({ type: 'mytasks' }); }} />;
+  else if (view.type === 'profile') content = <ProfileSetup me={me} onDone={(u) => { setMe(u); setView({ type: 'mytasks' }); }} />;
 
   // Navigating from the sidebar also closes the mobile drawer.
   const navigate = (v) => { setView(v); setSidebarOpen(false); };
 
   return (
     <div className="lg:flex">
-      <Sidebar me={me} reports={reports} approvalsCount={approvalsCount} checkinEnabled={checkinEnabled}
+      <Sidebar me={me} reports={reports} approvalsCount={approvalsCount} submissionsCount={submissionsCount} checkinEnabled={checkinEnabled}
         view={view} setView={navigate} onLogout={logout}
         open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="flex-1 min-w-0">
@@ -2742,4 +3521,39 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+// Catches render-time errors so the page shows a readable message, never blank.
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err, info) { console.error('App error:', err, info); }
+  render() {
+    if (this.state.err) {
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center text-center gap-3 p-6">
+          <div className="text-4xl">⚠️</div>
+          <div className="font-display text-2xl text-gold">Something went wrong</div>
+          <div className="text-cream/70 max-w-md text-sm">{String((this.state.err && this.state.err.message) || this.state.err)}</div>
+          <button onClick={() => location.reload()} className="mt-2 bg-red text-cream px-4 py-2 rounded-md text-sm">Reload</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+(function mount() {
+  const rootEl = document.getElementById('root');
+  try {
+    ReactDOM.createRoot(rootEl).render(<ErrorBoundary><App /></ErrorBoundary>);
+    rootEl.setAttribute('data-mounted', '1');
+  } catch (e) {
+    rootEl.setAttribute('data-mounted', '1');
+    rootEl.innerHTML =
+      '<div class="ca-center" style="font-family:sans-serif;color:#F5F0E8">' +
+      '<div style="font-size:42px">⚠️</div>' +
+      '<div style="font-size:20px;color:#C9A84C">Club America couldn\'t start</div>' +
+      '<div style="max-width:480px;color:#cbd5e1">' + ((e && e.message) || e) + '</div>' +
+      '<button onclick="location.reload()" style="margin-top:8px;background:#CC1C2E;color:#F5F0E8;border:none;border-radius:8px;padding:10px 18px;cursor:pointer">Reload</button>' +
+      '</div>';
+  }
+})();
