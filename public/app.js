@@ -2956,10 +2956,28 @@ function LogisticsPage() {
   if (error) return <div className="p-8 text-red text-sm">{error}</div>;
   if (!data) return null;
 
-  const { stats, recentLogins, demographics, engagementSummary = [], recentEvents = [] } = data;
-  const totalToday = stats.reduce((s, r) => s + Number(r.todayLogins || 0), 0);
-  const activeToday = stats.filter(r => Number(r.todayLogins) > 0).length;
+  const { stats, perUserDaily = [], teamDaily = [], recentLogins, demographics, engagementSummary = [], recentEvents = [] } = data;
+
+  // Build a map: userId -> { 'YYYY-MM-DD': count }
+  const dailyMap = {};
+  for (const row of perUserDaily) {
+    if (!dailyMap[row.userId]) dailyMap[row.userId] = {};
+    dailyMap[row.userId][row.day] = row.count;
+  }
+  // Last 7 UTC dates as strings (index 0 = oldest, 6 = today)
+  const last7 = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - (6 - i));
+    return d.toISOString().slice(0, 10);
+  });
+  const DAY_LABELS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+  const dayLabel = (iso) => DAY_LABELS[new Date(iso + 'T12:00:00Z').getUTCDay()];
+
   const allTime = stats.reduce((s, r) => s + Number(r.totalLogins || 0), 0);
+  // Today = last entry in last7
+  const todayStr = last7[6];
+  const totalToday = perUserDaily.filter(r => r.day === todayStr).reduce((s, r) => s + r.count, 0);
+  const activeToday = new Set(perUserDaily.filter(r => r.day === todayStr).map(r => r.userId)).size;
   const neverIn = stats.filter(r => !r.lastLogin).length;
 
   const filtered = filter
@@ -3018,7 +3036,7 @@ function LogisticsPage() {
       </div>
 
       {tab === 'members' && (
-        <div className="space-y-3">
+        <div className="space-y-4">
           <input
             type="text"
             placeholder="Search by name or username…"
@@ -3026,44 +3044,85 @@ function LogisticsPage() {
             onChange={e => setFilter(e.target.value)}
             className="w-full max-w-xs bg-navy2 border border-cream/20 rounded px-3 py-1.5 text-cream text-sm placeholder-cream/30 focus:outline-none focus:border-gold/60"
           />
+
+          {/* 14-day team trend bar chart */}
+          {teamDaily.length > 0 && (() => {
+            const maxCount = Math.max(...teamDaily.map(d => d.count), 1);
+            return (
+              <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+                <div className="text-cream/50 text-xs mb-3">Team logins — last 14 days</div>
+                <div className="flex items-end gap-1 h-12">
+                  {teamDaily.map(d => {
+                    const h = Math.max(4, Math.round((d.count / maxCount) * 48));
+                    const isToday = d.day === todayStr;
+                    return (
+                      <div key={d.day} className="flex-1 flex flex-col items-center gap-0.5 group relative">
+                        <div
+                          className={`w-full rounded-sm ${isToday ? 'bg-gold' : 'bg-cream/25 group-hover:bg-cream/40'} transition-colors`}
+                          style={{ height: h }}
+                          title={`${d.day}: ${d.count} login${d.count !== 1 ? 's' : ''}`}
+                        />
+                        {isToday && <div className="absolute -bottom-4 text-gold text-[9px]">today</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
-                  <th className="pb-2 pr-4 font-medium">Member</th>
+                  <th className="pb-2 pr-6 font-medium">Member</th>
                   <th className="pb-2 pr-4 font-medium">Title / Role</th>
-                  <th className="pb-2 pr-4 font-medium text-center">Today</th>
-                  <th className="pb-2 pr-4 font-medium text-center">Total</th>
-                  <th className="pb-2 font-medium">Last Login</th>
+                  {/* 7 day columns */}
+                  {last7.map(d => (
+                    <th key={d} className={`pb-2 px-1 font-medium text-center w-7 ${d === todayStr ? 'text-gold' : ''}`}>
+                      {dayLabel(d)}
+                    </th>
+                  ))}
+                  <th className="pb-2 px-3 font-medium text-center">Total</th>
+                  <th className="pb-2 pl-3 font-medium">Last Login</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(r => (
-                  <tr key={r.userId} className="border-b border-cream/5 hover:bg-cream/3">
-                    <td className="py-3 pr-4">
-                      <div className="text-cream font-medium text-sm">{r.displayName}</div>
-                      <div className="text-cream/35 text-xs">@{r.username}</div>
-                    </td>
-                    <td className="py-3 pr-4 text-cream/55 text-xs">{r.title || r.role}</td>
-                    <td className="py-3 pr-4 text-center">
-                      {Number(r.todayLogins) > 0
-                        ? <span className="text-emerald-400 font-semibold">{r.todayLogins}</span>
-                        : <span className="text-cream/20">—</span>}
-                    </td>
-                    <td className="py-3 pr-4 text-center">
-                      {Number(r.totalLogins) > 0
-                        ? <span className="text-gold font-semibold">{r.totalLogins}</span>
-                        : <span className="text-cream/20">0</span>}
-                    </td>
-                    <td className="py-3">
-                      {r.lastLogin
-                        ? <span className="text-cream/60 text-xs">{fmtDate(r.lastLogin)}</span>
-                        : <span className="inline-block text-xs text-red/70 bg-red/10 border border-red/20 rounded px-1.5 py-0.5">Never</span>}
-                    </td>
-                  </tr>
-                ))}
+                {filtered.map(r => {
+                  const days = dailyMap[r.userId] || {};
+                  return (
+                    <tr key={r.userId} className="border-b border-cream/5 hover:bg-cream/3">
+                      <td className="py-3 pr-6">
+                        <div className="text-cream font-medium text-sm">{r.displayName}</div>
+                        <div className="text-cream/35 text-xs">@{r.username}</div>
+                      </td>
+                      <td className="py-3 pr-4 text-cream/55 text-xs">{r.title || r.role}</td>
+                      {last7.map(d => {
+                        const cnt = days[d] || 0;
+                        const isToday = d === todayStr;
+                        return (
+                          <td key={d} className="py-3 px-1 text-center">
+                            {cnt > 0
+                              ? <span className={`text-xs font-semibold ${isToday ? 'text-gold' : 'text-emerald-400'}`}>{cnt}</span>
+                              : <span className="text-cream/15 text-xs">·</span>}
+                          </td>
+                        );
+                      })}
+                      <td className="py-3 px-3 text-center">
+                        <span className={Number(r.totalLogins) > 0 ? 'text-cream/70 font-medium text-xs' : 'text-cream/20 text-xs'}>
+                          {r.totalLogins}
+                        </span>
+                      </td>
+                      <td className="py-3 pl-3">
+                        {r.lastLogin
+                          ? <span className="text-cream/50 text-xs">{fmtDate(r.lastLogin)}</span>
+                          : <span className="inline-block text-xs text-red/70 bg-red/10 border border-red/20 rounded px-1.5 py-0.5">Never</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
                 {filtered.length === 0 && (
-                  <tr><td colSpan={5} className="py-8 text-center text-cream/25 text-sm">No results.</td></tr>
+                  <tr><td colSpan={11} className="py-8 text-center text-cream/25 text-sm">No results.</td></tr>
                 )}
               </tbody>
             </table>

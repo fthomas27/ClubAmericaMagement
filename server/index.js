@@ -998,13 +998,31 @@ app.get('/api/logistics/stats', (req, res) => {
       u.title,
       u.role,
       COALESCE(COUNT(l.id), 0) AS totalLogins,
-      MAX(l.loginAt)           AS lastLogin,
-      COALESCE(SUM(CASE WHEN date(l.loginAt) = date('now') THEN 1 ELSE 0 END), 0) AS todayLogins
+      MAX(l.loginAt)           AS lastLogin
     FROM users u
     LEFT JOIN login_logs l ON l.userId = u.id
     WHERE u.username != 'logistics'
     GROUP BY u.id
     ORDER BY totalLogins DESC, u.displayName
+  `).all();
+  // Per-user login count for each of the last 7 days (day 0 = today UTC).
+  const perUserDaily = db.prepare(`
+    SELECT l.userId, DATE(l.loginAt) AS day, COUNT(*) AS count
+    FROM login_logs l
+    JOIN users u ON u.id = l.userId
+    WHERE u.username != 'logistics'
+      AND l.loginAt >= DATE('now', '-6 days')
+    GROUP BY l.userId, day
+  `).all();
+  // Team-wide totals per day for last 14 days (for the trend chart).
+  const teamDaily = db.prepare(`
+    SELECT DATE(l.loginAt) AS day, COUNT(*) AS count
+    FROM login_logs l
+    JOIN users u ON u.id = l.userId
+    WHERE u.username != 'logistics'
+      AND l.loginAt >= DATE('now', '-13 days')
+    GROUP BY day
+    ORDER BY day ASC
   `).all();
   const recentLogins = db.prepare(`
     SELECT l.id, l.userId, l.username, l.loginAt, l.ipAddress,
@@ -1045,7 +1063,7 @@ app.get('/api/logistics/stats', (req, res) => {
     GROUP BY label
     ORDER BY CAST(label AS INTEGER) ASC, label ASC
   `).all();
-  res.json({ stats, recentLogins, demographics: { totalMembers, genderBreakdown, gradeBreakdown }, engagementSummary, recentEvents });
+  res.json({ stats, perUserDaily, teamDaily, recentLogins, demographics: { totalMembers, genderBreakdown, gradeBreakdown }, engagementSummary, recentEvents });
 });
 
 // ---- Static frontend --------------------------------------------------------
