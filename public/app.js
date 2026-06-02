@@ -1112,6 +1112,12 @@ function TaskPage({ me, userId, users, refreshSignal }) {
           </div>
         ))}
       </div>
+
+      {isSelf && (
+        <div className="mt-10">
+          <MeetTheBoard />
+        </div>
+      )}
     </div>
   );
 }
