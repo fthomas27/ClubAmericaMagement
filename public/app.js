@@ -292,14 +292,121 @@ function resizeImage(file, max, cb) {
   reader.readAsDataURL(file);
 }
 
+// Interactive square-crop modal backed by a canvas.
+// `src` is the raw (full-size) image data URL; `onCrop` receives the cropped JPEG data URL.
+function CropModal({ src, onCrop, onCancel }) {
+  const [crop, setCrop] = useState(null);
+  const [drag, setDrag] = useState(null);
+  const imgRef = useRef(null);
+  const [imgSize, setImgSize] = useState({ w: 0, h: 0 });
+
+  function initCrop(img) {
+    const dw = img.offsetWidth, dh = img.offsetHeight;
+    setImgSize({ w: dw, h: dh });
+    const size = Math.round(Math.min(dw, dh) * 0.8);
+    setCrop({ x: Math.round((dw - size) / 2), y: Math.round((dh - size) / 2), size });
+  }
+
+  function onImgLoad(e) { initCrop(e.target); }
+
+  function startDrag(e, type) {
+    e.preventDefault();
+    setDrag({ type, sx: e.clientX, sy: e.clientY, crop: { ...crop } });
+  }
+
+  function onMove(e) {
+    if (!drag) return;
+    const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+    const { x: ox, y: oy, size: os } = drag.crop;
+    const { w: dw, h: dh } = imgSize;
+    if (drag.type === 'move') {
+      setCrop({ x: Math.max(0, Math.min(dw - os, ox + dx)), y: Math.max(0, Math.min(dh - os, oy + dy)), size: os });
+      return;
+    }
+    let d;
+    if (drag.type === 'se') d = Math.min(dx, dy);
+    else if (drag.type === 'sw') d = Math.min(-dx, dy);
+    else if (drag.type === 'ne') d = Math.min(dx, -dy);
+    else d = Math.min(-dx, -dy);
+    let ns = Math.max(50, os + d), nx = ox, ny = oy;
+    if (drag.type === 'se') {
+      ns = Math.min(ns, dw - ox, dh - oy);
+    } else if (drag.type === 'sw') {
+      nx = ox + os - ns; if (nx < 0) { ns += nx; nx = 0; } ns = Math.min(ns, dh - oy);
+    } else if (drag.type === 'ne') {
+      ny = oy + os - ns; if (ny < 0) { ns += ny; ny = 0; } ns = Math.min(ns, dw - ox);
+    } else {
+      nx = ox + os - ns; ny = oy + os - ns;
+      if (nx < 0) { ns += nx; nx = 0; ny = oy + os - ns; }
+      if (ny < 0) { ns += ny; ny = 0; nx = ox + os - ns; }
+    }
+    if (nx + ns > dw) ns = dw - nx;
+    if (ny + ns > dh) ns = dh - ny;
+    setCrop({ x: Math.round(nx), y: Math.round(ny), size: Math.max(50, Math.round(ns)) });
+  }
+
+  function applyCrop() {
+    const img = imgRef.current;
+    if (!img || !crop) return;
+    const sx = img.naturalWidth / imgSize.w, sy = img.naturalHeight / imgSize.h;
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 512;
+    c.getContext('2d').drawImage(img, crop.x * sx, crop.y * sy, crop.size * sx, crop.size * sy, 0, 0, 512, 512);
+    onCrop(c.toDataURL('image/jpeg', 0.82));
+  }
+
+  const HS = 14;
+  return (
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
+      onMouseMove={onMove} onMouseUp={() => setDrag(null)} onMouseLeave={() => setDrag(null)}>
+      <div className="bg-navy2 border border-cream/10 rounded-xl p-5 max-w-2xl w-full">
+        <div className="font-display text-xl text-gold mb-1">Crop Photo</div>
+        <p className="text-xs text-cream/50 mb-3">Drag the circle to reposition · drag a corner to resize</p>
+        <div className="relative inline-block select-none">
+          <img ref={imgRef} src={src} alt="" className="block max-h-96 max-w-full rounded" onLoad={onImgLoad} draggable={false} />
+          {crop && imgSize.w > 0 && (
+            <>
+              <svg className="absolute inset-0 pointer-events-none" width={imgSize.w} height={imgSize.h}>
+                <defs>
+                  <mask id="cm">
+                    <rect width={imgSize.w} height={imgSize.h} fill="white" />
+                    <circle cx={crop.x + crop.size / 2} cy={crop.y + crop.size / 2} r={crop.size / 2} fill="black" />
+                  </mask>
+                </defs>
+                <rect width={imgSize.w} height={imgSize.h} fill="rgba(0,0,0,0.6)" mask="url(#cm)" />
+                <circle cx={crop.x + crop.size / 2} cy={crop.y + crop.size / 2} r={crop.size / 2}
+                  fill="none" stroke="white" strokeWidth="2" strokeDasharray="6 3" />
+              </svg>
+              <div className="absolute rounded-full cursor-move"
+                style={{ left: crop.x, top: crop.y, width: crop.size, height: crop.size }}
+                onMouseDown={(e) => startDrag(e, 'move')} />
+              {[['nw', 0, 0], ['ne', crop.size - HS, 0], ['sw', 0, crop.size - HS], ['se', crop.size - HS, crop.size - HS]].map(([id, cx, cy]) => (
+                <div key={id} className="absolute bg-white border border-gold/60 rounded-sm"
+                  style={{ left: crop.x + cx, top: crop.y + cy, width: HS, height: HS, cursor: `${id}-resize`, zIndex: 10 }}
+                  onMouseDown={(e) => { e.stopPropagation(); startDrag(e, id); }} />
+              ))}
+            </>
+          )}
+        </div>
+        <div className="flex gap-2 mt-4">
+          <button type="button" className="bg-gold text-navy font-semibold px-4 py-2 rounded-md text-sm hover:bg-gold/90" onClick={applyCrop}>Apply Crop</button>
+          <button type="button" className="border border-cream/25 text-cream px-4 py-2 rounded-md text-sm hover:border-cream/50" onClick={onCancel}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Profile setup — runs right after the password step on first login, and is
 // reachable later via "Edit profile". Collects a photo and an intro bio.
 function ProfileSetup({ me, forced, onDone, onSkip }) {
   const [photo, setPhoto] = useState('');
+  const [rawSrc, setRawSrc] = useState(''); // original file src for re-cropping
   const [bio, setBio] = useState('');
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [cropping, setCropping] = useState(false);
 
   useEffect(() => {
     api('/me/profile').then((d) => { setPhoto(d.photo || ''); setBio(d.bio || ''); setEmail(d.email || ''); }).catch(() => {});
@@ -307,13 +414,14 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
 
   function onFile(e) {
     const f = e.target.files && e.target.files[0];
+    e.target.value = '';
     if (!f) return;
     if (!f.type.startsWith('image/')) { setError('Please choose an image file.'); return; }
     setError('');
-    resizeImage(f, 512, (dataUrl) => {
-      if (dataUrl) setPhoto(dataUrl);
-      else setError("Couldn't read that image — try another.");
-    });
+    const reader = new FileReader();
+    reader.onload = (ev) => { setRawSrc(ev.target.result); setCropping(true); };
+    reader.onerror = () => setError("Couldn't read that image — try another.");
+    reader.readAsDataURL(f);
   }
 
   async function submit(e) {
@@ -342,11 +450,17 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
             ? <img src={photo} alt="preview" className="w-full h-full object-cover" />
             : <span className="text-cream/40 text-xs text-center px-2">No photo</span>}
         </div>
-        <label className="cursor-pointer">
-          <span className="inline-block bg-transparent border border-cream/25 hover:border-gold text-cream text-sm px-4 py-2 rounded-md">Choose photo…</span>
-          <input type="file" accept="image/*" className="hidden" onChange={onFile} />
-          <div className="text-xs text-cream/40 mt-1">A clear, professional headshot.</div>
-        </label>
+        <div className="space-y-2">
+          <label className="cursor-pointer block">
+            <span className="inline-block bg-transparent border border-cream/25 hover:border-gold text-cream text-sm px-4 py-2 rounded-md">Choose photo…</span>
+            <input type="file" accept="image/*" className="hidden" onChange={onFile} />
+          </label>
+          {photo && rawSrc && (
+            <button type="button" className="text-xs text-gold/80 hover:text-gold underline-offset-2 hover:underline"
+              onClick={() => setCropping(true)}>Re-crop</button>
+          )}
+          <div className="text-xs text-cream/40">A clear, professional headshot.</div>
+        </div>
       </div>
 
       <Field label="Email (for task & approval notifications)">
@@ -367,10 +481,18 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
     </div>
   );
 
+  const cropModal = cropping && rawSrc && (
+    <CropModal
+      src={rawSrc}
+      onCrop={(cropped) => { setPhoto(cropped); setCropping(false); }}
+      onCancel={() => setCropping(false)}
+    />
+  );
+
   if (forced) {
-    return <form onSubmit={submit} className="min-h-screen flex items-center justify-center p-4">{card}</form>;
+    return <>{cropModal}<form onSubmit={submit} className="min-h-screen flex items-center justify-center p-4">{card}</form></>;
   }
-  return <form onSubmit={submit} className="max-w-lg">{card}</form>;
+  return <>{cropModal}<form onSubmit={submit} className="max-w-lg">{card}</form></>;
 }
 
 // ---------------------------------------------------------------------------
