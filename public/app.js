@@ -1208,6 +1208,7 @@ function AdminPanel({ users, reload }) {
       }});
       setNotice(`Added ${d.user.displayName} — username "${d.user.username}", default password "${d.defaultPassword}".`);
       setFirst(''); setLast(''); setTitle(''); setRole('member'); setManagerId(''); setGrade(''); setEmail('');
+      rosterNeedsSync = true; // new portal user → re-import to roster next time it opens
       reload();
     } catch (err) { setError(err.message); }
   }
@@ -1992,6 +1993,9 @@ function InterestSurvey({ onBack }) {
 // Roster Page
 // ---------------------------------------------------------------------------
 const ROSTER_STATUSES = ['Prospect', 'Contacted', 'Onboarded', 'Declined'];
+// Triggers auto-import of board members into the roster. Starts true (run on first visit),
+// resets to true after a roster delete or new portal user is created.
+let rosterNeedsSync = true;
 
 function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
   const [busy, setBusy] = useState(false);
@@ -2089,7 +2093,7 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
 
 function AddRosterMemberForm({ me, onCreated }) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', roleDescription: '', status: 'Prospect', notes: '' });
+  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', status: 'Prospect', notes: '' });
   const [error, setError] = useState('');
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -2098,7 +2102,7 @@ function AddRosterMemberForm({ me, onCreated }) {
     e.preventDefault(); setError('');
     try {
       await api('/roster', { method: 'POST', body: { ...form, grade: form.grade ? Number(form.grade) : null } });
-      setForm({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', roleDescription: '', status: 'Prospect', notes: '' });
+      setForm({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', status: 'Prospect', notes: '' });
       setOpen(false); onCreated();
     } catch (err) { setError(err.message); }
   }
@@ -2125,7 +2129,6 @@ function AddRosterMemberForm({ me, onCreated }) {
             <option value="Female">Female</option>
           </select>
         </Field>
-        <Field label="Role Description"><input className={inputCls} value={form.roleDescription} onChange={set('roleDescription')} placeholder="e.g. Grade Rep" /></Field>
         <Field label="Status">
           <select className={inputCls} value={form.status} onChange={set('status')}>
             {ROSTER_STATUSES.map((s) => <option key={s}>{s}</option>)}
@@ -2314,6 +2317,16 @@ function RosterPage({ me }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Auto-import board portal members — runs once per session; resets when a member is
+  // deleted from the roster or when a new portal user is created (see rosterNeedsSync).
+  useEffect(() => {
+    if ((isPrivileged || me.canManageRoster) && rosterNeedsSync) {
+      rosterNeedsSync = false;
+      api('/roster/import-board', { method: 'POST' }).then(() => load()).catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Grade reps default to their assigned grade filter
   useEffect(() => {
     if (me.managedGrade && !isPrivileged) setGradeFilter(String(me.managedGrade));
@@ -2323,6 +2336,7 @@ function RosterPage({ me }) {
     if (action === 'delete') {
       if (!confirm('Delete this member from the roster?')) return;
       await api(`/roster/${memberId}`, { method: 'DELETE' });
+      rosterNeedsSync = true; // re-import board members on next roster visit
     } else {
       await api(`/roster/${memberId}/${action}`, { method: 'POST', body: body || undefined });
     }
