@@ -222,6 +222,11 @@ function init() {
     db.exec("ALTER TABLE users ADD COLUMN bigBoard INTEGER NOT NULL DEFAULT 0");
     db.prepare("UPDATE users SET bigBoard = 1 WHERE role = 'admin' OR role = 'manager' OR title = 'Secretary'").run();
   }
+  if (!cols.includes('canViewLogistics')) db.exec("ALTER TABLE users ADD COLUMN canViewLogistics INTEGER NOT NULL DEFAULT 0");
+
+  // Remove the old dedicated logistics observer account — the dashboard is now
+  // accessible to admins directly and via the canViewLogistics permission.
+  db.prepare("DELETE FROM users WHERE username = 'logistics'").run();
 
   // site_settings column migrations.
   const siteCols = db.prepare("PRAGMA table_info(site_settings)").all().map((c) => c.name);

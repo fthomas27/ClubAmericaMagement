@@ -1541,6 +1541,7 @@ function AdminPanel({ users, reload }) {
                   { key: 'canManageRoster', label: 'Manage Roster' },
                   { key: 'canAnnounce', label: 'Announce' },
                   { key: 'canEditHome', label: 'Edit Site' },
+                  { key: 'canViewLogistics', label: 'View Login Activity' },
                 ].map(({ key, label }) => (
                   <label key={key} className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={!!u[key]}
@@ -3536,9 +3537,9 @@ function LogisticsPage() {
 }
 
 // ---------------------------------------------------------------------------
-// AI Notes page (full page — visible to all non-logistics users)
+// AI Notes panel (modal overlay)
 // ---------------------------------------------------------------------------
-function AINotesPage({ onRead }) {
+function AINotesPanel({ onClose, onRead }) {
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -3556,24 +3557,28 @@ function AINotesPage({ onRead }) {
   }
 
   return (
-    <div className="max-w-lg">
-      <p className="text-cream/40 text-sm mb-4">Private notes left by the AI when it notices something worth your attention.</p>
-      {loading && <div className="text-cream/40 text-sm">Loading…</div>}
-      {!loading && notes.length === 0 && (
-        <div className="text-cream/40 text-sm">No AI notes yet — you're all caught up.</div>
-      )}
-      <div className="space-y-3">
-        {notes.map((n) => (
-          <div key={n.id} className={`rounded-lg p-4 border ${n.isRead ? 'border-cream/10 bg-navy2' : 'border-gold/40 bg-gold/5'}`}>
-            <div className="text-sm text-cream/85 whitespace-pre-wrap leading-relaxed">{n.content}</div>
-            <div className="flex items-center justify-between mt-2">
-              <span className="text-xs text-cream/35">{new Date(n.createdAt).toLocaleDateString()}</span>
-              {!n.isRead && (
-                <button onClick={() => markRead(n.id)} className="text-xs text-gold/70 hover:text-gold">Mark read</button>
-              )}
+    <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+      <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-lg w-full p-6 relative max-h-[80vh] overflow-y-auto">
+        <button onClick={onClose} aria-label="Close" className="absolute top-2 right-4 text-cream/60 hover:text-cream text-3xl leading-none">×</button>
+        <div className="font-display text-2xl text-gold mb-1">AI Notes</div>
+        <p className="text-cream/40 text-xs mb-4">Private notes left by the AI when it notices something worth your attention.</p>
+        {loading && <div className="text-cream/40 text-sm">Loading…</div>}
+        {!loading && notes.length === 0 && (
+          <div className="text-cream/40 text-sm">No AI notes yet — you're all caught up.</div>
+        )}
+        <div className="space-y-3">
+          {notes.map((n) => (
+            <div key={n.id} className={`rounded-lg p-4 border ${n.isRead ? 'border-cream/10 bg-navy' : 'border-gold/40 bg-gold/5'}`}>
+              <div className="text-sm text-cream/85 whitespace-pre-wrap leading-relaxed">{n.content}</div>
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-xs text-cream/35">{new Date(n.createdAt).toLocaleDateString()}</span>
+                {!n.isRead && (
+                  <button onClick={() => markRead(n.id)} className="text-xs text-gold/70 hover:text-gold">Mark read</button>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -3641,17 +3646,20 @@ function AIChatPage({ me }) {
     setAnalyzeStatus('Running…');
     try {
       const d = await api('/ai/analyze', { method: 'POST' });
-      setAnalyzeStatus(d.skipped ? 'AI not configured (no API key).' : 'Analysis complete — check AI Notes.');
+      setAnalyzeStatus(d.skipped ? 'AI not configured (no API key).' : 'Analysis complete — check your team members\' AI Notes.');
     } catch (err) {
-      setAnalyzeStatus('Failed: ' + (err.message || 'unknown error'));
+      setAnalyzeStatus('Analysis failed: ' + (err.message || 'unknown error'));
     }
     setTimeout(() => setAnalyzeStatus(''), 6000);
   }
 
   return (
     <div className="max-w-3xl mx-auto flex flex-col" style={{ height: 'calc(100vh - 120px)' }}>
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <p className="text-cream/50 text-sm">Ask about team health, tasks, check-ins, or get a summary.</p>
+      <div className="flex items-end justify-between mb-4 flex-wrap gap-2">
+        <div>
+          <h1 className="font-display text-4xl text-cream leading-none">AI Assistant</h1>
+          <p className="text-cream/50 text-sm mt-1">Ask about team health, tasks, check-ins, login activity, or get a summary.</p>
+        </div>
         <div className="flex gap-2 items-center flex-wrap">
           {analyzeStatus && <span className="text-xs text-cream/60">{analyzeStatus}</span>}
           <Button variant="ghost" onClick={runAnalysis} className="text-xs">Run Analysis Now</Button>
@@ -3662,7 +3670,7 @@ function AIChatPage({ me }) {
       <div className="flex-1 overflow-y-auto bg-navy2 border border-cream/10 rounded-xl p-4 space-y-4 mb-4">
         {messages.length === 0 && (
           <div className="text-cream/30 text-sm text-center pt-8">
-            Ask something — e.g. "Who has the most overdue tasks?" or "Summarize this week's check-ins."
+            Ask something — e.g. "Who has the most overdue tasks?" or "Show me login patterns this week."
           </div>
         )}
         {messages.map((m, i) => (
@@ -3723,8 +3731,7 @@ function AppIcon({ name }) {
     case 'org':       return <svg {...p}><circle cx="12" cy="4" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 6v5M12 11H5v6M12 11h7v6"/></svg>;
     case 'admin':     return <svg {...p}><path d="M12 2 3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7Z"/><path d="m9 12 2 2 4-4"/></svg>;
     case 'activity':  return <svg {...p}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>;
-    case 'ai':        return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M9 9h.01M15 9h.01M9.5 14a3.5 3.5 0 0 0 5 0"/></svg>;
-    case 'ainotes':   return <svg {...p}><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8Z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>;
+    case 'ai':        return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M9.5 15a4.5 4.5 0 0 0 5 0"/></svg>;
     default:          return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
   }
 }
@@ -3746,32 +3753,30 @@ function AppTile({ label, icon, badge, onClick }) {
   );
 }
 
-function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, aiNotesCount, onNavigate, onLogout }) {
+function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, onNavigate, onLogout }) {
   const isManager = me.role === 'manager' || me.role === 'admin';
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
   const canSeeSubmissions = me.role === 'admin' || !!me.grade;
   const canRoster = isManager || !!me.canManageRoster;
 
-  const tiles = me.username === 'logistics'
-    ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }]
-    : [
-        { type: 'mytasks',  label: 'My Page',        icon: 'person'    },
-        { type: 'home',     label: 'Club Home',       icon: 'home'      },
-        ...(canEditSite       ? [{ type: 'website',     label: 'Edit Website',     icon: 'edit'      }] : []),
-        ...(isManager         ? [{ type: 'announce',    label: 'Announcement',     icon: 'megaphone' }] : []),
-        ...(isManager         ? [{ type: 'myteam',      label: 'My Team',          icon: 'team'      }] : []),
-        ...(isManager         ? [{ type: 'approvals',   label: 'Approvals',        icon: 'check',    badge: approvalsCount   }] : []),
-        ...(canSeeSubmissions ? [{ type: 'submissions', label: 'Get Involved',     icon: 'inbox',    badge: submissionsCount }] : []),
-        ...(canRoster         ? [{ type: 'roster',      label: 'Roster',           icon: 'roster'    }] : []),
-        ...((checkinEnabled || isManager) ? [{ type: 'checkin', label: checkinEnabled ? 'Check-In' : 'Check-In Settings', icon: 'calendar' }] : []),
-        { type: 'funding',  label: 'Funding',          icon: 'funding'   },
-        { type: 'apply',    label: 'Apply',             icon: 'apply'     },
-        ...(isManager         ? [{ type: 'dashboard',   label: 'Dashboard',        icon: 'dashboard' }] : []),
-        { type: 'org',      label: 'Org Chart',         icon: 'org'       },
-        ...(me.role === 'admin' ? [{ type: 'admin',     label: 'Admin Panel',      icon: 'admin'     }] : []),
-        ...(me.role === 'admin' ? [{ type: 'ai',        label: 'AI Assistant',     icon: 'ai'        }] : []),
-        { type: 'ainotes',  label: 'AI Notes',          icon: 'ainotes',  badge: aiNotesCount },
-      ];
+  const tiles = [
+    { type: 'mytasks',  label: 'My Page',        icon: 'person'    },
+    { type: 'home',     label: 'Club Home',       icon: 'home'      },
+    ...(canEditSite       ? [{ type: 'website',     label: 'Edit Website',     icon: 'edit'      }] : []),
+    ...(isManager         ? [{ type: 'announce',    label: 'Announcement',     icon: 'megaphone' }] : []),
+    ...(isManager         ? [{ type: 'myteam',      label: 'My Team',          icon: 'team'      }] : []),
+    ...(isManager         ? [{ type: 'approvals',   label: 'Approvals',        icon: 'check',    badge: approvalsCount   }] : []),
+    ...(canSeeSubmissions ? [{ type: 'submissions', label: 'Get Involved',     icon: 'inbox',    badge: submissionsCount }] : []),
+    ...(canRoster         ? [{ type: 'roster',      label: 'Roster',           icon: 'roster'    }] : []),
+    ...((checkinEnabled || isManager) ? [{ type: 'checkin', label: checkinEnabled ? 'Check-In' : 'Check-In Settings', icon: 'calendar' }] : []),
+    { type: 'funding',  label: 'Funding',          icon: 'funding'   },
+    { type: 'apply',    label: 'Apply',             icon: 'apply'     },
+    ...(isManager         ? [{ type: 'dashboard',   label: 'Dashboard',        icon: 'dashboard' }] : []),
+    { type: 'org',      label: 'Org Chart',         icon: 'org'       },
+    ...(me.role === 'admin' ? [{ type: 'admin',     label: 'Admin Panel',      icon: 'admin'     }] : []),
+    ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }] : []),
+    ...(me.role === 'admin' ? [{ type: 'ai',        label: 'AI Assistant',     icon: 'ai'        }] : []),
+  ];
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
@@ -3836,12 +3841,13 @@ function App() {
   const [checkinEnabled, setCheckinEnabled] = useState(false);
   const [refreshSignal, setRefreshSignal] = useState(0);
   const [aiNotesCount, setAiNotesCount] = useState(0);
+  const [aiNotesOpen, setAiNotesOpen] = useState(false);
 
   const isSurveyPath = window.location.pathname === '/survey';
   const bump = () => setRefreshSignal((n) => n + 1);
 
   const loadShared = useCallback(async (user) => {
-    if (!user || user.firstLogin || user.username === 'logistics') return;
+    if (!user || user.firstLogin) return;
     try {
       const [u, r, ci] = await Promise.all([api('/users'), api('/reports'), api('/checkins/settings').catch(() => ({ enabled: false }))]);
       setUsers(u.users);
@@ -3872,7 +3878,6 @@ function App() {
           const d = await api('/me');
           setMe(d.user);
           await loadShared(d.user);
-          if (d.user.username === 'logistics') setView({ type: 'logistics' });
         } catch (_) { localStorage.removeItem(TOKEN_KEY); }
       }
       setBooted(true);
@@ -3891,9 +3896,9 @@ function App() {
   if (!booted) return <div className="min-h-screen flex items-center justify-center text-cream/40">Loading…</div>;
   if (isSurveyPath) return <InterestSurvey onBack={() => { window.history.pushState(null, '', '/'); window.location.reload(); }} />;
   if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;
-  if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); if (u.username === 'logistics') setView({ type: 'logistics' }); }} onBack={() => setEnterPortal(false)} />;
+  if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); }} onBack={() => setEnterPortal(false)} />;
   if (me.firstLogin) return <ChangePassword user={me} forced onDone={(u) => { setMe(u); loadShared(u); }} />;
-  if (!me.profileComplete && me.username !== 'logistics') return <ProfileSetup me={me} forced
+  if (!me.profileComplete) return <ProfileSetup me={me} forced
     onDone={(u) => { setMe(u); loadShared(u); }}
     onSkip={() => setMe({ ...me, profileComplete: true })} />;
 
@@ -3902,7 +3907,7 @@ function App() {
 
   if (view.type === 'apphome') return (
     <AppHome me={me} reports={reports} approvalsCount={approvalsCount} submissionsCount={submissionsCount}
-      checkinEnabled={checkinEnabled} aiNotesCount={aiNotesCount} onNavigate={navigate} onLogout={logout} />
+      checkinEnabled={checkinEnabled} onNavigate={navigate} onLogout={logout} />
   );
 
   const PAGE_TITLES = {
@@ -3912,8 +3917,7 @@ function App() {
     submissions: 'Get Involved', roster: 'Roster', checkin: 'Weekly Check-In',
     funding: 'Funding Requests', apply: 'Apply for Position', dashboard: 'Dashboard',
     org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity',
-    password: 'Change Password', profile: 'Edit Profile',
-    ai: 'AI Assistant', ainotes: 'AI Notes',
+    ai: 'AI Assistant', password: 'Change Password', profile: 'Edit Profile',
   };
 
   let content;
@@ -3933,24 +3937,32 @@ function App() {
   else if (view.type === 'org') content = <OrgChart />;
   else if (view.type === 'admin') content = <AdminPanel users={users} reload={bump} />;
   else if (view.type === 'logistics') content = <LogisticsPage />;
+  else if (view.type === 'ai') content = me.role === 'admin' ? <AIChatPage me={me} /> : null;
   else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;
   else if (view.type === 'profile') content = <ProfileSetup me={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;
-  else if (view.type === 'ai') content = me.role === 'admin' ? <AIChatPage me={me} /> : null;
-  else if (view.type === 'ainotes') content = <AINotesPage onRead={bump} />;
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
-      <header className="sticky top-0 z-20 flex items-center gap-3 bg-navy2/95 backdrop-blur border-b border-cream/10 px-4 py-3">
-        <button onClick={() => navigate({ type: 'apphome' })} aria-label="Back to home"
-          className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-cream hover:bg-navy3 transition-colors">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M19 12H5M12 5l-7 7 7 7"/>
-          </svg>
-        </button>
-        <span className="text-cream font-semibold text-base">{PAGE_TITLES[view.type] || ''}</span>
-      </header>
-      <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-x-hidden">{content}</main>
-    </div>
+    <>
+      {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={() => { setAiNotesOpen(false); bump(); }} />}
+      <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
+        <header className="sticky top-0 z-20 flex items-center gap-3 bg-navy2/95 backdrop-blur border-b border-cream/10 px-4 py-3">
+          <button onClick={() => navigate({ type: 'apphome' })} aria-label="Back to home"
+            className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-cream hover:bg-navy3 transition-colors">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M19 12H5M12 5l-7 7 7 7"/>
+            </svg>
+          </button>
+          <span className="text-cream font-semibold text-base flex-1">{PAGE_TITLES[view.type] || ''}</span>
+          <button onClick={() => setAiNotesOpen(true)} className="relative flex items-center gap-1 text-cream/50 hover:text-gold transition-colors text-xs" aria-label="AI Notes">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            {aiNotesCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-gold text-navy text-[9px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-0.5">{aiNotesCount}</span>
+            )}
+          </button>
+        </header>
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-x-hidden">{content}</main>
+      </div>
+    </>
   );
 }
 
