@@ -4,28 +4,15 @@ const { db } = require('./db');
 const JWT_SECRET = process.env.JWT_SECRET || 'club-america-dev-secret-change-me';
 const TOKEN_TTL = '12h';
 
-// In production, a strong JWT_SECRET must be set or sessions can be forged.
-if (!process.env.JWT_SECRET) {
-  const msg = 'WARNING: JWT_SECRET is not set — using an insecure default. Set JWT_SECRET in your environment for production.';
-  if (process.env.NODE_ENV === 'production') console.error('\x1b[31m%s\x1b[0m', msg);
-  else console.warn(msg);
-}
-
 function signToken(user) {
   return jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: TOKEN_TTL });
 }
 
-// Strip the password hash (and the heavy photo blob) before sending a user to
-// the client. Photos are fetched only where needed (own profile, board page).
+// Strip the password hash before sending a user to the client.
 function publicUser(u) {
   if (!u) return null;
-  const { passwordHash, photo, ...rest } = u;
-  return {
-    ...rest,
-    firstLogin: !!u.firstLogin,
-    profileComplete: !!u.profileComplete,
-    hasPhoto: !!photo,
-  };
+  const { passwordHash, ...rest } = u;
+  return { ...rest, firstLogin: !!u.firstLogin };
 }
 
 function getUserById(id) {
