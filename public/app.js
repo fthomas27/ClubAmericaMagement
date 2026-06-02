@@ -2946,7 +2946,7 @@ function LogisticsPage() {
   if (error) return <div className="p-8 text-red text-sm">{error}</div>;
   if (!data) return null;
 
-  const { stats, recentLogins } = data;
+  const { stats, recentLogins, demographics } = data;
   const totalToday = stats.reduce((s, r) => s + Number(r.todayLogins || 0), 0);
   const activeToday = stats.filter(r => Number(r.todayLogins) > 0).length;
   const allTime = stats.reduce((s, r) => s + Number(r.totalLogins || 0), 0);
@@ -3003,6 +3003,7 @@ function LogisticsPage() {
       <div className="flex gap-0 border-b border-cream/10">
         <TabBtn id="members" label={`Members (${stats.length})`} />
         <TabBtn id="log" label={`Login Log (${recentLogins.length})`} />
+        <TabBtn id="demographics" label="Club Breakdown" />
       </div>
 
       {tab === 'members' && (
@@ -3089,6 +3090,69 @@ function LogisticsPage() {
           </table>
         </div>
       )}
+
+      {tab === 'demographics' && (() => {
+        const { totalMembers, genderBreakdown, gradeBreakdown } = demographics || {};
+        const gradeLabel = (g) => {
+          if (g === 'Unknown') return 'Unknown';
+          const n = Number(g);
+          if (n === 9) return '9th Grade';
+          if (n === 10) return '10th Grade';
+          if (n === 11) return '11th Grade';
+          if (n === 12) return '12th Grade';
+          return `Grade ${g}`;
+        };
+        const genderColors = ['bg-sky-400', 'bg-emerald-400', 'bg-gold', 'bg-red/70', 'bg-cream/30'];
+        const gradeColors = ['bg-red', 'bg-gold', 'bg-sky-400', 'bg-emerald-400', 'bg-cream/30'];
+
+        const BreakdownSection = ({ title, rows, colors }) => {
+          const total = rows.reduce((s, r) => s + r.count, 0);
+          if (total === 0) return (
+            <div>
+              <div className="text-cream/60 text-sm font-medium mb-3">{title}</div>
+              <div className="text-cream/25 text-sm">No data yet.</div>
+            </div>
+          );
+          return (
+            <div>
+              <div className="flex items-baseline gap-2 mb-3">
+                <span className="text-cream/60 text-sm font-medium">{title}</span>
+                <span className="text-cream/30 text-xs">{total} onboarded members</span>
+              </div>
+              <div className="space-y-2.5">
+                {rows.map((r, i) => {
+                  const pct = total > 0 ? Math.round((r.count / total) * 100) : 0;
+                  return (
+                    <div key={r.label}>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-cream/70">{r.label}</span>
+                        <span className="text-cream/50">{pct}% <span className="text-cream/30">({r.count})</span></span>
+                      </div>
+                      <div className="h-2 bg-navy rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${colors[i % colors.length]}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        };
+
+        return (
+          <div className="space-y-8 max-w-lg">
+            <div className="bg-navy2 rounded-lg p-4 border border-cream/10 inline-block">
+              <div className="text-2xl font-bold text-gold">{totalMembers ?? '—'}</div>
+              <div className="text-cream/50 text-xs mt-0.5">Total Onboarded Members</div>
+            </div>
+            <BreakdownSection title="Gender Breakdown" rows={genderBreakdown || []} colors={genderColors} />
+            <BreakdownSection title="Grade Breakdown" rows={(gradeBreakdown || []).map(r => ({ ...r, label: gradeLabel(r.label) }))} colors={gradeColors} />
+          </div>
+        );
+      })()}
     </div>
   );
 }

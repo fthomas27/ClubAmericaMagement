@@ -1006,7 +1006,26 @@ app.get('/api/logistics/stats', (req, res) => {
     ORDER BY l.loginAt DESC
     LIMIT 200
   `).all();
-  res.json({ stats, recentLogins });
+  const totalMembers = db.prepare("SELECT COUNT(*) AS n FROM roster_members WHERE status = 'Onboarded'").get().n;
+  const genderBreakdown = db.prepare(`
+    SELECT
+      CASE WHEN gender = '' OR gender IS NULL THEN 'Unknown' ELSE gender END AS label,
+      COUNT(*) AS count
+    FROM roster_members
+    WHERE status = 'Onboarded'
+    GROUP BY label
+    ORDER BY count DESC
+  `).all();
+  const gradeBreakdown = db.prepare(`
+    SELECT
+      CASE WHEN grade IS NULL OR grade = '' THEN 'Unknown' ELSE CAST(grade AS TEXT) END AS label,
+      COUNT(*) AS count
+    FROM roster_members
+    WHERE status = 'Onboarded'
+    GROUP BY label
+    ORDER BY CAST(label AS INTEGER) ASC, label ASC
+  `).all();
+  res.json({ stats, recentLogins, demographics: { totalMembers, genderBreakdown, gradeBreakdown } });
 });
 
 // ---- Static frontend --------------------------------------------------------
