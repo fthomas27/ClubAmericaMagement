@@ -81,4 +81,4 @@ function upcoming(events, count) {
     }));
 }
 
-module.exports = { fetchUpcoming, parseEvents };
+module.exports = { fetchUpcoming, parseEvents, clearCache: (url) => cache.delete(url) };

@@ -14,7 +14,7 @@ process.on('uncaughtException', (err) => {
 });
 
 const { db, init, seed } = require('./db');
-const { fetchUpcoming } = require('./calendar');
+const { fetchUpcoming, clearCache } = require('./calendar');
 const { notify } = require('./email');
 const {
   signToken,
@@ -322,6 +322,21 @@ app.put('/api/home', (req, res) => {
       aboutText ?? null,
     );
   res.json({ home: getHome() });
+});
+
+// Force-refresh the iCal cache for the configured calendar URL.
+app.post('/api/home/calendar/refresh', async (req, res) => {
+  if (!canEditHome(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const home = getHome();
+  const url = db.prepare('SELECT calendarUrl FROM site_settings WHERE id = 1').get().calendarUrl;
+  if (!url) return res.status(400).json({ error: 'No calendar URL configured' });
+  clearCache(url);
+  try {
+    const events = await fetchUpcoming(url, 3);
+    res.json({ ok: true, events });
+  } catch (_) {
+    res.status(502).json({ error: 'Failed to fetch calendar — check the URL' });
+  }
 });
 
 // Homepage announcement — secretary, digital presence, VP, president.

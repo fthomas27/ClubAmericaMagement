@@ -1506,6 +1506,18 @@ function HomeEditor({ onSaved }) {
   const [form, setForm] = useState(null);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  const [calRefreshing, setCalRefreshing] = useState(false);
+  const [calMsg, setCalMsg] = useState('');
+
+  async function refreshCalendar() {
+    setCalRefreshing(true); setCalMsg('');
+    try {
+      const d = await api('/home/calendar/refresh', { method: 'POST' });
+      setCalMsg(`✓ Refreshed — ${d.events.length} upcoming event${d.events.length === 1 ? '' : 's'} loaded.`);
+      onSaved && onSaved();
+    } catch (err) { setCalMsg('✗ ' + err.message); }
+    finally { setCalRefreshing(false); }
+  }
 
   async function start() {
     setError(''); setSaved(false);
@@ -1553,7 +1565,18 @@ function HomeEditor({ onSaved }) {
             <Field label="Calendar feed URL (iCal / .ics — e.g. Google Calendar public address)">
               <input className={inputCls} value={form.calendarUrl || ''} onChange={set('calendarUrl')} placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" />
             </Field>
-            <p className="text-xs text-cream/40 mt-1">When set, the homepage shows the next 3 events from this calendar automatically. Leave blank to use the manual meeting fields below.</p>
+            <div className="flex items-center gap-3 mt-2 flex-wrap">
+              <p className="text-xs text-cream/40 flex-1">When set, the homepage shows the next 3 events from this calendar automatically. Leave blank to use the manual meeting fields below. Events cache for 5 minutes.</p>
+              {form.calendarUrl && (
+                <button type="button" onClick={refreshCalendar} disabled={calRefreshing}
+                  className="text-xs px-3 py-1.5 rounded-md border border-gold/40 text-gold/80 hover:border-gold hover:text-gold transition-colors disabled:opacity-40 shrink-0">
+                  {calRefreshing ? 'Refreshing…' : '↺ Force Reload'}
+                </button>
+              )}
+            </div>
+            {calMsg && (
+              <p className={`text-xs mt-1 ${calMsg.startsWith('✓') ? 'text-emerald-300' : 'text-red'}`}>{calMsg}</p>
+            )}
           </div>
           <Field label="Meeting date (fallback)"><input className={inputCls} value={form.meetingDate || ''} onChange={set('meetingDate')} placeholder="e.g. Thursday, June 12" /></Field>
           <Field label="Meeting time (fallback)"><input className={inputCls} value={form.meetingTime || ''} onChange={set('meetingTime')} placeholder="e.g. 3:30 PM" /></Field>
