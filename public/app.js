@@ -1112,6 +1112,12 @@ function TaskPage({ me, userId, users, refreshSignal }) {
           </div>
         ))}
       </div>
+
+      {isSelf && (
+        <div className="mt-10">
+          <MeetTheBoard />
+        </div>
+      )}
     </div>
   );
 }
@@ -1349,6 +1355,55 @@ function PodcastToggle() {
   );
 }
 
+function EditMemberModal({ user, onSaved, onClose }) {
+  const [firstName, setFirstName] = useState(user.displayName.split(' ')[0] || '');
+  const [lastName, setLastName] = useState(user.displayName.split(' ').slice(1).join(' ') || '');
+  const [username, setUsername] = useState(user.username || '');
+  const [title, setTitle] = useState(user.title || '');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function save(e) {
+    e.preventDefault();
+    setError('');
+    setSaving(true);
+    try {
+      await api(`/admin/users/${user.id}`, { method: 'PATCH', body: { firstName, lastName, username, title } });
+      onSaved();
+      onClose();
+    } catch (err) { setError(err.message); } finally { setSaving(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <form onSubmit={save} onClick={(e) => e.stopPropagation()}
+        className="bg-navy2 border border-gold/30 rounded-xl p-6 max-w-md w-full space-y-4">
+        <div className="font-display text-2xl text-gold">Edit Profile</div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="First Name">
+            <input className={inputCls} value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
+          </Field>
+          <Field label="Last Name">
+            <input className={inputCls} value={lastName} onChange={(e) => setLastName(e.target.value)} />
+          </Field>
+        </div>
+        <Field label="Username">
+          <input className={inputCls} value={username} onChange={(e) => setUsername(e.target.value.toLowerCase())}
+            pattern="[a-z0-9._\-]+" title="Letters, numbers, dots, hyphens, underscores only" required />
+        </Field>
+        <Field label="Title / Position">
+          <input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Grade Rep" />
+        </Field>
+        {error && <div className="text-red text-sm">{error}</div>}
+        <div className="flex gap-2">
+          <Button type="submit" variant="gold" disabled={saving}>{saving ? 'Saving…' : 'Save Changes'}</Button>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function AdminPanel({ users, reload }) {
   const [first, setFirst] = useState('');
   const [last, setLast] = useState('');
@@ -1359,6 +1414,7 @@ function AdminPanel({ users, reload }) {
   const [email, setEmail] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [editTarget, setEditTarget] = useState(null);
 
   async function addUser(e) {
     e.preventDefault();
@@ -1369,7 +1425,6 @@ function AdminPanel({ users, reload }) {
       }});
       setNotice(`Added ${d.user.displayName} — username "${d.user.username}", default password "${d.defaultPassword}".`);
       setFirst(''); setLast(''); setTitle(''); setRole('member'); setManagerId(''); setGrade(''); setEmail('');
-      rosterNeedsSync = true; // new portal user → re-import to roster next time it opens
       reload();
     } catch (err) { setError(err.message); }
   }
@@ -1440,6 +1495,7 @@ function AdminPanel({ users, reload }) {
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 {u.firstLogin ? <Badge tone="red">First login</Badge> : <Badge tone="green">Active</Badge>}
+                <button onClick={() => setEditTarget(u)} className="text-xs text-cream/60 hover:text-cream">Edit Profile</button>
                 <button onClick={() => resetPw(u)} className="text-xs text-gold/80 hover:text-gold">Reset PW</button>
                 <button onClick={() => removeUser(u)} className="text-xs text-red/80 hover:text-red">Remove</button>
               </div>
@@ -1485,6 +1541,7 @@ function AdminPanel({ users, reload }) {
                   { key: 'canManageRoster', label: 'Manage Roster' },
                   { key: 'canAnnounce', label: 'Announce' },
                   { key: 'canEditHome', label: 'Edit Site' },
+                  { key: 'canViewLogistics', label: 'View Login Activity' },
                 ].map(({ key, label }) => (
                   <label key={key} className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={!!u[key]}
@@ -1498,6 +1555,9 @@ function AdminPanel({ users, reload }) {
           </div>
         ))}
       </div>
+      {editTarget && (
+        <EditMemberModal user={editTarget} onSaved={reload} onClose={() => setEditTarget(null)} />
+      )}
     </div>
   );
 }
@@ -2210,9 +2270,6 @@ function InterestSurvey({ onBack }) {
 // Roster Page
 // ---------------------------------------------------------------------------
 const ROSTER_STATUSES = ['Prospect', 'Contacted', 'Onboarded', 'Declined'];
-// Triggers auto-import of board members into the roster. Starts true (run on first visit),
-// resets to true after a roster delete or new portal user is created.
-let rosterNeedsSync = true;
 
 function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
   const [busy, setBusy] = useState(false);
@@ -2534,16 +2591,6 @@ function RosterPage({ me }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // Auto-import board portal members — runs once per session; resets when a member is
-  // deleted from the roster or when a new portal user is created (see rosterNeedsSync).
-  useEffect(() => {
-    if ((isPrivileged || me.canManageRoster) && rosterNeedsSync) {
-      rosterNeedsSync = false;
-      api('/roster/import-board', { method: 'POST' }).then(() => load()).catch(() => {});
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // Grade reps default to their assigned grade filter
   useEffect(() => {
     if (me.managedGrade && !isPrivileged) setGradeFilter(String(me.managedGrade));
@@ -2553,7 +2600,6 @@ function RosterPage({ me }) {
     if (action === 'delete') {
       if (!confirm('Delete this member from the roster?')) return;
       await api(`/roster/${memberId}`, { method: 'DELETE' });
-      rosterNeedsSync = true; // re-import board members on next roster visit
     } else {
       await api(`/roster/${memberId}/${action}`, { method: 'POST', body: body || undefined });
     }
@@ -3522,6 +3568,182 @@ function LogisticsPage() {
 }
 
 // ---------------------------------------------------------------------------
+// AI Notes panel (modal overlay)
+// ---------------------------------------------------------------------------
+function AINotesPanel({ onClose, onRead }) {
+  const [notes, setNotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api('/ai/notes')
+      .then((d) => setNotes(d.notes || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function markRead(id) {
+    await api(`/ai/notes/${id}/read`, { method: 'PATCH' }).catch(() => {});
+    setNotes((prev) => prev.map((n) => n.id === id ? { ...n, isRead: 1 } : n));
+    onRead();
+  }
+
+  return (
+    <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+      <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-lg w-full p-6 relative max-h-[80vh] overflow-y-auto">
+        <button onClick={onClose} aria-label="Close" className="absolute top-2 right-4 text-cream/60 hover:text-cream text-3xl leading-none">×</button>
+        <div className="font-display text-2xl text-gold mb-1">AI Notes</div>
+        <p className="text-cream/40 text-xs mb-4">Private notes left by the AI when it notices something worth your attention.</p>
+        {loading && <div className="text-cream/40 text-sm">Loading…</div>}
+        {!loading && notes.length === 0 && (
+          <div className="text-cream/40 text-sm">No AI notes yet — you're all caught up.</div>
+        )}
+        <div className="space-y-3">
+          {notes.map((n) => (
+            <div key={n.id} className={`rounded-lg p-4 border ${n.isRead ? 'border-cream/10 bg-navy' : 'border-gold/40 bg-gold/5'}`}>
+              <div className="text-sm text-cream/85 whitespace-pre-wrap leading-relaxed">{n.content}</div>
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-xs text-cream/35">{new Date(n.createdAt).toLocaleDateString()}</span>
+                {!n.isRead && (
+                  <button onClick={() => markRead(n.id)} className="text-xs text-gold/70 hover:text-gold">Mark read</button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AI Chat page (admin only)
+// ---------------------------------------------------------------------------
+function AIChatPage({ me }) {
+  const [messages, setMessages] = useState([]);
+  const [sessionId, setSessionId] = useState(null);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [analyzeStatus, setAnalyzeStatus] = useState('');
+  const bottomRef = useRef(null);
+
+  useEffect(() => {
+    api('/ai/chat/history')
+      .then((d) => {
+        if (d.messages && d.messages.length) {
+          setMessages(d.messages);
+          setSessionId(d.sessionId);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (bottomRef.current) bottomRef.current.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  async function send(e) {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text || busy) return;
+    setInput('');
+    setBusy(true);
+    setError('');
+    const tempId = Date.now();
+    setMessages((prev) => [...prev, { _tempId: tempId, role: 'user', content: text }]);
+    try {
+      const d = await api('/ai/chat', { method: 'POST', body: { message: text, sessionId } });
+      setSessionId(d.sessionId);
+      setMessages((prev) => [
+        ...prev.filter((m) => m._tempId !== tempId),
+        { role: 'user', content: text },
+        { role: 'assistant', content: d.reply },
+      ]);
+    } catch (err) {
+      setError(err.message || 'Request failed');
+      setMessages((prev) => prev.filter((m) => m._tempId !== tempId));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function newChat() {
+    setMessages([]);
+    setSessionId(`${me.id}-${Date.now()}`);
+    setError('');
+  }
+
+  async function runAnalysis() {
+    setAnalyzeStatus('Running…');
+    try {
+      const d = await api('/ai/analyze', { method: 'POST' });
+      setAnalyzeStatus(d.skipped ? 'AI not configured (no API key).' : 'Analysis complete — check your team members\' AI Notes.');
+    } catch (err) {
+      setAnalyzeStatus('Analysis failed: ' + (err.message || 'unknown error'));
+    }
+    setTimeout(() => setAnalyzeStatus(''), 6000);
+  }
+
+  return (
+    <div className="max-w-3xl mx-auto flex flex-col" style={{ height: 'calc(100vh - 120px)' }}>
+      <div className="flex items-end justify-between mb-4 flex-wrap gap-2">
+        <div>
+          <h1 className="font-display text-4xl text-cream leading-none">AI Assistant</h1>
+          <p className="text-cream/50 text-sm mt-1">Ask about team health, tasks, check-ins, login activity, or get a summary.</p>
+        </div>
+        <div className="flex gap-2 items-center flex-wrap">
+          {analyzeStatus && <span className="text-xs text-cream/60">{analyzeStatus}</span>}
+          <Button variant="ghost" onClick={runAnalysis} className="text-xs">Run Analysis Now</Button>
+          <Button variant="ghost" onClick={newChat} className="text-xs">New Chat</Button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto bg-navy2 border border-cream/10 rounded-xl p-4 space-y-4 mb-4">
+        {messages.length === 0 && (
+          <div className="text-cream/30 text-sm text-center pt-8">
+            Ask something — e.g. "Who has the most overdue tasks?" or "Show me login patterns this week."
+          </div>
+        )}
+        {messages.map((m, i) => (
+          <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[82%] rounded-xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap
+              ${m.role === 'user'
+                ? 'bg-red/20 text-cream border border-red/30'
+                : 'bg-navy3 text-cream/90 border border-cream/10'}`}>
+              {m.role === 'assistant' && (
+                <div className="text-gold/60 text-xs font-medium mb-1 uppercase tracking-wider">AI</div>
+              )}
+              {m.content}
+            </div>
+          </div>
+        ))}
+        {busy && (
+          <div className="flex justify-start">
+            <div className="bg-navy3 border border-cream/10 rounded-xl px-4 py-3 text-cream/40 text-sm">Thinking…</div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {error && <div className="text-red text-sm mb-2">{error}</div>}
+
+      <form onSubmit={send} className="flex gap-2">
+        <input
+          className={inputCls + ' flex-1'}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Ask about the team…"
+          disabled={busy}
+        />
+        <Button type="submit" variant="gold" disabled={busy || !input.trim()}>
+          {busy ? '…' : 'Send'}
+        </Button>
+      </form>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 function AppIcon({ name }) {
   const p = { width: 24, height: 24, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', className: 'text-cream/60 group-hover:text-gold transition-colors duration-150' };
   switch (name) {
@@ -3540,6 +3762,7 @@ function AppIcon({ name }) {
     case 'org':       return <svg {...p}><circle cx="12" cy="4" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 6v5M12 11H5v6M12 11h7v6"/></svg>;
     case 'admin':     return <svg {...p}><path d="M12 2 3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7Z"/><path d="m9 12 2 2 4-4"/></svg>;
     case 'activity':  return <svg {...p}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>;
+    case 'ai':        return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M9.5 15a4.5 4.5 0 0 0 5 0"/></svg>;
     default:          return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
   }
 }
@@ -3567,24 +3790,24 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
   const canSeeSubmissions = me.role === 'admin' || !!me.grade;
   const canRoster = isManager || !!me.canManageRoster;
 
-  const tiles = me.username === 'logistics'
-    ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }]
-    : [
-        { type: 'mytasks',  label: 'My Page',        icon: 'person'    },
-        { type: 'home',     label: 'Club Home',       icon: 'home'      },
-        ...(canEditSite       ? [{ type: 'website',     label: 'Edit Website',     icon: 'edit'      }] : []),
-        ...(isManager         ? [{ type: 'announce',    label: 'Announcement',     icon: 'megaphone' }] : []),
-        ...(isManager         ? [{ type: 'myteam',      label: 'My Team',          icon: 'team'      }] : []),
-        ...(isManager         ? [{ type: 'approvals',   label: 'Approvals',        icon: 'check',    badge: approvalsCount   }] : []),
-        ...(canSeeSubmissions ? [{ type: 'submissions', label: 'Get Involved',     icon: 'inbox',    badge: submissionsCount }] : []),
-        ...(canRoster         ? [{ type: 'roster',      label: 'Roster',           icon: 'roster'    }] : []),
-        ...((checkinEnabled || isManager) ? [{ type: 'checkin', label: checkinEnabled ? 'Check-In' : 'Check-In Settings', icon: 'calendar' }] : []),
-        { type: 'funding',  label: 'Funding',          icon: 'funding'   },
-        { type: 'apply',    label: 'Apply',             icon: 'apply'     },
-        ...(isManager         ? [{ type: 'dashboard',   label: 'Dashboard',        icon: 'dashboard' }] : []),
-        { type: 'org',      label: 'Org Chart',         icon: 'org'       },
-        ...(me.role === 'admin' ? [{ type: 'admin',     label: 'Admin Panel',      icon: 'admin'     }] : []),
-      ];
+  const tiles = [
+    { type: 'mytasks',  label: 'My Page',        icon: 'person'    },
+    { type: 'home',     label: 'Club Home',       icon: 'home'      },
+    ...(canEditSite       ? [{ type: 'website',     label: 'Edit Website',     icon: 'edit'      }] : []),
+    ...(isManager         ? [{ type: 'announce',    label: 'Announcement',     icon: 'megaphone' }] : []),
+    ...(isManager         ? [{ type: 'myteam',      label: 'My Team',          icon: 'team'      }] : []),
+    ...(isManager         ? [{ type: 'approvals',   label: 'Approvals',        icon: 'check',    badge: approvalsCount   }] : []),
+    ...(canSeeSubmissions ? [{ type: 'submissions', label: 'Get Involved',     icon: 'inbox',    badge: submissionsCount }] : []),
+    ...(canRoster         ? [{ type: 'roster',      label: 'Roster',           icon: 'roster'    }] : []),
+    ...((checkinEnabled || isManager) ? [{ type: 'checkin', label: checkinEnabled ? 'Check-In' : 'Check-In Settings', icon: 'calendar' }] : []),
+    { type: 'funding',  label: 'Funding',          icon: 'funding'   },
+    { type: 'apply',    label: 'Apply',             icon: 'apply'     },
+    ...(isManager         ? [{ type: 'dashboard',   label: 'Dashboard',        icon: 'dashboard' }] : []),
+    { type: 'org',      label: 'Org Chart',         icon: 'org'       },
+    ...(me.role === 'admin' ? [{ type: 'admin',     label: 'Admin Panel',      icon: 'admin'     }] : []),
+    ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }] : []),
+    ...(me.role === 'admin' ? [{ type: 'ai',        label: 'AI Assistant',     icon: 'ai'        }] : []),
+  ];
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
@@ -3648,12 +3871,14 @@ function App() {
   const [submissionsCount, setSubmissionsCount] = useState(0);
   const [checkinEnabled, setCheckinEnabled] = useState(false);
   const [refreshSignal, setRefreshSignal] = useState(0);
+  const [aiNotesCount, setAiNotesCount] = useState(0);
+  const [aiNotesOpen, setAiNotesOpen] = useState(false);
 
   const isSurveyPath = window.location.pathname === '/survey';
   const bump = () => setRefreshSignal((n) => n + 1);
 
   const loadShared = useCallback(async (user) => {
-    if (!user || user.firstLogin || user.username === 'logistics') return;
+    if (!user || user.firstLogin) return;
     try {
       const [u, r, ci] = await Promise.all([api('/users'), api('/reports'), api('/checkins/settings').catch(() => ({ enabled: false }))]);
       setUsers(u.users);
@@ -3671,6 +3896,8 @@ function App() {
       } else {
         setSubmissionsCount(0);
       }
+      const noteData = await api('/ai/notes').catch(() => ({ notes: [] }));
+      setAiNotesCount((noteData.notes || []).filter((n) => !n.isRead).length);
     } catch (_) {}
   }, []);
 
@@ -3682,7 +3909,6 @@ function App() {
           const d = await api('/me');
           setMe(d.user);
           await loadShared(d.user);
-          if (d.user.username === 'logistics') setView({ type: 'logistics' });
         } catch (_) { localStorage.removeItem(TOKEN_KEY); }
       }
       setBooted(true);
@@ -3701,9 +3927,9 @@ function App() {
   if (!booted) return <div className="min-h-screen flex items-center justify-center text-cream/40">Loading…</div>;
   if (isSurveyPath) return <InterestSurvey onBack={() => { window.history.pushState(null, '', '/'); window.location.reload(); }} />;
   if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;
-  if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); if (u.username === 'logistics') setView({ type: 'logistics' }); }} onBack={() => setEnterPortal(false)} />;
+  if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); }} onBack={() => setEnterPortal(false)} />;
   if (me.firstLogin) return <ChangePassword user={me} forced onDone={(u) => { setMe(u); loadShared(u); }} />;
-  if (!me.profileComplete && me.username !== 'logistics') return <ProfileSetup me={me} forced
+  if (!me.profileComplete) return <ProfileSetup me={me} forced
     onDone={(u) => { setMe(u); loadShared(u); }}
     onSkip={() => setMe({ ...me, profileComplete: true })} />;
 
@@ -3722,7 +3948,7 @@ function App() {
     submissions: 'Get Involved', roster: 'Roster', checkin: 'Weekly Check-In',
     funding: 'Funding Requests', apply: 'Apply for Position', dashboard: 'Dashboard',
     org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity',
-    password: 'Change Password', profile: 'Edit Profile',
+    ai: 'AI Assistant', password: 'Change Password', profile: 'Edit Profile',
   };
 
   let content;
@@ -3742,22 +3968,32 @@ function App() {
   else if (view.type === 'org') content = <OrgChart />;
   else if (view.type === 'admin') content = <AdminPanel users={users} reload={bump} />;
   else if (view.type === 'logistics') content = <LogisticsPage />;
+  else if (view.type === 'ai') content = me.role === 'admin' ? <AIChatPage me={me} /> : null;
   else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;
   else if (view.type === 'profile') content = <ProfileSetup me={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
-      <header className="sticky top-0 z-20 flex items-center gap-3 bg-navy2/95 backdrop-blur border-b border-cream/10 px-4 py-3">
-        <button onClick={() => navigate({ type: 'apphome' })} aria-label="Back to home"
-          className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-cream hover:bg-navy3 transition-colors">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M19 12H5M12 5l-7 7 7 7"/>
-          </svg>
-        </button>
-        <span className="text-cream font-semibold text-base">{PAGE_TITLES[view.type] || ''}</span>
-      </header>
-      <main className={`flex-1 overflow-x-hidden ${view.type === 'home' ? '' : 'p-4 sm:p-6 lg:p-8'}`}>{content}</main>
-    </div>
+    <>
+      {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={() => { setAiNotesOpen(false); bump(); }} />}
+      <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
+        <header className="sticky top-0 z-20 flex items-center gap-3 bg-navy2/95 backdrop-blur border-b border-cream/10 px-4 py-3">
+          <button onClick={() => navigate({ type: 'apphome' })} aria-label="Back to home"
+            className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-cream hover:bg-navy3 transition-colors">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M19 12H5M12 5l-7 7 7 7"/>
+            </svg>
+          </button>
+          <span className="text-cream font-semibold text-base flex-1">{PAGE_TITLES[view.type] || ''}</span>
+          <button onClick={() => setAiNotesOpen(true)} className="relative flex items-center gap-1 text-cream/50 hover:text-gold transition-colors text-xs" aria-label="AI Notes">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            {aiNotesCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-gold text-navy text-[9px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-0.5">{aiNotesCount}</span>
+            )}
+          </button>
+        </header>
+        <main className={`flex-1 overflow-x-hidden ${view.type === 'home' ? '' : 'p-4 sm:p-6 lg:p-8'}`}>{content}</main>
+      </div>
+    </>
   );
 }
 

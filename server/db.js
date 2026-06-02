@@ -178,6 +178,27 @@ function init() {
       loginAt   TEXT NOT NULL DEFAULT (datetime('now')),
       ipAddress TEXT NOT NULL DEFAULT ''
     );
+
+    -- AI-generated private notes for individual board members.
+    CREATE TABLE IF NOT EXISTS ai_notes (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      userId    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      content   TEXT NOT NULL,
+      isRead    INTEGER NOT NULL DEFAULT 0,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Chat history for AI conversations (admin only).
+    CREATE TABLE IF NOT EXISTS ai_chat_messages (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      sessionId TEXT NOT NULL,
+      role      TEXT NOT NULL CHECK (role IN ('user','assistant')),
+      content   TEXT NOT NULL,
+      userId    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_chat_session
+      ON ai_chat_messages(userId, sessionId, createdAt);
   `);
 
   // User column migrations.
@@ -201,6 +222,11 @@ function init() {
     db.exec("ALTER TABLE users ADD COLUMN bigBoard INTEGER NOT NULL DEFAULT 0");
     db.prepare("UPDATE users SET bigBoard = 1 WHERE role = 'admin' OR role = 'manager' OR title = 'Secretary'").run();
   }
+  if (!cols.includes('canViewLogistics')) db.exec("ALTER TABLE users ADD COLUMN canViewLogistics INTEGER NOT NULL DEFAULT 0");
+
+  // Remove the old dedicated logistics observer account — the dashboard is now
+  // accessible to admins directly and via the canViewLogistics permission.
+  db.prepare("DELETE FROM users WHERE username = 'logistics'").run();
 
   // site_settings column migrations.
   const siteCols = db.prepare("PRAGMA table_info(site_settings)").all().map((c) => c.name);

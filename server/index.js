@@ -16,6 +16,7 @@ process.on('uncaughtException', (err) => {
 const { db, init, seed } = require('./db');
 const { fetchUpcoming, clearCache } = require('./calendar');
 const { notify } = require('./email');
+const { analyzeTeamHealth, chatWithAI, aiEnabled } = require('./ai');
 const {
   signToken,
   publicUser,
@@ -155,7 +156,7 @@ app.get('/api/home', async (req, res) => {
 // Public board roster for the "Meet the Board" page (no private info, no auth).
 app.get('/api/board', (req, res) => {
   const members = db
-    .prepare("SELECT id, displayName, title, role, grade, managerId, bio, photo FROM users WHERE username != 'logistics' ORDER BY displayName")
+    .prepare("SELECT id, displayName, title, role, grade, managerId, bio, photo FROM users ORDER BY displayName")
     .all()
     .map((m) => ({ ...m, photo: m.photo || null }));
   res.json({ members });
@@ -354,7 +355,7 @@ app.put('/api/home/announcement', (req, res) => {
 
 // ---- Directory / org --------------------------------------------------------
 app.get('/api/users', (req, res) => {
-  const users = db.prepare("SELECT * FROM users WHERE username != 'logistics' ORDER BY displayName").all().map(publicUser);
+  const users = db.prepare("SELECT * FROM users ORDER BY displayName").all().map(publicUser);
   res.json({ users });
 });
 
@@ -363,7 +364,7 @@ app.get('/api/users', (req, res) => {
 app.get('/api/reports', (req, res) => {
   let reports;
   if (req.user.role === 'admin') {
-    reports = db.prepare("SELECT * FROM users WHERE id != ? AND username != 'logistics' ORDER BY displayName").all(req.user.id);
+    reports = db.prepare("SELECT * FROM users WHERE id != ? ORDER BY displayName").all(req.user.id);
   } else {
     reports = directReports(req.user.id);
   }
@@ -371,7 +372,7 @@ app.get('/api/reports', (req, res) => {
 });
 
 app.get('/api/orgchart', (req, res) => {
-  const users = db.prepare("SELECT * FROM users WHERE username != 'logistics'").all().map(publicUser);
+  const users = db.prepare("SELECT * FROM users").all().map(publicUser);
   res.json({ users });
 });
 
@@ -942,8 +943,17 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
 app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
   const user = getUser(Number(req.params.id));
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { role, title, managerId, grade, email, canManageRoster, managedGrade, canAnnounce, canEditHome, bigBoard } = req.body || {};
+  const { role, title, managerId, grade, email, canManageRoster, managedGrade, canAnnounce, canEditHome, bigBoard, canViewLogistics, username, firstName, lastName } = req.body || {};
   const prevManager = user.managerId;
+
+  // Validate and normalize username if provided.
+  let newUsername = null;
+  if (username !== undefined) {
+    newUsername = String(username).trim().toLowerCase();
+    if (!/^[a-z0-9._-]+$/.test(newUsername)) return res.status(400).json({ error: 'Username may only contain letters, numbers, dots, hyphens, and underscores' });
+    const clash = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(newUsername, user.id);
+    if (clash) return res.status(400).json({ error: 'That username is already taken' });
+  }
 
   const newRole = ROLES.includes(role) ? role : user.role;
   const newManagerId = managerId === undefined ? user.managerId : (managerId || null);
@@ -951,6 +961,13 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
 
   // managedGrade is nullable, so handle it directly (COALESCE can't clear a value).
   const newManagedGrade = managedGrade === undefined ? user.managedGrade : (managedGrade || null);
+
+  // Recompute displayName when first or last name changes.
+  const newFirst = firstName !== undefined ? String(firstName).trim() : null;
+  const newLast  = lastName  !== undefined ? String(lastName).trim()  : null;
+  const newDisplayName = (newFirst !== null || newLast !== null)
+    ? [newFirst ?? user.firstName, newLast ?? user.lastName].filter(Boolean).join(' ')
+    : null;
 
   db.prepare(`UPDATE users SET
     role = ?,
@@ -962,7 +979,12 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     managedGrade    = ?,
     canAnnounce     = COALESCE(?, canAnnounce),
     canEditHome     = COALESCE(?, canEditHome),
-    bigBoard        = COALESCE(?, bigBoard)
+    bigBoard           = COALESCE(?, bigBoard),
+    canViewLogistics   = COALESCE(?, canViewLogistics),
+    username        = COALESCE(?, username),
+    firstName       = COALESCE(?, firstName),
+    lastName        = COALESCE(?, lastName),
+    displayName     = COALESCE(?, displayName)
   WHERE id = ?`).run(
     newRole,
     title ?? null,
@@ -974,6 +996,11 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     canAnnounce !== undefined ? (canAnnounce ? 1 : 0) : null,
     canEditHome !== undefined ? (canEditHome ? 1 : 0) : null,
     bigBoard !== undefined ? (bigBoard ? 1 : 0) : null,
+    canViewLogistics !== undefined ? (canViewLogistics ? 1 : 0) : null,
+    newUsername,
+    newFirst,
+    newLast,
+    newDisplayName,
     user.id,
   );
 
@@ -1004,9 +1031,98 @@ app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
   res.json({ ok: true, defaultPassword: target.username });
 });
 
-// ---- Logistics login tracking (logistics user only) -------------------------
+// ---- AI assistant -----------------------------------------------------------
+
+// GET /api/ai/notes — notes for current user; managers see reports'; admins use ?userId=X
+app.get('/api/ai/notes', (req, res) => {
+  let targetId = req.user.id;
+  if (req.query.userId && req.user.role === 'admin') {
+    targetId = Number(req.query.userId);
+  }
+  const canSee = req.user.id === targetId
+    || req.user.role === 'admin'
+    || isManagerOf(req.user, targetId);
+  if (!canSee) return res.status(403).json({ error: 'Not allowed' });
+  const notes = db.prepare(
+    'SELECT * FROM ai_notes WHERE userId = ? ORDER BY createdAt DESC LIMIT 20'
+  ).all(targetId);
+  res.json({ notes });
+});
+
+// PATCH /api/ai/notes/:id/read — mark a note as read
+app.patch('/api/ai/notes/:id/read', (req, res) => {
+  const note = db.prepare('SELECT * FROM ai_notes WHERE id = ?').get(Number(req.params.id));
+  if (!note) return res.status(404).json({ error: 'Not found' });
+  if (note.userId !== req.user.id && req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Not allowed' });
+  }
+  db.prepare('UPDATE ai_notes SET isRead = 1 WHERE id = ?').run(note.id);
+  res.json({ ok: true });
+});
+
+// DELETE /api/ai/notes/:id — admin only
+app.delete('/api/ai/notes/:id', requireAdmin, (req, res) => {
+  db.prepare('DELETE FROM ai_notes WHERE id = ?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+// POST /api/ai/chat — admin only chat; body: { message, sessionId? }
+app.post('/api/ai/chat', requireAdmin, async (req, res) => {
+  const { message, sessionId } = req.body || {};
+  if (!message || typeof message !== 'string') return res.status(400).json({ error: 'Message required' });
+  const sid = sessionId || `${req.user.id}-${Date.now()}`;
+  db.prepare(
+    'INSERT INTO ai_chat_messages (sessionId, role, content, userId) VALUES (?, ?, ?, ?)'
+  ).run(sid, 'user', message, req.user.id);
+  const history = db.prepare(
+    'SELECT role, content FROM ai_chat_messages WHERE sessionId = ? ORDER BY createdAt ASC LIMIT 40'
+  ).all(sid);
+  try {
+    const reply = await chatWithAI(db, history, req.user.id);
+    db.prepare(
+      'INSERT INTO ai_chat_messages (sessionId, role, content, userId) VALUES (?, ?, ?, ?)'
+    ).run(sid, 'assistant', reply, req.user.id);
+    res.json({ reply, sessionId: sid });
+  } catch (err) {
+    console.error('[AI chat error]', err);
+    res.status(500).json({ error: 'AI request failed' });
+  }
+});
+
+// GET /api/ai/chat/history — admin only; returns most recent session or ?sessionId=...
+app.get('/api/ai/chat/history', requireAdmin, (req, res) => {
+  const { sessionId } = req.query;
+  if (sessionId) {
+    const messages = db.prepare(
+      'SELECT * FROM ai_chat_messages WHERE userId = ? AND sessionId = ? ORDER BY createdAt ASC'
+    ).all(req.user.id, sessionId);
+    return res.json({ messages, sessionId });
+  }
+  const latest = db.prepare(
+    'SELECT sessionId FROM ai_chat_messages WHERE userId = ? ORDER BY createdAt DESC LIMIT 1'
+  ).get(req.user.id);
+  if (!latest) return res.json({ messages: [], sessionId: null });
+  const messages = db.prepare(
+    'SELECT * FROM ai_chat_messages WHERE userId = ? AND sessionId = ? ORDER BY createdAt ASC'
+  ).all(req.user.id, latest.sessionId);
+  res.json({ messages, sessionId: latest.sessionId });
+});
+
+// POST /api/ai/analyze — admin only; manually trigger team health analysis
+app.post('/api/ai/analyze', requireAdmin, async (req, res) => {
+  if (!aiEnabled) return res.json({ ok: true, skipped: true, reason: 'AI not configured' });
+  try {
+    await runAIAnalysis();
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[AI analyze error]', err);
+    res.status(500).json({ error: 'Analysis failed' });
+  }
+});
+
+// ---- Login activity dashboard (admin or canViewLogistics) -------------------
 app.get('/api/logistics/stats', (req, res) => {
-  if (req.user.username !== 'logistics') return res.status(403).json({ error: 'Access denied' });
+  if (req.user.role !== 'admin' && !req.user.canViewLogistics) return res.status(403).json({ error: 'Access denied' });
   const stats = db.prepare(`
     SELECT
       u.id         AS userId,
@@ -1104,3 +1220,27 @@ app.listen(PORT, () => {
   if (seeded) console.log('Seeded database with default Club America accounts.');
   console.log(`Club America Management running at http://localhost:${PORT}`);
 });
+
+async function runAIAnalysis() {
+  if (!aiEnabled) return;
+  console.log('[AI] Running team health analysis…');
+  try {
+    const notes = await analyzeTeamHealth(db);
+    let inserted = 0;
+    for (const { userId, noteContent } of notes) {
+      const recent = db.prepare(
+        "SELECT id FROM ai_notes WHERE userId = ? AND isRead = 0 AND createdAt >= datetime('now', '-6 days')"
+      ).get(userId);
+      if (!recent) {
+        db.prepare('INSERT INTO ai_notes (userId, content) VALUES (?, ?)').run(userId, noteContent);
+        inserted++;
+      }
+    }
+    console.log(`[AI] Analysis complete — ${inserted} new note(s) created.`);
+  } catch (err) {
+    console.error('[AI] Background analysis error:', err);
+  }
+}
+
+setTimeout(runAIAnalysis, 5 * 60 * 1000);
+setInterval(runAIAnalysis, 24 * 60 * 60 * 1000);
