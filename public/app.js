@@ -1127,7 +1127,8 @@ function OrgChart() {
           <OrgNode title="Swag Manager" name="Audrey Fox" tone="slate" />
           <OrgNode title="Digital Presence" name="Dane Hays" tone="red">
             <OrgNode title="Content Editor" name="Jacob Kindt" tone="slate" />
-            <OrgNode title="Historian" name="Sosie Gavin" tone="slate" />
+            <OrgNode title="Historian" name="Gavin Bergen" tone="slate" />
+            <OrgNode title="Historian" name="Sosie Sheffert" tone="slate" />
           </OrgNode>
         </div>
         <div className="w-full mt-6">
