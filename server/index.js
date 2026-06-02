@@ -927,7 +927,7 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
 app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
   const user = getUser(Number(req.params.id));
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { role, title, managerId, grade, email, canManageRoster, managedGrade, canAnnounce, canEditHome } = req.body || {};
+  const { role, title, managerId, grade, email, canManageRoster, managedGrade, canAnnounce, canEditHome, bigBoard } = req.body || {};
   const prevManager = user.managerId;
 
   const newRole = ROLES.includes(role) ? role : user.role;
@@ -946,7 +946,8 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     canManageRoster = COALESCE(?, canManageRoster),
     managedGrade    = ?,
     canAnnounce     = COALESCE(?, canAnnounce),
-    canEditHome     = COALESCE(?, canEditHome)
+    canEditHome     = COALESCE(?, canEditHome),
+    bigBoard        = COALESCE(?, bigBoard)
   WHERE id = ?`).run(
     newRole,
     title ?? null,
@@ -957,6 +958,7 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     newManagedGrade,
     canAnnounce !== undefined ? (canAnnounce ? 1 : 0) : null,
     canEditHome !== undefined ? (canEditHome ? 1 : 0) : null,
+    bigBoard !== undefined ? (bigBoard ? 1 : 0) : null,
     user.id,
   );
 

@@ -1104,6 +1104,36 @@ function OrgNode({ title, name, tone = 'gold', children }) {
 }
 
 function OrgChart() {
+  const [users, setUsers] = useState(null);
+
+  useEffect(() => {
+    api('/orgchart').then((d) => setUsers(d.users)).catch(() => setUsers([]));
+  }, []);
+
+  if (!users) return <div className="text-cream/50 py-10 text-center">Loading…</div>;
+
+  const isGradeRep = (u) => (u.title || '').toLowerCase().includes('grade rep');
+  const gradeReps = users.filter(isGradeRep);
+  const boardMembers = users.filter((u) => !isGradeRep(u));
+
+  const byId = {};
+  boardMembers.forEach((u) => { byId[u.id] = { ...u, children: [] }; });
+  const roots = [];
+  boardMembers.forEach((u) => {
+    if (u.managerId && byId[u.managerId]) byId[u.managerId].children.push(byId[u.id]);
+    else roots.push(byId[u.id]);
+  });
+
+  function renderNode(node) {
+    const tone = node.bigBoard ? 'red' : 'slate';
+    const childNodes = node.children.length > 0 ? node.children.map(renderNode) : null;
+    return (
+      <OrgNode key={node.id} title={node.title || roleLabel(node.role)} name={node.displayName} tone={tone}>
+        {childNodes}
+      </OrgNode>
+    );
+  }
+
   return (
     <div>
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Org Chart</h1>
@@ -1111,38 +1141,28 @@ function OrgChart() {
 
       <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
       <div className="flex flex-col items-center gap-5 pb-10 min-w-max sm:min-w-0 mx-auto">
-        <OrgNode title="President" name="Finley Thomas" tone="red" />
-        <div className="w-px h-5 bg-cream/20" />
-        <OrgNode title="Vice President" name="Derek Eddy" tone="red" />
-        <div className="w-px h-5 bg-cream/20" />
-        <div className="flex flex-wrap justify-center gap-6">
-          <OrgNode title="Chair Public Eng." name="Max Flachsmann" tone="red">
-            <OrgNode title="Public Engagement" name="Ledger Moffat" tone="slate" />
-          </OrgNode>
-          <OrgNode title="CFO" name="Hudson Fossey" tone="red">
-            <OrgNode title="Fundraising & Vol." name="Will Haladin" tone="slate" />
-          </OrgNode>
-          <OrgNode title="Secretary" name="Campbell" tone="red" />
-          <OrgNode title="Hospitality" name="Andrew Perillo" tone="slate" />
-          <OrgNode title="Swag Manager" name="Audrey Fox" tone="slate" />
-          <OrgNode title="Digital Presence" name="Dane Hays" tone="red">
-            <OrgNode title="Content Editor" name="Jacob Kindt" tone="slate" />
-            <OrgNode title="Historian" name="Gavin Bergen" tone="slate" />
-            <OrgNode title="Historian" name="Sosie Sheffert" tone="slate" />
-          </OrgNode>
-        </div>
-        <div className="w-full mt-6">
-          <div className="font-display text-2xl text-gold text-center mb-1">Grade Representatives</div>
-          <div className="text-center text-cream/40 text-xs mb-3 tracking-wide uppercase">On the Board · Grade Reps</div>
-          <div className="flex flex-wrap justify-center gap-3">
-            {['Davis Hughes', 'Liam McNalley', 'Thomas Summers', 'Ben Anderson', 'Nola Neath', 'Ben Hastings'].map((n) => (
-              <div key={n} className="bg-navy2 border-2 border-gold/60 rounded-lg px-4 py-2 text-center min-w-[140px]">
-                <div className="text-xs uppercase tracking-wider text-gold/70 mb-0.5">Grade Rep</div>
-                <div className="text-sm text-cream/90 font-medium">{n}</div>
-              </div>
-            ))}
+        {roots.map((r, i) => (
+          <React.Fragment key={r.id}>
+            {i > 0 && <div className="w-px h-5 bg-cream/20" />}
+            {renderNode(r)}
+          </React.Fragment>
+        ))}
+
+        {gradeReps.length > 0 && (
+          <div className="w-full mt-6">
+            <div className="font-display text-2xl text-gold text-center mb-1">Grade Representatives</div>
+            <div className="text-center text-cream/40 text-xs mb-3 tracking-wide uppercase">On the Board · Grade Reps</div>
+            <div className="flex flex-wrap justify-center gap-3">
+              {gradeReps.map((u) => (
+                <div key={u.id} className="bg-navy2 border-2 border-gold/60 rounded-lg px-4 py-2 text-center min-w-[140px]">
+                  <div className="text-xs uppercase tracking-wider text-gold/70 mb-0.5">Grade Rep</div>
+                  <div className="text-sm text-cream/90 font-medium">{u.displayName}</div>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
+
         <div className="flex flex-wrap justify-center gap-6 text-xs text-cream/40 mt-6 pt-4 border-t border-cream/10">
           <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm border-2 border-red" /> Big Board</span>
           <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm border-2 border-gold/60" /> Grade Representative</span>
@@ -1339,6 +1359,7 @@ function AdminPanel({ users, reload }) {
               <div className="space-y-1.5">
                 <div className="text-cream/50 uppercase tracking-wider mb-1">Permissions</div>
                 {[
+                  { key: 'bigBoard', label: 'Big Board' },
                   { key: 'canManageRoster', label: 'Manage Roster' },
                   { key: 'canAnnounce', label: 'Announce' },
                   { key: 'canEditHome', label: 'Edit Site' },
