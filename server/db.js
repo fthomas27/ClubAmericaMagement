@@ -178,6 +178,27 @@ function init() {
       loginAt   TEXT NOT NULL DEFAULT (datetime('now')),
       ipAddress TEXT NOT NULL DEFAULT ''
     );
+
+    -- AI-generated private notes for individual board members.
+    CREATE TABLE IF NOT EXISTS ai_notes (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      userId    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      content   TEXT NOT NULL,
+      isRead    INTEGER NOT NULL DEFAULT 0,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Chat history for AI conversations (admin only).
+    CREATE TABLE IF NOT EXISTS ai_chat_messages (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      sessionId TEXT NOT NULL,
+      role      TEXT NOT NULL CHECK (role IN ('user','assistant')),
+      content   TEXT NOT NULL,
+      userId    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_chat_session
+      ON ai_chat_messages(userId, sessionId, createdAt);
   `);
 
   // User column migrations.
