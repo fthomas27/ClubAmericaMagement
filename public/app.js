@@ -3763,6 +3763,7 @@ function AppIcon({ name }) {
     case 'admin':     return <svg {...p}><path d="M12 2 3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7Z"/><path d="m9 12 2 2 4-4"/></svg>;
     case 'activity':  return <svg {...p}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>;
     case 'ai':        return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M9.5 15a4.5 4.5 0 0 0 5 0"/></svg>;
+    case 'bell':      return <svg {...p}><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>;
     default:          return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
   }
 }
@@ -3784,7 +3785,7 @@ function AppTile({ label, icon, badge, onClick }) {
   );
 }
 
-function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, onNavigate, onLogout }) {
+function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, aiNotesCount, onAiNotes, onNavigate, onLogout }) {
   const isManager = me.role === 'manager' || me.role === 'admin';
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
   const canSeeSubmissions = me.role === 'admin' || !!me.grade;
@@ -3807,6 +3808,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
     ...(me.role === 'admin' ? [{ type: 'admin',     label: 'Admin Panel',      icon: 'admin'     }] : []),
     ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }] : []),
     ...(me.role === 'admin' ? [{ type: 'ai',        label: 'AI Assistant',     icon: 'ai'        }] : []),
+    { type: 'ainotes',  label: 'Agent Notes',      icon: 'bell',     badge: aiNotesCount || undefined, onClick: onAiNotes },
   ];
 
   return (
@@ -3826,7 +3828,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
       <div className="flex-1 px-4 py-8">
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {tiles.map(t => (
-            <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge} onClick={() => onNavigate({ type: t.type })} />
+            <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge} onClick={t.onClick || (() => onNavigate({ type: t.type }))} />
           ))}
         </div>
       </div>
@@ -3937,8 +3939,12 @@ function App() {
   const navigate = (v) => setView(v);
 
   if (view.type === 'apphome') return (
-    <AppHome me={me} reports={reports} approvalsCount={approvalsCount} submissionsCount={submissionsCount}
-      checkinEnabled={checkinEnabled} onNavigate={navigate} onLogout={logout} />
+    <>
+      {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={() => { setAiNotesOpen(false); bump(); }} />}
+      <AppHome me={me} reports={reports} approvalsCount={approvalsCount} submissionsCount={submissionsCount}
+        checkinEnabled={checkinEnabled} aiNotesCount={aiNotesCount} onAiNotes={() => setAiNotesOpen(true)}
+        onNavigate={navigate} onLogout={logout} />
+    </>
   );
 
   const PAGE_TITLES = {
