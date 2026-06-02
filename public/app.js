@@ -2912,6 +2912,188 @@ function AdminDashboardPage({ me }) {
 // ---------------------------------------------------------------------------
 // Sidebar + Layout
 // ---------------------------------------------------------------------------
+// Logistics login-tracking dashboard (logistics user only)
+// ---------------------------------------------------------------------------
+function LogisticsPage() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [filter, setFilter] = useState('');
+  const [tab, setTab] = useState('members');
+
+  const load = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const d = await api('/logistics/stats');
+      setData(d);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  function fmtDate(dt) {
+    if (!dt) return '—';
+    const d = new Date(dt.includes('T') || dt.includes('Z') ? dt : dt + 'Z');
+    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+
+  if (loading) return <div className="p-8 text-cream/40 text-sm">Loading…</div>;
+  if (error) return <div className="p-8 text-red text-sm">{error}</div>;
+  if (!data) return null;
+
+  const { stats, recentLogins } = data;
+  const totalToday = stats.reduce((s, r) => s + Number(r.todayLogins || 0), 0);
+  const activeToday = stats.filter(r => Number(r.todayLogins) > 0).length;
+  const allTime = stats.reduce((s, r) => s + Number(r.totalLogins || 0), 0);
+  const neverIn = stats.filter(r => !r.lastLogin).length;
+
+  const filtered = filter
+    ? stats.filter(r =>
+        r.displayName.toLowerCase().includes(filter.toLowerCase()) ||
+        r.username.toLowerCase().includes(filter.toLowerCase()))
+    : stats;
+
+  const TabBtn = ({ id, label }) => (
+    <button
+      onClick={() => setTab(id)}
+      className={`text-sm px-4 py-2 border-b-2 transition-colors ${
+        tab === id ? 'border-gold text-gold' : 'border-transparent text-cream/50 hover:text-cream/80'
+      }`}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="p-6 max-w-6xl space-y-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold text-cream">Login Activity Dashboard</h1>
+          <p className="text-cream/45 text-xs mt-0.5">Productivity monitoring — confidential</p>
+        </div>
+        <button
+          onClick={load}
+          className="shrink-0 text-xs text-gold/80 hover:text-gold border border-gold/30 hover:border-gold/60 px-3 py-1.5 rounded transition-colors"
+        >
+          Refresh
+        </button>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[
+          { label: 'Logins Today', value: totalToday, color: 'text-gold' },
+          { label: 'Active Today', value: activeToday, color: 'text-emerald-400' },
+          { label: 'All-Time Logins', value: allTime, color: 'text-sky-400' },
+          { label: 'Never Logged In', value: neverIn, color: neverIn > 0 ? 'text-red' : 'text-cream/40' },
+        ].map(({ label, value, color }) => (
+          <div key={label} className="bg-navy2 rounded-lg p-4 border border-cream/10">
+            <div className={`text-2xl font-bold ${color}`}>{value}</div>
+            <div className="text-cream/50 text-xs mt-0.5">{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-0 border-b border-cream/10">
+        <TabBtn id="members" label={`Members (${stats.length})`} />
+        <TabBtn id="log" label={`Login Log (${recentLogins.length})`} />
+      </div>
+
+      {tab === 'members' && (
+        <div className="space-y-3">
+          <input
+            type="text"
+            placeholder="Search by name or username…"
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            className="w-full max-w-xs bg-navy2 border border-cream/20 rounded px-3 py-1.5 text-cream text-sm placeholder-cream/30 focus:outline-none focus:border-gold/60"
+          />
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
+                  <th className="pb-2 pr-4 font-medium">Member</th>
+                  <th className="pb-2 pr-4 font-medium">Title / Role</th>
+                  <th className="pb-2 pr-4 font-medium text-center">Today</th>
+                  <th className="pb-2 pr-4 font-medium text-center">Total</th>
+                  <th className="pb-2 font-medium">Last Login</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(r => (
+                  <tr key={r.userId} className="border-b border-cream/5 hover:bg-cream/3">
+                    <td className="py-3 pr-4">
+                      <div className="text-cream font-medium text-sm">{r.displayName}</div>
+                      <div className="text-cream/35 text-xs">@{r.username}</div>
+                    </td>
+                    <td className="py-3 pr-4 text-cream/55 text-xs">{r.title || r.role}</td>
+                    <td className="py-3 pr-4 text-center">
+                      {Number(r.todayLogins) > 0
+                        ? <span className="text-emerald-400 font-semibold">{r.todayLogins}</span>
+                        : <span className="text-cream/20">—</span>}
+                    </td>
+                    <td className="py-3 pr-4 text-center">
+                      {Number(r.totalLogins) > 0
+                        ? <span className="text-gold font-semibold">{r.totalLogins}</span>
+                        : <span className="text-cream/20">0</span>}
+                    </td>
+                    <td className="py-3">
+                      {r.lastLogin
+                        ? <span className="text-cream/60 text-xs">{fmtDate(r.lastLogin)}</span>
+                        : <span className="inline-block text-xs text-red/70 bg-red/10 border border-red/20 rounded px-1.5 py-0.5">Never</span>}
+                    </td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr><td colSpan={5} className="py-8 text-center text-cream/25 text-sm">No results.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'log' && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
+                <th className="pb-2 pr-4 font-medium">Time</th>
+                <th className="pb-2 pr-4 font-medium">Member</th>
+                <th className="pb-2 pr-4 font-medium">Title</th>
+                <th className="pb-2 font-medium">IP Address</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentLogins.map(l => (
+                <tr key={l.id} className="border-b border-cream/5 hover:bg-cream/3">
+                  <td className="py-2.5 pr-4 text-cream/55 text-xs whitespace-nowrap">{fmtDate(l.loginAt)}</td>
+                  <td className="py-2.5 pr-4">
+                    <div className="text-cream font-medium">{l.displayName}</div>
+                    <div className="text-cream/35 text-xs">@{l.username}</div>
+                  </td>
+                  <td className="py-2.5 pr-4 text-cream/55 text-xs">{l.title}</td>
+                  <td className="py-2.5 text-cream/35 text-xs font-mono">{l.ipAddress || '—'}</td>
+                </tr>
+              ))}
+              {recentLogins.length === 0 && (
+                <tr><td colSpan={4} className="py-8 text-center text-cream/25 text-sm">No logins recorded yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 function Sidebar({ me, reports, approvalsCount, submissionsCount, checkinEnabled, view, setView, onLogout, open, onClose }) {
   const [reportsOpen, setReportsOpen] = useState(true);
   const isManager = me.role === 'manager' || me.role === 'admin';
@@ -2945,6 +3127,12 @@ function Sidebar({ me, reports, approvalsCount, submissionsCount, checkinEnabled
       </div>
 
       <nav className="flex-1 overflow-y-auto p-3 space-y-1">
+        {me.username === 'logistics' ? (
+          <NavItem active={view.type === 'logistics'} onClick={() => setView({ type: 'logistics' })}>
+            Login Activity
+          </NavItem>
+        ) : (
+          <React.Fragment>
         <NavItem active={view.type === 'home'} onClick={() => setView({ type: 'home' })}>Home</NavItem>
         {canEditSite && (
           <NavItem active={view.type === 'website'} onClick={() => setView({ type: 'website' })}>Edit Website</NavItem>
@@ -3028,6 +3216,8 @@ function Sidebar({ me, reports, approvalsCount, submissionsCount, checkinEnabled
         {me.role === 'admin' && (
           <NavItem active={view.type === 'admin'} onClick={() => setView({ type: 'admin' })}>Admin Panel</NavItem>
         )}
+          </React.Fragment>
+        )}
       </nav>
 
       <div className="p-3 border-t border-cream/10">
@@ -3064,7 +3254,7 @@ function App() {
   const bump = () => setRefreshSignal((n) => n + 1);
 
   const loadShared = useCallback(async (user) => {
-    if (!user || user.firstLogin) return;
+    if (!user || user.firstLogin || user.username === 'logistics') return;
     try {
       const [u, r, ci] = await Promise.all([api('/users'), api('/reports'), api('/checkins/settings').catch(() => ({ enabled: false }))]);
       setUsers(u.users);
@@ -3094,6 +3284,7 @@ function App() {
           const d = await api('/me');
           setMe(d.user);
           await loadShared(d.user);
+          if (d.user.username === 'logistics') setView({ type: 'logistics' });
         } catch (_) { localStorage.removeItem(TOKEN_KEY); }
       }
       setBooted(true);
@@ -3117,10 +3308,10 @@ function App() {
   // Default landing: the public homepage. The portal opens via the login button.
   if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;
 
-  if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); }} onBack={() => setEnterPortal(false)} />;
+  if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); if (u.username === 'logistics') setView({ type: 'logistics' }); }} onBack={() => setEnterPortal(false)} />;
   if (me.firstLogin) return <ChangePassword user={me} forced onDone={(u) => { setMe(u); loadShared(u); }} />;
   // Right after the password step: prompt for a profile photo + intro bio.
-  if (!me.profileComplete) return <ProfileSetup me={me} forced
+  if (!me.profileComplete && me.username !== 'logistics') return <ProfileSetup me={me} forced
     onDone={(u) => { setMe(u); loadShared(u); }}
     onSkip={() => setMe({ ...me, profileComplete: true })} />;
 
@@ -3143,6 +3334,7 @@ function App() {
   else if (view.type === 'dashboard') content = <AdminDashboardPage me={me} />;
   else if (view.type === 'org') content = <OrgChart />;
   else if (view.type === 'admin') content = <AdminPanel users={users} reload={bump} />;
+  else if (view.type === 'logistics') content = <LogisticsPage />;
   else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); setView({ type: 'mytasks' }); }} />;
   else if (view.type === 'profile') content = <ProfileSetup me={me} onDone={(u) => { setMe(u); setView({ type: 'mytasks' }); }} />;
 
