@@ -14,7 +14,7 @@ function buildTeamSnapshot(db) {
   const today = new Date().toISOString().slice(0, 10);
 
   const users = db.prepare(
-    "SELECT id, displayName, title, role, managerId FROM users WHERE username != 'logistics' ORDER BY displayName"
+    "SELECT id, displayName, title, role, managerId FROM users ORDER BY displayName"
   ).all();
 
   const tasks = db.prepare(`
@@ -43,7 +43,19 @@ function buildTeamSnapshot(db) {
     ORDER BY fr.createdAt DESC LIMIT 20
   `).all();
 
-  return { users, tasks, checkins, funding, today };
+  // Login activity: last 30 days per user (count + most recent login).
+  const twoWeeksAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const loginActivity = db.prepare(`
+    SELECT ll.userId, u.displayName AS userName, u.title,
+           COUNT(*) AS loginCount,
+           MAX(ll.loginAt) AS lastLogin
+    FROM login_logs ll JOIN users u ON u.id = ll.userId
+    WHERE ll.loginAt >= ?
+    GROUP BY ll.userId
+    ORDER BY loginCount DESC
+  `).all(twoWeeksAgo);
+
+  return { users, tasks, checkins, funding, loginActivity, today };
 }
 
 async function analyzeTeamHealth(db) {
@@ -100,7 +112,7 @@ If nobody needs a note, return: []`;
 
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-haiku-4-5',
       max_tokens: 1024,
       system: 'You are a private productivity assistant for a high school club board. Identify members needing a check-in and write short, encouraging private notes. Return ONLY valid JSON arrays, never prose or markdown.',
       messages: [{ role: 'user', content: prompt }],
@@ -126,7 +138,7 @@ async function chatWithAI(db, conversationHistory, userId) {
 
   const systemPrompt = `You are an AI assistant for the Club America board leadership at Park City High School. Today's date is ${snapshot.today}.
 
-You have access to the full board management data below. Use it to answer questions accurately, naming real people and tasks when relevant. Be concise and focused on the club's management needs.
+You have access to the full board management data below, including login activity for the last 30 days. Use it to answer questions accurately, naming real people and tasks when relevant. Be concise and focused on the club's management needs.
 
 DATA SNAPSHOT:
 ${JSON.stringify(snapshot, null, 2)}`;

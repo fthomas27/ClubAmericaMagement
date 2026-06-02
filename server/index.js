@@ -156,7 +156,7 @@ app.get('/api/home', async (req, res) => {
 // Public board roster for the "Meet the Board" page (no private info, no auth).
 app.get('/api/board', (req, res) => {
   const members = db
-    .prepare("SELECT id, displayName, title, role, grade, managerId, bio, photo FROM users WHERE username != 'logistics' ORDER BY displayName")
+    .prepare("SELECT id, displayName, title, role, grade, managerId, bio, photo FROM users ORDER BY displayName")
     .all()
     .map((m) => ({ ...m, photo: m.photo || null }));
   res.json({ members });
@@ -355,7 +355,7 @@ app.put('/api/home/announcement', (req, res) => {
 
 // ---- Directory / org --------------------------------------------------------
 app.get('/api/users', (req, res) => {
-  const users = db.prepare("SELECT * FROM users WHERE username != 'logistics' ORDER BY displayName").all().map(publicUser);
+  const users = db.prepare("SELECT * FROM users ORDER BY displayName").all().map(publicUser);
   res.json({ users });
 });
 
@@ -364,7 +364,7 @@ app.get('/api/users', (req, res) => {
 app.get('/api/reports', (req, res) => {
   let reports;
   if (req.user.role === 'admin') {
-    reports = db.prepare("SELECT * FROM users WHERE id != ? AND username != 'logistics' ORDER BY displayName").all(req.user.id);
+    reports = db.prepare("SELECT * FROM users WHERE id != ? ORDER BY displayName").all(req.user.id);
   } else {
     reports = directReports(req.user.id);
   }
@@ -372,7 +372,7 @@ app.get('/api/reports', (req, res) => {
 });
 
 app.get('/api/orgchart', (req, res) => {
-  const users = db.prepare("SELECT * FROM users WHERE username != 'logistics'").all().map(publicUser);
+  const users = db.prepare("SELECT * FROM users").all().map(publicUser);
   res.json({ users });
 });
 
@@ -943,7 +943,7 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
 app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
   const user = getUser(Number(req.params.id));
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { role, title, managerId, grade, email, canManageRoster, managedGrade, canAnnounce, canEditHome, bigBoard, username, firstName, lastName } = req.body || {};
+  const { role, title, managerId, grade, email, canManageRoster, managedGrade, canAnnounce, canEditHome, bigBoard, canViewLogistics, username, firstName, lastName } = req.body || {};
   const prevManager = user.managerId;
 
   // Validate and normalize username if provided.
@@ -979,7 +979,8 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     managedGrade    = ?,
     canAnnounce     = COALESCE(?, canAnnounce),
     canEditHome     = COALESCE(?, canEditHome),
-    bigBoard        = COALESCE(?, bigBoard),
+    bigBoard           = COALESCE(?, bigBoard),
+    canViewLogistics   = COALESCE(?, canViewLogistics),
     username        = COALESCE(?, username),
     firstName       = COALESCE(?, firstName),
     lastName        = COALESCE(?, lastName),
@@ -995,6 +996,7 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     canAnnounce !== undefined ? (canAnnounce ? 1 : 0) : null,
     canEditHome !== undefined ? (canEditHome ? 1 : 0) : null,
     bigBoard !== undefined ? (bigBoard ? 1 : 0) : null,
+    canViewLogistics !== undefined ? (canViewLogistics ? 1 : 0) : null,
     newUsername,
     newFirst,
     newLast,
@@ -1118,9 +1120,9 @@ app.post('/api/ai/analyze', requireAdmin, async (req, res) => {
   }
 });
 
-// ---- Logistics login tracking (logistics user only) -------------------------
+// ---- Login activity dashboard (admin or canViewLogistics) -------------------
 app.get('/api/logistics/stats', (req, res) => {
-  if (req.user.username !== 'logistics') return res.status(403).json({ error: 'Access denied' });
+  if (req.user.role !== 'admin' && !req.user.canViewLogistics) return res.status(403).json({ error: 'Access denied' });
   const stats = db.prepare(`
     SELECT
       u.id         AS userId,
