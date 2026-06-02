@@ -205,6 +205,15 @@ app.post('/api/roster/survey', (req, res) => {
   res.status(201).json({ ok: true, id: info.lastInsertRowid });
 });
 
+// Public click tracking — no auth required (visitors haven't logged in).
+app.post('/api/track', (req, res) => {
+  const { event, label } = req.body || {};
+  if (!event || typeof event !== 'string') return res.status(400).json({ error: 'event required' });
+  db.prepare('INSERT INTO page_events (event, label) VALUES (?, ?)')
+    .run(String(event).slice(0, 80), String(label || '').slice(0, 200));
+  res.json({ ok: true });
+});
+
 // Everything past this point requires a changed password.
 app.use('/api', authenticate, requirePasswordChanged);
 
@@ -1006,6 +1015,17 @@ app.get('/api/logistics/stats', (req, res) => {
     ORDER BY l.loginAt DESC
     LIMIT 200
   `).all();
+  const engagementSummary = db.prepare(`
+    SELECT event, label, COUNT(*) AS count,
+           MAX(loggedAt) AS lastSeen,
+           SUM(CASE WHEN date(loggedAt) = date('now') THEN 1 ELSE 0 END) AS todayCount
+    FROM page_events
+    GROUP BY event, label
+    ORDER BY count DESC
+  `).all();
+  const recentEvents = db.prepare(
+    'SELECT id, event, label, loggedAt FROM page_events ORDER BY loggedAt DESC LIMIT 300'
+  ).all();
   const totalMembers = db.prepare("SELECT COUNT(*) AS n FROM roster_members WHERE status = 'Onboarded'").get().n;
   const genderBreakdown = db.prepare(`
     SELECT
@@ -1025,7 +1045,7 @@ app.get('/api/logistics/stats', (req, res) => {
     GROUP BY label
     ORDER BY CAST(label AS INTEGER) ASC, label ASC
   `).all();
-  res.json({ stats, recentLogins, demographics: { totalMembers, genderBreakdown, gradeBreakdown } });
+  res.json({ stats, recentLogins, demographics: { totalMembers, genderBreakdown, gradeBreakdown }, engagementSummary, recentEvents });
 });
 
 // ---- Static frontend --------------------------------------------------------

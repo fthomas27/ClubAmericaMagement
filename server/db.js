@@ -162,6 +162,14 @@ function init() {
       createdAt     TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    -- Public click / engagement tracking.
+    CREATE TABLE IF NOT EXISTS page_events (
+      id       INTEGER PRIMARY KEY AUTOINCREMENT,
+      event    TEXT NOT NULL,
+      label    TEXT NOT NULL DEFAULT '',
+      loggedAt TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     -- Login event log for productivity tracking (logistics view only).
     CREATE TABLE IF NOT EXISTS login_logs (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,

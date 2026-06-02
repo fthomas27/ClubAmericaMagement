@@ -26,6 +26,15 @@ async function api(path, { method = 'GET', body } = {}) {
   return data;
 }
 
+// Fire-and-forget click tracking — never blocks the UI.
+function track(event, label = '') {
+  fetch('/api/track', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event, label }),
+  }).catch(() => {});
+}
+
 // ---------------------------------------------------------------------------
 // Small UI primitives
 // ---------------------------------------------------------------------------
@@ -1450,6 +1459,7 @@ function PodcastCard({ home }) {
           </div>
           {home.podcastUrl && (
             <a href={home.podcastUrl} target="_blank" rel="noopener"
+              onClick={() => track('podcast_watch', home.podcastUrl)}
               className="mt-4 inline-block bg-gold hover:bg-gold/85 text-navy font-semibold text-sm px-4 py-2 rounded-md transition-colors">
               ▶ Watch on YouTube
             </a>
@@ -1752,7 +1762,7 @@ function MeetTheBoard() {
   const tree = buildBoardTree(members);
   const renderNode = (node) => (
     <div key={node.id} className="flex flex-col items-center">
-      <button onClick={() => setSel(node)}
+      <button onClick={() => { setSel(node); track('board_profile', node.displayName); }}
         className="bg-navy2 border border-cream/15 rounded-xl px-4 py-3 flex flex-col items-center gap-2 w-36 hover:border-gold transition-colors">
         <Avatar member={node} size={56} />
         <div className="text-cream text-sm font-medium text-center leading-tight">{node.displayName}</div>
@@ -2946,7 +2956,7 @@ function LogisticsPage() {
   if (error) return <div className="p-8 text-red text-sm">{error}</div>;
   if (!data) return null;
 
-  const { stats, recentLogins, demographics } = data;
+  const { stats, recentLogins, demographics, engagementSummary = [], recentEvents = [] } = data;
   const totalToday = stats.reduce((s, r) => s + Number(r.todayLogins || 0), 0);
   const activeToday = stats.filter(r => Number(r.todayLogins) > 0).length;
   const allTime = stats.reduce((s, r) => s + Number(r.totalLogins || 0), 0);
@@ -3004,6 +3014,7 @@ function LogisticsPage() {
         <TabBtn id="members" label={`Members (${stats.length})`} />
         <TabBtn id="log" label={`Login Log (${recentLogins.length})`} />
         <TabBtn id="demographics" label="Club Breakdown" />
+        <TabBtn id="engagement" label="Site Engagement" />
       </div>
 
       {tab === 'members' && (
@@ -3090,6 +3101,93 @@ function LogisticsPage() {
           </table>
         </div>
       )}
+
+      {tab === 'engagement' && (() => {
+        const totalClicks = engagementSummary.reduce((s, r) => s + r.count, 0);
+        const todayClicks = engagementSummary.reduce((s, r) => s + (r.todayCount || 0), 0);
+
+        const podcastRows = engagementSummary.filter(r => r.event === 'podcast_watch');
+        const podcastTotal = podcastRows.reduce((s, r) => s + r.count, 0);
+
+        const boardRows = engagementSummary.filter(r => r.event === 'board_profile')
+          .sort((a, b) => b.count - a.count);
+        const boardMax = boardRows[0]?.count || 1;
+
+        const eventLabel = (e) => e === 'podcast_watch' ? '▶ Podcast' : e === 'board_profile' ? '👤 Profile' : e;
+
+        return (
+          <div className="space-y-8 max-w-2xl">
+            {/* Summary */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: 'Total Clicks', value: totalClicks, color: 'text-gold' },
+                { label: 'Today', value: todayClicks, color: 'text-emerald-400' },
+                { label: 'Podcast Clicks', value: podcastTotal, color: 'text-sky-400' },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="bg-navy2 rounded-lg p-4 border border-cream/10">
+                  <div className={`text-2xl font-bold ${color}`}>{value}</div>
+                  <div className="text-cream/50 text-xs mt-0.5">{label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Board profiles */}
+            <div>
+              <div className="text-cream/60 text-sm font-medium mb-3">Board Profile Views</div>
+              {boardRows.length === 0 ? (
+                <div className="text-cream/25 text-sm">No profile clicks recorded yet.</div>
+              ) : (
+                <div className="space-y-2.5">
+                  {boardRows.map(r => {
+                    const pct = Math.round((r.count / boardMax) * 100);
+                    return (
+                      <div key={r.label}>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-cream/70">{r.label}</span>
+                          <span className="text-cream/50">{r.count} click{r.count !== 1 ? 's' : ''} <span className="text-cream/30">· today: {r.todayCount || 0}</span></span>
+                        </div>
+                        <div className="h-2 bg-navy rounded-full overflow-hidden">
+                          <div className="h-full rounded-full bg-gold transition-all" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Recent event log */}
+            <div>
+              <div className="text-cream/60 text-sm font-medium mb-3">Recent Clicks</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
+                      <th className="pb-2 pr-4 font-medium">Time</th>
+                      <th className="pb-2 pr-4 font-medium">Event</th>
+                      <th className="pb-2 font-medium">Detail</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recentEvents.map(e => (
+                      <tr key={e.id} className="border-b border-cream/5 hover:bg-cream/3">
+                        <td className="py-2 pr-4 text-cream/45 text-xs whitespace-nowrap">{fmtDate(e.loggedAt)}</td>
+                        <td className="py-2 pr-4 text-xs">
+                          <span className="inline-block bg-navy2 border border-cream/15 rounded px-1.5 py-0.5 text-cream/70">{eventLabel(e.event)}</span>
+                        </td>
+                        <td className="py-2 text-cream/55 text-xs max-w-xs truncate">{e.label || '—'}</td>
+                      </tr>
+                    ))}
+                    {recentEvents.length === 0 && (
+                      <tr><td colSpan={3} className="py-8 text-center text-cream/25 text-sm">No clicks recorded yet.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {tab === 'demographics' && (() => {
         const { totalMembers, genderBreakdown, gradeBreakdown } = demographics || {};
