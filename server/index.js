@@ -131,8 +131,17 @@ app.get('/api/me', authenticate, (req, res) => {
 
 // ---- Public homepage content (no auth) --------------------------------------
 function getHome() {
-  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, aboutText, homeAnnouncement, homeAnnouncementEnabled, updatedAt FROM site_settings WHERE id = 1').get();
-  return { ...row, podcastEnabled: !!row.podcastEnabled, homeAnnouncementEnabled: !!row.homeAnnouncementEnabled };
+  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, aboutText, homeAnnouncement, homeAnnouncementEnabled, announcementPostedAt, updatedAt FROM site_settings WHERE id = 1').get();
+  // Auto-expire the announcement after 7 days.
+  let announcementEnabled = !!row.homeAnnouncementEnabled;
+  if (announcementEnabled && row.announcementPostedAt) {
+    const ageMs = Date.now() - new Date(row.announcementPostedAt + 'Z').getTime();
+    if (ageMs > 7 * 24 * 60 * 60 * 1000) {
+      announcementEnabled = false;
+      db.prepare("UPDATE site_settings SET homeAnnouncementEnabled = 0 WHERE id = 1").run();
+    }
+  }
+  return { ...row, podcastEnabled: !!row.podcastEnabled, homeAnnouncementEnabled: announcementEnabled };
 }
 app.get('/api/home', async (req, res) => {
   const home = getHome();
@@ -313,8 +322,9 @@ app.put('/api/home/announcement', (req, res) => {
   db.prepare(`UPDATE site_settings SET
     homeAnnouncement = ?,
     homeAnnouncementEnabled = ?,
+    announcementPostedAt = CASE WHEN ? != '' THEN datetime('now') ELSE announcementPostedAt END,
     updatedAt = datetime('now')
-  WHERE id = 1`).run(text, text ? 1 : 0);
+  WHERE id = 1`).run(text, text ? 1 : 0, text);
   res.json({ home: getHome() });
 });
 
