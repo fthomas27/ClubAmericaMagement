@@ -95,6 +95,122 @@ const inputCls =
   'w-full bg-navy border border-cream/20 rounded-md px-3 py-2 text-cream placeholder-cream/30 focus:outline-none focus:border-gold';
 
 // ---------------------------------------------------------------------------
+// Shared UX primitives: loading, empty states, confirmation, retry, CSV export
+// ---------------------------------------------------------------------------
+function Spinner({ className = 'w-4 h-4' }) {
+  return (
+    <svg className={`animate-spin ${className}`} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    </svg>
+  );
+}
+
+// Full-section loading placeholder.
+function Loading({ label = 'Loading…' }) {
+  return (
+    <div className="flex items-center justify-center gap-2 py-10 text-cream/50 text-sm">
+      <Spinner /> {label}
+    </div>
+  );
+}
+
+// Friendly empty state with an optional call-to-action.
+function EmptyState({ icon = '📭', title, hint, action, className = '' }) {
+  return (
+    <div className={`text-center py-10 px-4 border border-dashed border-cream/15 rounded-lg ${className}`}>
+      <div className="text-3xl mb-2 opacity-70">{icon}</div>
+      {title && <div className="text-cream/80 font-medium">{title}</div>}
+      {hint && <div className="text-sm text-cream/50 mt-1 max-w-md mx-auto">{hint}</div>}
+      {action && <div className="mt-4 flex justify-center">{action}</div>}
+    </div>
+  );
+}
+
+// Error state with a Retry button, for failed loads.
+function ErrorState({ message = 'Something went wrong.', onRetry }) {
+  return (
+    <div className="text-center py-8 px-4 border border-dashed border-red/30 rounded-lg">
+      <div className="text-2xl mb-2">⚠️</div>
+      <div className="text-cream/80 text-sm">{message}</div>
+      {onRetry && <div className="mt-4 flex justify-center"><Button variant="ghost" onClick={onRetry}>Try again</Button></div>}
+    </div>
+  );
+}
+
+// Confirmation dialog component + a promise-based hook so any handler can do:
+//   const [confirmEl, confirm] = useConfirm();
+//   if (await confirm({ message: '…', danger: true })) { … }
+function ConfirmDialog({ title = 'Are you sure?', message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false, onConfirm, onCancel }) {
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onCancel}>
+      <div className="bg-navy2 border border-cream/15 rounded-xl p-5 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+        <div className="font-display text-lg text-gold mb-1">{title}</div>
+        {message && <p className="text-sm text-cream/70 mb-4 whitespace-pre-wrap">{message}</p>}
+        <div className="flex gap-2 justify-end">
+          <Button variant="ghost" onClick={onCancel}>{cancelLabel}</Button>
+          <Button variant={danger ? 'danger' : 'gold'} onClick={onConfirm}>{confirmLabel}</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function useConfirm() {
+  const [state, setState] = useState(null);
+  const confirm = useCallback((opts) => new Promise((resolve) => {
+    setState({ opts: typeof opts === 'string' ? { message: opts } : (opts || {}), resolve });
+  }), []);
+  const finish = (val) => { setState((s) => { if (s) s.resolve(val); return null; }); };
+  const el = state ? (
+    <ConfirmDialog {...state.opts} onConfirm={() => finish(true)} onCancel={() => finish(false)} />
+  ) : null;
+  return [el, confirm];
+}
+
+// Runs an async action while tracking loading + error — ideal for buttons/forms.
+function useAction() {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const run = useCallback(async (fn) => {
+    setLoading(true); setError('');
+    try { return await fn(); }
+    catch (e) { setError((e && e.message) || 'Something went wrong'); throw e; }
+    finally { setLoading(false); }
+  }, []);
+  return { loading, error, setError, run };
+}
+
+// Relative time for notifications etc. SQLite stores UTC as "YYYY-MM-DD HH:MM:SS".
+function timeAgo(iso) {
+  if (!iso) return '';
+  const norm = iso.includes('T') ? iso : iso.replace(' ', 'T');
+  const d = new Date(norm + (norm.endsWith('Z') ? '' : 'Z'));
+  const secs = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (secs < 60) return 'just now';
+  const mins = Math.floor(secs / 60); if (mins < 60) return mins + 'm ago';
+  const hrs = Math.floor(mins / 60); if (hrs < 24) return hrs + 'h ago';
+  const days = Math.floor(hrs / 24); if (days < 7) return days + 'd ago';
+  return d.toLocaleDateString();
+}
+
+// Trigger a client-side CSV download from an array of plain objects.
+function downloadCSV(filename, rows) {
+  if (!rows || !rows.length) return;
+  const headers = Object.keys(rows[0]);
+  const esc = (v) => {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const csv = [headers.join(','), ...rows.map((r) => headers.map((h) => esc(r[h])).join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ---------------------------------------------------------------------------
 // Logo
 // Drop your official artwork at public/logo.png and it shows automatically,
 // overriding everything below. Until that file exists, we render a faithful
@@ -416,7 +532,13 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
     const f = e.target.files && e.target.files[0];
     e.target.value = '';
     if (!f) return;
-    if (!f.type.startsWith('image/')) { setError('Please choose an image file.'); return; }
+    if (!f.type.startsWith('image/')) { setError('Please choose an image file (JPG, PNG, or WebP).'); return; }
+    // Reject oversized files up front, before showing the crop UI.
+    const MAX_MB = 10;
+    if (f.size > MAX_MB * 1024 * 1024) {
+      setError(`That image is ${(f.size / (1024 * 1024)).toFixed(1)} MB — please choose one under ${MAX_MB} MB.`);
+      return;
+    }
     setError('');
     const reader = new FileReader();
     reader.onload = (ev) => { setRawSrc(ev.target.result); setCropping(true); };
@@ -541,16 +663,17 @@ function NewTaskForm({ targetUserId, onCreated }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState('');
-  const [error, setError] = useState('');
+  const { loading, error, setError, run } = useAction();
 
   async function submit(e) {
     e.preventDefault();
-    setError('');
+    if (!name.trim()) { setError('Please enter a task name.'); return; }
+    if (dueDate && dueDate < new Date().toISOString().slice(0, 10)) { setError('Due date can’t be in the past.'); return; }
     try {
-      await api('/tasks', { method: 'POST', body: { name, description, dueDate: dueDate || null, targetUserId } });
+      await run(() => api('/tasks', { method: 'POST', body: { name: name.trim(), description: description.trim(), dueDate: dueDate || null, targetUserId } }));
       setName(''); setDescription(''); setDueDate(''); setOpen(false);
       onCreated();
-    } catch (err) { setError(err.message); }
+    } catch (_) {}
   }
 
   if (!open) return <Button variant="ghost" onClick={() => setOpen(true)}>+ New Task</Button>;
@@ -561,8 +684,8 @@ function NewTaskForm({ targetUserId, onCreated }) {
       <Field label="Due Date"><input type="date" className={inputCls} value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field>
       {error && <div className="text-red text-sm">{error}</div>}
       <div className="flex gap-2">
-        <Button type="submit" variant="gold">Create</Button>
-        <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+        <Button type="submit" variant="gold" disabled={loading || !name.trim()}>{loading ? <span className="flex items-center gap-2"><Spinner /> Creating…</span> : 'Create'}</Button>
+        <Button variant="ghost" onClick={() => setOpen(false)} disabled={loading}>Cancel</Button>
       </div>
     </form>
   );
@@ -574,22 +697,25 @@ function AssignTaskForm({ me, users, onCreated }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState('');
-  const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
+  const { loading, error, setError, run } = useAction();
 
   const others = users.filter((u) => u.id !== me.id);
 
   async function submit(e) {
     e.preventDefault();
-    setError(''); setMsg('');
+    setMsg('');
+    if (!targetUserId) { setError('Please choose who to send this to.'); return; }
+    if (!name.trim()) { setError('Please enter a task name.'); return; }
+    if (dueDate && dueDate < new Date().toISOString().slice(0, 10)) { setError('Due date can’t be in the past.'); return; }
     try {
-      const data = await api('/tasks', { method: 'POST', body: { name, description, dueDate: dueDate || null, targetUserId: Number(targetUserId) } });
+      const data = await run(() => api('/tasks', { method: 'POST', body: { name: name.trim(), description: description.trim(), dueDate: dueDate || null, targetUserId: Number(targetUserId) } }));
       setName(''); setDescription(''); setDueDate(''); setTargetUserId('');
       setMsg(data.task.approvalStatus === 'pending'
         ? 'Sent — awaiting manager approval.'
         : 'Task assigned.');
       onCreated();
-    } catch (err) { setError(err.message); }
+    } catch (_) {}
   }
 
   if (!open) return <Button variant="ghost" onClick={() => setOpen(true)}>↗ Send Task to Someone</Button>;
@@ -597,20 +723,20 @@ function AssignTaskForm({ me, users, onCreated }) {
     <form onSubmit={submit} className="bg-navy2 border border-cream/15 rounded-lg p-4 space-y-3">
       <div className="font-display text-xl text-gold">Send a Task</div>
       <Field label="To">
-        <select className={inputCls} value={targetUserId} onChange={(e) => setTargetUserId(e.target.value)} required>
+        <select className={inputCls} value={targetUserId} onChange={(e) => setTargetUserId(e.target.value)}>
           <option value="">Select a board member…</option>
           {others.map((u) => <option key={u.id} value={u.id}>{u.displayName} — {u.title || roleLabel(u.role)}</option>)}
         </select>
       </Field>
-      <Field label="Task Name"><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} required /></Field>
+      <Field label="Task Name"><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} /></Field>
       <Field label="Description"><textarea className={inputCls} rows="2" value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
       <Field label="Due Date"><input type="date" className={inputCls} value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field>
       {me.role !== 'admin' && <p className="text-xs text-cream/40">Tasks you send are held until the recipient's manager approves them.</p>}
       {error && <div className="text-red text-sm">{error}</div>}
       {msg && <div className="text-emerald-300 text-sm">{msg}</div>}
       <div className="flex gap-2">
-        <Button type="submit" variant="gold">Send</Button>
-        <Button variant="ghost" onClick={() => { setOpen(false); setMsg(''); }}>Close</Button>
+        <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner /> Sending…</span> : 'Send'}</Button>
+        <Button variant="ghost" onClick={() => { setOpen(false); setMsg(''); setError(''); }} disabled={loading}>Close</Button>
       </div>
     </form>
   );
@@ -1022,10 +1148,12 @@ function TaskPage({ me, userId, users, refreshSignal }) {
   const [error, setError] = useState('');
   const [pageSettings, setPageSettings] = useState(null);
   const [teamAnnouncements, setTeamAnnouncements] = useState([]);
+  const [confirmEl, confirm] = useConfirm();
   const isSelf = userId === me.id;
   const canManagePage = !isSelf && (me.role === 'admin' || me.role === 'manager');
 
   const load = useCallback(async () => {
+    setError('');
     try {
       const [taskData, settingsData, annData] = await Promise.all([
         api(`/users/${userId}/tasks`),
@@ -1041,13 +1169,17 @@ function TaskPage({ me, userId, users, refreshSignal }) {
   useEffect(() => { load(); }, [load, refreshSignal]);
 
   async function changeTask(task, patch) {
-    await api(`/tasks/${task.id}`, { method: 'PATCH', body: patch });
-    load();
+    try {
+      await api(`/tasks/${task.id}`, { method: 'PATCH', body: patch });
+      load();
+    } catch (err) { setError(err.message); }
   }
   async function deleteTask(task) {
-    if (!confirm('Delete this task?')) return;
-    await api(`/tasks/${task.id}`, { method: 'DELETE' });
-    load();
+    if (!(await confirm({ title: 'Delete task?', message: `“${task.name}” will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return;
+    try {
+      await api(`/tasks/${task.id}`, { method: 'DELETE' });
+      load();
+    } catch (err) { setError(err.message); }
   }
 
   function reloadSettings(newSettings) {
@@ -1060,8 +1192,8 @@ function TaskPage({ me, userId, users, refreshSignal }) {
     }
   }
 
-  if (error) return <div className="text-red">{error}</div>;
-  if (!data) return <div className="text-cream/50">Loading…</div>;
+  if (error && !data) return <ErrorState message={error} onRetry={load} />;
+  if (!data) return <Loading label="Loading page…" />;
 
   const { user, tasks } = data;
   const ps = pageSettings || {};
@@ -1073,6 +1205,13 @@ function TaskPage({ me, userId, users, refreshSignal }) {
 
   return (
     <div className="max-w-5xl">
+      {confirmEl}
+      {error && (
+        <div className="mb-4 flex items-center justify-between gap-3 bg-red/10 border border-red/30 rounded-md px-3 py-2 text-sm text-red">
+          <span>{error}</span>
+          <button className="text-red/70 hover:text-red" onClick={() => setError('')}>✕</button>
+        </div>
+      )}
       <div className="flex items-end justify-between mb-6 flex-wrap gap-2">
         <div>
           <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">
@@ -1098,9 +1237,15 @@ function TaskPage({ me, userId, users, refreshSignal }) {
         {isSelf && <AssignTaskForm me={me} users={users} onCreated={load} />}
       </div>
 
-      {tasks.length === 0 && <div className="text-cream/40">No tasks yet.</div>}
+      {tasks.length === 0 && (
+        <EmptyState
+          icon="✅"
+          title={isSelf ? 'No tasks yet' : `${user.displayName.split(' ')[0]} has no tasks yet`}
+          hint={isSelf ? 'Use “+ New Task” above to add your first one, or send a task to a teammate.' : 'Use “+ New Task” above to assign them something to work on.'}
+        />
+      )}
 
-      <div className="grid md:grid-cols-3 gap-4">
+      {tasks.length > 0 && <div className="grid md:grid-cols-3 gap-4">
         {['Not Started', 'In Progress', 'Complete'].map((col) => (
           <div key={col}>
             <div className="font-display text-xl text-gold mb-2">{col} <span className="text-cream/30 text-base">({grouped[col].length})</span></div>
@@ -1111,7 +1256,7 @@ function TaskPage({ me, userId, users, refreshSignal }) {
             </div>
           </div>
         ))}
-      </div>
+      </div>}
 
       {isSelf && (
         <div className="mt-10">
@@ -1126,25 +1271,37 @@ function TaskPage({ me, userId, users, refreshSignal }) {
 // Pending Approvals
 // ---------------------------------------------------------------------------
 function Approvals({ onChanged, refreshSignal }) {
-  const [items, setItems] = useState([]);
+  const [items, setItems] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(null); // `${id}:${action}`
   const load = useCallback(async () => {
-    const d = await api('/approvals');
-    setItems(d.approvals);
+    setError('');
+    try { const d = await api('/approvals'); setItems(d.approvals); }
+    catch (err) { setError(err.message); }
   }, []);
   useEffect(() => { load(); }, [load, refreshSignal]);
 
   async function act(task, action) {
-    await api(`/tasks/${task.id}/${action}`, { method: 'POST' });
-    await load();
-    onChanged && onChanged();
+    setBusy(`${task.id}:${action}`);
+    setError('');
+    try {
+      await api(`/tasks/${task.id}/${action}`, { method: 'POST' });
+      await load();
+      onChanged && onChanged();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(null); }
   }
 
   return (
     <div className="max-w-3xl">
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-6">Pending Approvals</h1>
-      {items.length === 0 && <div className="text-cream/40">Nothing waiting on you. 🎉</div>}
+      {error && <div className="mb-4"><ErrorState message={error} onRetry={load} /></div>}
+      {items === null && !error && <Loading label="Loading approvals…" />}
+      {items !== null && items.length === 0 && (
+        <EmptyState icon="🎉" title="You're all caught up" hint="Tasks waiting for your approval will show up here." />
+      )}
       <div className="space-y-3">
-        {items.map((t) => (
+        {(items || []).map((t) => (
           <div key={t.id} className="bg-navy2 border border-gold/30 rounded-lg p-4">
             <div className="font-medium text-cream">{t.name}</div>
             {t.description && <div className="text-sm text-cream/60 mt-1">{t.description}</div>}
@@ -1153,8 +1310,8 @@ function Approvals({ onChanged, refreshSignal }) {
               {t.dueDate && <> · due {t.dueDate}</>}
             </div>
             <div className="flex gap-2 mt-3">
-              <Button variant="gold" onClick={() => act(t, 'approve')}>Approve</Button>
-              <Button variant="danger" onClick={() => act(t, 'reject')}>Reject</Button>
+              <Button variant="gold" disabled={!!busy} onClick={() => act(t, 'approve')}>{busy === `${t.id}:approve` ? <span className="flex items-center gap-2"><Spinner /> Approving…</span> : 'Approve'}</Button>
+              <Button variant="danger" disabled={!!busy} onClick={() => act(t, 'reject')}>{busy === `${t.id}:reject` ? 'Rejecting…' : 'Reject'}</Button>
             </div>
           </div>
         ))}
@@ -1165,32 +1322,44 @@ function Approvals({ onChanged, refreshSignal }) {
 
 // "Get Involved" inbox — club-join + board-application submissions routed here.
 function SubmissionsInbox({ onChanged, refreshSignal }) {
-  const [items, setItems] = useState([]);
+  const [items, setItems] = useState(null);
+  const [error, setError] = useState('');
+  const [confirmEl, confirm] = useConfirm();
   const load = useCallback(async () => {
-    const d = await api('/submissions');
-    setItems(d.submissions);
+    setError('');
+    try { const d = await api('/submissions'); setItems(d.submissions); }
+    catch (err) { setError(err.message); }
   }, []);
   useEffect(() => { load(); }, [load, refreshSignal]);
 
   async function toggle(s) {
-    await api(`/submissions/${s.id}/handled`, { method: 'POST' });
-    await load();
-    onChanged && onChanged();
+    try {
+      await api(`/submissions/${s.id}/handled`, { method: 'POST' });
+      await load();
+      onChanged && onChanged();
+    } catch (err) { setError(err.message); }
   }
   async function remove(s) {
-    if (!confirm('Delete this submission?')) return;
-    await api(`/submissions/${s.id}`, { method: 'DELETE' });
-    await load();
-    onChanged && onChanged();
+    if (!(await confirm({ title: 'Delete submission?', message: `${s.name}'s ${s.type === 'board' ? 'board application' : 'club-join request'} will be permanently deleted.`, confirmLabel: 'Delete', danger: true }))) return;
+    try {
+      await api(`/submissions/${s.id}`, { method: 'DELETE' });
+      await load();
+      onChanged && onChanged();
+    } catch (err) { setError(err.message); }
   }
 
   return (
     <div className="max-w-3xl">
+      {confirmEl}
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Get Involved</h1>
       <p className="text-cream/50 mb-6">Club-join and board applications submitted from the public homepage.</p>
-      {items.length === 0 && <div className="text-cream/40">No submissions yet.</div>}
+      {error && <div className="mb-4"><ErrorState message={error} onRetry={load} /></div>}
+      {items === null && !error && <Loading label="Loading submissions…" />}
+      {items !== null && items.length === 0 && (
+        <EmptyState icon="📨" title="No submissions yet" hint="Club-join requests and board applications from the public homepage will appear here." />
+      )}
       <div className="space-y-3">
-        {items.map((s) => (
+        {(items || []).map((s) => (
           <div key={s.id} className={`bg-navy2 border rounded-lg p-4 ${s.handled ? 'border-cream/10 opacity-70' : 'border-gold/30'}`}>
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div className="font-medium text-cream">{s.name} <span className="text-cream/40 text-sm">· {s.email}</span></div>
@@ -1416,38 +1585,54 @@ function AdminPanel({ users, reload }) {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [editTarget, setEditTarget] = useState(null);
+  const [adding, setAdding] = useState(false);
+  const [confirmEl, confirm] = useConfirm();
 
   async function addUser(e) {
     e.preventDefault();
-    setError(''); setNotice('');
+    setNotice('');
+    if (!first.trim()) { setError('First name is required.'); return; }
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) { setError('Please enter a valid email.'); return; }
+    setError(''); setAdding(true);
     try {
       const d = await api('/admin/users', { method: 'POST', body: {
-        firstName: first, lastName: last, title, role, managerId: managerId ? Number(managerId) : null, grade, email,
+        firstName: first.trim(), lastName: last.trim(), title, role, managerId: managerId ? Number(managerId) : null, grade, email,
       }});
       setNotice(`Added ${d.user.displayName} — username "${d.user.username}", default password "${d.defaultPassword}".`);
       setFirst(''); setLast(''); setTitle(''); setRole('member'); setManagerId(''); setGrade(''); setEmail('');
       reload();
     } catch (err) { setError(err.message); }
+    finally { setAdding(false); }
   }
 
   async function updateUser(u, patch) {
-    await api(`/admin/users/${u.id}`, { method: 'PATCH', body: patch });
-    reload();
+    setError('');
+    try {
+      await api(`/admin/users/${u.id}`, { method: 'PATCH', body: patch });
+      reload();
+    } catch (err) { setError(err.message); }
   }
   async function removeUser(u) {
-    if (!confirm(`Remove ${u.displayName}? Their reports roll up to their manager.`)) return;
-    await api(`/admin/users/${u.id}`, { method: 'DELETE' });
-    reload();
+    if (!(await confirm({ title: `Remove ${u.displayName}?`, message: 'Their direct reports roll up to their manager. This cannot be undone.', confirmLabel: 'Remove', danger: true }))) return;
+    setError('');
+    try {
+      await api(`/admin/users/${u.id}`, { method: 'DELETE' });
+      reload();
+    } catch (err) { setError(err.message); }
   }
   async function resetPw(u) {
-    const d = await api(`/admin/users/${u.id}/reset-password`, { method: 'POST' });
-    setNotice(`${u.displayName}'s password reset to default "${d.defaultPassword}". They'll set a new one at next login.`);
+    if (!(await confirm({ title: `Reset password?`, message: `${u.displayName}'s password will be reset to their default and they'll set a new one at next login.`, confirmLabel: 'Reset password' }))) return;
+    try {
+      const d = await api(`/admin/users/${u.id}/reset-password`, { method: 'POST' });
+      setNotice(`${u.displayName}'s password reset to default "${d.defaultPassword}". They'll set a new one at next login.`);
+    } catch (err) { setError(err.message); }
   }
 
   const byId = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
 
   return (
     <div className="max-w-5xl">
+      {confirmEl}
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-6">Admin Panel</h1>
 
       <PodcastToggle />
@@ -1478,7 +1663,7 @@ function AdminPanel({ users, reload }) {
         </Field>
         <Field label="Email (for notifications)"><input type="email" className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="optional" /></Field>
         <div className="sm:col-span-2 flex items-center gap-3">
-          <Button type="submit" variant="gold">Add Member</Button>
+          <Button type="submit" variant="gold" disabled={adding || !first.trim()}>{adding ? <span className="flex items-center gap-2"><Spinner /> Adding…</span> : 'Add Member'}</Button>
           <span className="text-xs text-cream/40">Username & default password are generated as first-initial + last name.</span>
         </div>
         {notice && <div className="sm:col-span-2 text-emerald-300 text-sm">{notice}</div>}
@@ -2271,6 +2456,17 @@ function InterestSurvey({ onBack }) {
 // Roster Page
 // ---------------------------------------------------------------------------
 const ROSTER_STATUSES = ['Prospect', 'Contacted', 'Onboarded', 'Declined'];
+// Mirror of the server's roster pipeline rules (server/index.js ROSTER_TRANSITIONS).
+const ROSTER_TRANSITIONS = {
+  Prospect:  ['Contacted', 'Declined'],
+  Contacted: ['Onboarded', 'Declined', 'Prospect'],
+  Onboarded: ['Contacted', 'Declined'],
+  Declined:  ['Prospect', 'Contacted'],
+};
+// The current status plus any status it may legally move to.
+function validNextStatuses(current) {
+  return [current, ...((ROSTER_TRANSITIONS[current] || []).filter((s) => s !== current))];
+}
 
 function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
   const [busy, setBusy] = useState(false);
@@ -2369,17 +2565,19 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
 function AddRosterMemberForm({ me, onCreated }) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', status: 'Prospect', notes: '' });
-  const [error, setError] = useState('');
+  const { loading, error, setError, run } = useAction();
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   async function submit(e) {
-    e.preventDefault(); setError('');
+    e.preventDefault();
+    if (!form.firstName.trim()) { setError('First name is required.'); return; }
+    if (form.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) { setError('Please enter a valid email.'); return; }
     try {
-      await api('/roster', { method: 'POST', body: { ...form, grade: form.grade ? Number(form.grade) : null } });
+      await run(() => api('/roster', { method: 'POST', body: { ...form, firstName: form.firstName.trim(), grade: form.grade ? Number(form.grade) : null } }));
       setForm({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', status: 'Prospect', notes: '' });
       setOpen(false); onCreated();
-    } catch (err) { setError(err.message); }
+    } catch (_) {}
   }
 
   if (!open) return <Button variant="ghost" onClick={() => setOpen(true)}>+ Add Member</Button>;
@@ -2413,8 +2611,8 @@ function AddRosterMemberForm({ me, onCreated }) {
       </div>
       {error && <div className="text-red text-sm">{error}</div>}
       <div className="flex gap-2">
-        <Button type="submit" variant="gold">Add</Button>
-        <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+        <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner /> Adding…</span> : 'Add'}</Button>
+        <Button variant="ghost" onClick={() => setOpen(false)} disabled={loading}>Cancel</Button>
       </div>
     </form>
   );
@@ -2427,16 +2625,18 @@ function EditRosterMemberModal({ member, onSaved, onClose }) {
     grade: member.grade || '', gender: member.gender,
     roleDescription: member.roleDescription, status: member.status, notes: member.notes,
   });
-  const [error, setError] = useState('');
+  const { loading, error, setError, run } = useAction();
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   async function submit(e) {
-    e.preventDefault(); setError('');
+    e.preventDefault();
+    if (!form.firstName.trim()) { setError('First name is required.'); return; }
+    if (form.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) { setError('Please enter a valid email.'); return; }
     try {
-      await api(`/roster/${member.id}`, { method: 'PATCH', body: { ...form, grade: form.grade ? Number(form.grade) : null } });
+      await run(() => api(`/roster/${member.id}`, { method: 'PATCH', body: { ...form, firstName: form.firstName.trim(), grade: form.grade ? Number(form.grade) : null } }));
       onSaved(); onClose();
-    } catch (err) { setError(err.message); }
+    } catch (_) {}
   }
 
   return (
@@ -2467,15 +2667,16 @@ function EditRosterMemberModal({ member, onSaved, onClose }) {
           <Field label="Role Description"><input className={inputCls} value={form.roleDescription} onChange={set('roleDescription')} /></Field>
           <Field label="Status">
             <select className={inputCls} value={form.status} onChange={set('status')}>
-              {ROSTER_STATUSES.map((s) => <option key={s}>{s}</option>)}
+              {validNextStatuses(member.status).map((s) => <option key={s}>{s}</option>)}
             </select>
+            <span className="block text-[11px] text-cream/40 mt-1">Members follow the pipeline: Prospect → Contacted → Onboarded / Declined.</span>
           </Field>
           <div className="sm:col-span-2"><Field label="Notes"><textarea className={inputCls} rows="2" value={form.notes} onChange={set('notes')} /></Field></div>
         </div>
         {error && <div className="text-red text-sm">{error}</div>}
         <div className="flex gap-2">
-          <Button type="submit" variant="gold">Save</Button>
-          <Button variant="ghost" onClick={onClose} type="button">Cancel</Button>
+          <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner /> Saving…</span> : 'Save'}</Button>
+          <Button variant="ghost" onClick={onClose} type="button" disabled={loading}>Cancel</Button>
         </div>
       </form>
     </div>
@@ -2569,14 +2770,18 @@ function GradeRepLeaderboard({ me }) {
 
 function RosterPage({ me }) {
   const [members, setMembers] = useState([]);
+  const [loaded, setLoaded] = useState(false);
   const [myGrade, setMyGrade] = useState(null);
   const [gradeFilter, setGradeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [tab, setTab] = useState('all');
   const [editing, setEditing] = useState(null);
   const [error, setError] = useState('');
+  const [visible, setVisible] = useState(25);
+  const [confirmEl, confirm] = useConfirm();
 
   const isPrivileged = me.role === 'admin' || me.role === 'manager';
+  const PAGE = 25;
 
   const load = useCallback(async () => {
     setError('');
@@ -2588,6 +2793,7 @@ function RosterPage({ me }) {
       setMembers(d.members || []);
       if (d.myGrade && !gradeFilter) setMyGrade(d.myGrade);
     } catch (err) { setError(err.message); }
+    finally { setLoaded(true); }
   }, [gradeFilter, statusFilter]);
 
   useEffect(() => { load(); }, [load]);
@@ -2598,13 +2804,23 @@ function RosterPage({ me }) {
   }, [me.managedGrade, isPrivileged]);
 
   async function handleAction(memberId, action, body) {
-    if (action === 'delete') {
-      if (!confirm('Delete this member from the roster?')) return;
-      await api(`/roster/${memberId}`, { method: 'DELETE' });
-    } else {
-      await api(`/roster/${memberId}/${action}`, { method: 'POST', body: body || undefined });
-    }
-    load();
+    try {
+      if (action === 'delete') {
+        if (!(await confirm({ title: 'Remove from roster?', message: 'This member will be permanently deleted from the roster.', confirmLabel: 'Delete', danger: true }))) return;
+        await api(`/roster/${memberId}`, { method: 'DELETE' });
+      } else {
+        await api(`/roster/${memberId}/${action}`, { method: 'POST', body: body || undefined });
+      }
+      load();
+    } catch (err) { setError(err.message); }
+  }
+
+  function exportCSV() {
+    downloadCSV('roster.csv', members.map((m) => ({
+      firstName: m.firstName, lastName: m.lastName, grade: m.grade || '', gender: m.gender || '',
+      phone: m.phone || '', email: m.email || '', status: m.status,
+      role: m.roleDescription || '', managedBy: m.claimedByName || '', notes: m.notes || '',
+    })));
   }
 
   const tabFilteredMembers = useMemo(() => {
@@ -2613,6 +2829,9 @@ function RosterPage({ me }) {
     if (tab === 'declined') return members.filter((m) => m.status === 'Declined');
     return members;
   }, [members, tab]);
+
+  // Reset visible count when the view changes.
+  useEffect(() => { setVisible(PAGE); }, [tab, gradeFilter, statusFilter]);
 
   const counts = useMemo(() => ({
     all: members.length,
@@ -2630,12 +2849,18 @@ function RosterPage({ me }) {
 
   return (
     <div className="max-w-4xl">
-      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Roster</h1>
+      {confirmEl}
+      <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
+        <h1 className="font-display text-4xl sm:text-5xl text-cream">Roster</h1>
+        {isPrivileged && members.length > 0 && (
+          <Button variant="ghost" className="text-xs px-3 py-1.5" onClick={exportCSV}>⬇ Export CSV</Button>
+        )}
+      </div>
       <p className="text-cream/50 mb-6">Club America recruitment pipeline and member directory.</p>
 
       <GradeRepLeaderboard me={me} />
 
-      {error && <div className="text-red text-sm mb-4">{error}</div>}
+      {error && <div className="mb-4"><ErrorState message={error} onRetry={load} /></div>}
 
       <div className="flex flex-wrap gap-3 mb-4">
         {isPrivileged ? (
@@ -2666,15 +2891,29 @@ function RosterPage({ me }) {
       </div>
 
       <div className="space-y-3 mb-6">
-        {tabFilteredMembers.length === 0 && (
-          <div className="text-cream/40 py-8 text-center">No entries here.</div>
+        {!loaded && <Loading label="Loading roster…" />}
+        {loaded && tabFilteredMembers.length === 0 && (
+          <EmptyState
+            icon="🧑‍🤝‍🧑"
+            title={tab === 'all' ? 'No one on the roster yet' : 'Nothing in this view'}
+            hint={(isPrivileged || !!me.canManageRoster)
+              ? 'Add a prospect with “+ Add Member” below to start building the pipeline.'
+              : 'Prospects you add or claim will show up here.'}
+          />
         )}
-        {tabFilteredMembers.map((m) => (
+        {tabFilteredMembers.slice(0, visible).map((m) => (
           <RosterMemberRow key={m.id} member={m} me={me}
             onAction={handleAction}
             onEdit={isPrivileged ? (m) => setEditing(m) : null}
             canDelete={isPrivileged} />
         ))}
+        {tabFilteredMembers.length > visible && (
+          <div className="text-center pt-2">
+            <Button variant="ghost" onClick={() => setVisible((v) => v + PAGE)}>
+              Show more ({tabFilteredMembers.length - visible} remaining)
+            </Button>
+          </div>
+        )}
       </div>
 
       {(isPrivileged || !!me.canManageRoster) && (
@@ -2735,14 +2974,21 @@ function WeeklyCheckinPage({ me }) {
   function fmtWeek(iso) {
     if (!iso) return '';
     const d = new Date(iso + 'T12:00:00');
-    return d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+    return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
   }
+
+  // Days remaining until this Friday's deadline (weekOf is that Friday).
+  const daysLeft = useMemo(() => {
+    if (!weekOf) return null;
+    const due = new Date(weekOf + 'T23:59:59');
+    return Math.ceil((due - new Date()) / (24 * 60 * 60 * 1000));
+  }, [weekOf]);
 
   return (
     <div className="max-w-2xl">
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Weekly Check-In</h1>
       <p className="text-cream/50 mb-6">
-        Submit your weekly update. You can edit it any time before the week ends.
+        Every board member submits a check-in by <span className="text-gold/80">Friday</span> each week. You can edit yours any time before the deadline.
       </p>
 
       {isManager && enabled !== null && (
@@ -2765,9 +3011,11 @@ function WeeklyCheckinPage({ me }) {
 
       {(enabled || isManager) && enabled !== null && (
         <div className="bg-navy2 border border-cream/10 rounded-xl p-5">
-          <div className="text-sm text-cream/50 mb-3">
-            Week of {fmtWeek(weekOf)}
-            {existing && <span className="ml-2 text-emerald-300">· Submitted</span>}
+          <div className="text-sm text-cream/50 mb-3 flex flex-wrap items-center gap-x-2">
+            <span>Due {fmtWeek(weekOf)}</span>
+            {existing
+              ? <Badge tone="green">Submitted ✓</Badge>
+              : daysLeft !== null && <Badge tone={daysLeft <= 1 ? 'red' : 'gold'}>{daysLeft <= 0 ? 'Due today' : daysLeft === 1 ? 'Due tomorrow' : `${daysLeft} days left`}</Badge>}
           </div>
           <form onSubmit={submit} className="space-y-4">
             <Field label="Your update this week">
@@ -2790,15 +3038,17 @@ function WeeklyCheckinPage({ me }) {
 // Funding Request Page
 // ---------------------------------------------------------------------------
 function FundingRequestPage({ me }) {
-  const [requests, setRequests] = useState([]);
+  const [requests, setRequests] = useState(null);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ title: '', description: '', amount: '' });
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  const [confirmEl, confirm] = useConfirm();
   const isPrivileged = me.role === 'admin' || me.role === 'manager';
 
   const load = useCallback(async () => {
+    setError('');
     try { const d = await api('/funding'); setRequests(d.requests || []); }
     catch (err) { setError(err.message); }
   }, []);
@@ -2808,9 +3058,12 @@ function FundingRequestPage({ me }) {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   async function submit(e) {
-    e.preventDefault(); setError(''); setNotice(''); setBusy(true);
+    e.preventDefault(); setNotice('');
+    if (!form.title.trim()) { setError('Please enter a title.'); return; }
+    if (form.amount && Number(form.amount) < 0) { setError('Amount can’t be negative.'); return; }
+    setError(''); setBusy(true);
     try {
-      await api('/funding', { method: 'POST', body: { ...form, amount: Number(form.amount) || 0 } });
+      await api('/funding', { method: 'POST', body: { ...form, title: form.title.trim(), amount: Number(form.amount) || 0 } });
       setForm({ title: '', description: '', amount: '' });
       setOpen(false); setNotice('Funding request submitted!'); load();
     } catch (err) { setError(err.message); }
@@ -2818,17 +3071,32 @@ function FundingRequestPage({ me }) {
   }
 
   async function reviewAction(id, action, reviewNotes) {
+    if (action === 'deny' && !(await confirm({ title: 'Deny request?', message: 'The submitter will be notified that this request was denied.', confirmLabel: 'Deny', danger: true }))) return;
     setBusy(true);
     try { await api(`/funding/${id}`, { method: 'PATCH', body: { action, reviewNotes } }); load(); }
     catch (err) { setError(err.message); }
     finally { setBusy(false); }
   }
 
+  function exportCSV() {
+    downloadCSV('funding-requests.csv', (requests || []).map((r) => ({
+      title: r.title, amount: r.amount, status: r.status, submittedBy: r.submitterName,
+      reviewedBy: r.reviewerName || '', reviewNotes: r.reviewNotes || '',
+      description: r.description || '', createdAt: r.createdAt,
+    })));
+  }
+
   const statusColors = { pending: 'slate', approved: 'green', denied: 'red', purchased: 'blue' };
 
   return (
     <div className="max-w-4xl">
-      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Funding Requests</h1>
+      {confirmEl}
+      <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
+        <h1 className="font-display text-4xl sm:text-5xl text-cream">Funding Requests</h1>
+        {isPrivileged && (requests || []).length > 0 && (
+          <Button variant="ghost" className="text-xs px-3 py-1.5" onClick={exportCSV}>⬇ Export CSV</Button>
+        )}
+      </div>
       <p className="text-cream/50 mb-6">
         {isPrivileged ? 'Review and manage all funding requests.' : 'Submit a request and track its status.'}
       </p>
@@ -2842,20 +3110,23 @@ function FundingRequestPage({ me }) {
         ) : (
           <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3">
             <div className="font-display text-xl text-gold">New Funding Request</div>
-            <Field label="Title *"><input className={inputCls} value={form.title} onChange={set('title')} required autoFocus placeholder="e.g. Flyers for fall recruitment" /></Field>
+            <Field label="Title *"><input className={inputCls} value={form.title} onChange={set('title')} autoFocus placeholder="e.g. Flyers for fall recruitment" /></Field>
             <Field label="Description"><textarea className={inputCls} rows="3" value={form.description} onChange={set('description')} placeholder="What is this for? Why is it needed?" /></Field>
             <Field label="Amount ($)"><input className={inputCls} type="number" min="0" step="0.01" value={form.amount} onChange={set('amount')} placeholder="0.00" /></Field>
             <div className="flex gap-2">
-              <Button type="submit" variant="gold" disabled={busy}>Submit</Button>
-              <Button variant="ghost" onClick={() => setOpen(false)} type="button">Cancel</Button>
+              <Button type="submit" variant="gold" disabled={busy || !form.title.trim()}>{busy ? <span className="flex items-center gap-2"><Spinner /> Submitting…</span> : 'Submit'}</Button>
+              <Button variant="ghost" onClick={() => setOpen(false)} type="button" disabled={busy}>Cancel</Button>
             </div>
           </form>
         )}
       </div>
 
-      {requests.length === 0 && <div className="text-cream/40">No funding requests yet.</div>}
+      {requests === null && !error && <Loading label="Loading requests…" />}
+      {requests !== null && requests.length === 0 && (
+        <EmptyState icon="💰" title="No funding requests yet" hint={isPrivileged ? 'Requests submitted by the board will appear here for review.' : 'Use “+ New Funding Request” above to submit your first one.'} />
+      )}
       <div className="space-y-3">
-        {requests.map((r) => (
+        {(requests || []).map((r) => (
           <div key={r.id} className="bg-navy2 border border-cream/10 rounded-xl p-4">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
@@ -2891,15 +3162,17 @@ function FundingRequestPage({ me }) {
 // Board Applications Page
 // ---------------------------------------------------------------------------
 function BoardApplicationsPage({ me }) {
-  const [apps, setApps] = useState([]);
+  const [apps, setApps] = useState(null);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ positionTitle: '', statement: '' });
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  const [confirmEl, confirm] = useConfirm();
   const isPrivileged = me.role === 'admin' || me.role === 'manager';
 
   const load = useCallback(async () => {
+    setError('');
     try { const d = await api('/board-apps'); setApps(d.applications || []); }
     catch (err) { setError(err.message); }
   }, []);
@@ -2909,9 +3182,11 @@ function BoardApplicationsPage({ me }) {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   async function submit(e) {
-    e.preventDefault(); setError(''); setNotice(''); setBusy(true);
+    e.preventDefault(); setNotice('');
+    if (!form.positionTitle.trim()) { setError('Please enter a position title.'); return; }
+    setError(''); setBusy(true);
     try {
-      await api('/board-apps', { method: 'POST', body: form });
+      await api('/board-apps', { method: 'POST', body: { ...form, positionTitle: form.positionTitle.trim() } });
       setForm({ positionTitle: '', statement: '' });
       setOpen(false); setNotice('Application submitted!'); load();
     } catch (err) { setError(err.message); }
@@ -2919,6 +3194,7 @@ function BoardApplicationsPage({ me }) {
   }
 
   async function reviewAction(id, action) {
+    if (action === 'decline' && !(await confirm({ title: 'Decline application?', message: 'The applicant will be notified that their application was declined.', confirmLabel: 'Decline', danger: true }))) return;
     setBusy(true);
     try { await api(`/board-apps/${id}`, { method: 'PATCH', body: { action } }); load(); }
     catch (err) { setError(err.message); }
@@ -2929,6 +3205,7 @@ function BoardApplicationsPage({ me }) {
 
   return (
     <div className="max-w-3xl">
+      {confirmEl}
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Board Applications</h1>
       <p className="text-cream/50 mb-6">
         Apply for a leadership position. {isPrivileged ? 'Review incoming applications below.' : ''}
@@ -2944,7 +3221,7 @@ function BoardApplicationsPage({ me }) {
           <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3">
             <div className="font-display text-xl text-gold">New Application</div>
             <Field label="Position Title *">
-              <input className={inputCls} value={form.positionTitle} onChange={set('positionTitle')} required autoFocus
+              <input className={inputCls} value={form.positionTitle} onChange={set('positionTitle')} autoFocus
                 placeholder="e.g. Vice President, CFO, Grade Rep" />
             </Field>
             <Field label="Personal Statement">
@@ -2952,16 +3229,19 @@ function BoardApplicationsPage({ me }) {
                 placeholder="Why do you want this position? What makes you a strong candidate?" />
             </Field>
             <div className="flex gap-2">
-              <Button type="submit" variant="gold" disabled={busy}>Submit</Button>
-              <Button variant="ghost" onClick={() => setOpen(false)} type="button">Cancel</Button>
+              <Button type="submit" variant="gold" disabled={busy || !form.positionTitle.trim()}>{busy ? <span className="flex items-center gap-2"><Spinner /> Submitting…</span> : 'Submit'}</Button>
+              <Button variant="ghost" onClick={() => setOpen(false)} type="button" disabled={busy}>Cancel</Button>
             </div>
           </form>
         )}
       </div>
 
-      {apps.length === 0 && <div className="text-cream/40">No applications yet.</div>}
+      {apps === null && !error && <Loading label="Loading applications…" />}
+      {apps !== null && apps.length === 0 && (
+        <EmptyState icon="📝" title="No applications yet" hint={isPrivileged ? 'Leadership applications from the board will appear here.' : 'Use “+ Apply for a Position” above to submit yours.'} />
+      )}
       <div className="space-y-3">
-        {apps.map((a) => (
+        {(apps || []).map((a) => (
           <div key={a.id} className="bg-navy2 border border-cream/10 rounded-xl p-4">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
@@ -2995,6 +3275,7 @@ function AdminDashboardPage({ me }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [checkinEnabled, setCheckinEnabled] = useState(null);
+  const [confirmEl, confirm] = useConfirm();
 
   const load = useCallback(async () => {
     setError('');
@@ -3008,6 +3289,7 @@ function AdminDashboardPage({ me }) {
   useEffect(() => { load(); }, [load]);
 
   async function fundingAction(id, action) {
+    if (action === 'deny' && !(await confirm({ title: 'Deny request?', message: 'The submitter will be notified.', confirmLabel: 'Deny', danger: true }))) return;
     setBusy(true);
     try { await api(`/funding/${id}`, { method: 'PATCH', body: { action } }); load(); }
     catch (err) { setError(err.message); }
@@ -3015,6 +3297,7 @@ function AdminDashboardPage({ me }) {
   }
 
   async function appAction(id, action) {
+    if (action === 'decline' && !(await confirm({ title: 'Decline application?', message: 'The applicant will be notified.', confirmLabel: 'Decline', danger: true }))) return;
     setBusy(true);
     try { await api(`/board-apps/${id}`, { method: 'PATCH', body: { action } }); load(); }
     catch (err) { setError(err.message); }
@@ -3022,10 +3305,18 @@ function AdminDashboardPage({ me }) {
   }
 
   async function taskAction(task, action) {
+    if (action === 'reject' && !(await confirm({ title: 'Reject task?', message: `“${task.name}” will be rejected and the sender notified.`, confirmLabel: 'Reject', danger: true }))) return;
     setBusy(true);
     try { await api(`/tasks/${task.id}/${action}`, { method: 'POST' }); load(); }
     catch (err) { setError(err.message); }
     finally { setBusy(false); }
+  }
+
+  function exportCheckins() {
+    const rows = (data && data.recentCheckins) || [];
+    downloadCSV('checkins.csv', rows.map((c) => ({
+      member: c.userName, title: c.userTitle || '', weekOf: c.weekOf, submittedAt: c.submittedAt, content: c.content,
+    })));
   }
 
   async function toggleCheckins() {
@@ -3042,12 +3333,20 @@ function AdminDashboardPage({ me }) {
     return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
 
-  if (!data) return <div className="text-cream/50">Loading dashboard…</div>;
+  if (error && !data) return <div className="max-w-5xl"><ErrorState message={error} onRetry={load} /></div>;
+  if (!data) return <Loading label="Loading dashboard…" />;
 
-  const { pendingFunding, pendingApps, recentCheckins, pendingTasks, counts } = data;
+  const { pendingFunding, pendingApps, recentCheckins, pendingTasks, counts, missingCheckins = [], checkinWeekOf, recentActivity = [] } = data;
+
+  function fmtActivity(a) {
+    const verb = { approved: 'approved', rejected: 'rejected', denied: 'denied', purchased: 'marked purchased', accepted: 'accepted', declined: 'declined' }[a.action] || a.action;
+    const kind = { task: 'task', funding: 'funding request', 'board-app': 'application' }[a.entityType] || a.entityType;
+    return `${a.actorName || 'Someone'} ${verb} a ${kind}${a.detail ? ` — “${a.detail}”` : ''}`;
+  }
 
   return (
     <div className="max-w-5xl space-y-8">
+      {confirmEl}
       <div>
         <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Dashboard</h1>
         <p className="text-cream/50 mt-1">Overview for managers and admins.</p>
@@ -3067,11 +3366,12 @@ function AdminDashboardPage({ me }) {
       )}
 
       {/* Summary cards */}
-      <div className="grid sm:grid-cols-3 gap-4">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
           { label: 'Pending Funding', count: counts.funding, color: 'text-gold' },
           { label: 'Board Applications', count: counts.apps, color: 'text-sky-300' },
           { label: 'Pending Task Approvals', count: counts.tasks, color: 'text-red' },
+          ...(checkinEnabled ? [{ label: 'Missing Check-Ins', count: counts.missingCheckins || 0, color: 'text-orange-300' }] : []),
         ].map(({ label, count, color }) => (
           <div key={label} className="bg-navy2 border border-cream/10 rounded-xl p-5 text-center">
             <div className={`font-display text-4xl ${color}`}>{count}</div>
@@ -3079,6 +3379,27 @@ function AdminDashboardPage({ me }) {
           </div>
         ))}
       </div>
+
+      {/* Who still owes this Friday's check-in */}
+      {checkinEnabled && (
+        <div>
+          <div className="font-display text-2xl text-gold mb-3">
+            Missing This Week's Check-In ({missingCheckins.length})
+            {checkinWeekOf && <span className="text-cream/40 text-base ml-2">· due Friday {fmtDate(checkinWeekOf)}</span>}
+          </div>
+          {missingCheckins.length === 0
+            ? <div className="text-emerald-300 text-sm">🎉 Everyone has checked in this week.</div>
+            : (
+              <div className="bg-navy2 border border-orange-300/20 rounded-xl p-4 flex flex-wrap gap-2">
+                {missingCheckins.map((u) => (
+                  <span key={u.id} className="text-sm bg-orange-300/10 border border-orange-300/30 text-orange-200 rounded-full px-3 py-1">
+                    {u.displayName}{u.title ? <span className="opacity-60"> · {u.title}</span> : null}
+                  </span>
+                ))}
+              </div>
+            )}
+        </div>
+      )}
 
       {/* Pending Funding Requests */}
       <div>
@@ -3152,7 +3473,10 @@ function AdminDashboardPage({ me }) {
 
       {/* Recent Check-Ins */}
       <div>
-        <div className="font-display text-2xl text-gold mb-3">Recent Check-Ins ({recentCheckins.length})</div>
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="font-display text-2xl text-gold">Recent Check-Ins ({recentCheckins.length})</div>
+          {recentCheckins.length > 0 && <Button variant="ghost" className="text-xs px-3 py-1.5" onClick={exportCheckins}>⬇ Export CSV</Button>}
+        </div>
         {recentCheckins.length === 0 && <div className="text-cream/40">No check-ins submitted yet.</div>}
         <div className="space-y-3">
           {recentCheckins.map((c) => (
@@ -3169,6 +3493,23 @@ function AdminDashboardPage({ me }) {
           ))}
         </div>
       </div>
+
+      {/* Recent review activity (audit log) */}
+      <div>
+        <div className="font-display text-2xl text-gold mb-3">Recent Activity</div>
+        {recentActivity.length === 0
+          ? <div className="text-cream/40">No approvals or reviews logged yet.</div>
+          : (
+            <div className="bg-navy2 border border-cream/10 rounded-xl divide-y divide-cream/5">
+              {recentActivity.map((a) => (
+                <div key={a.id} className="px-4 py-2.5 flex items-center justify-between gap-3 text-sm">
+                  <span className="text-cream/80">{fmtActivity(a)}</span>
+                  <span className="text-xs text-cream/40 shrink-0">{(a.createdAt || '').replace('T', ' ').slice(5, 16)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+      </div>
     </div>
   );
 }
@@ -3184,6 +3525,8 @@ function LogisticsPage() {
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('');
   const [tab, setTab] = useState('members');
+  const [logVisible, setLogVisible] = useState(50);
+  const [eventsVisible, setEventsVisible] = useState(50);
 
   const load = async () => {
     setLoading(true);
@@ -3206,8 +3549,8 @@ function LogisticsPage() {
     return d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
   }
 
-  if (loading) return <div className="p-8 text-cream/40 text-sm">Loading…</div>;
-  if (error) return <div className="p-8 text-red text-sm">{error}</div>;
+  if (loading) return <Loading label="Loading login activity…" />;
+  if (error) return <div className="p-6 max-w-6xl"><ErrorState message={error} onRetry={load} /></div>;
   if (!data) return null;
 
   const { stats, perUserDaily = [], teamDaily = [], recentLogins, demographics, engagementSummary = [], recentEvents = [] } = data;
@@ -3396,7 +3739,7 @@ function LogisticsPage() {
               </tr>
             </thead>
             <tbody>
-              {recentLogins.map(l => (
+              {recentLogins.slice(0, logVisible).map(l => (
                 <tr key={l.id} className="border-b border-cream/5 hover:bg-cream/3">
                   <td className="py-2.5 pr-4 text-cream/55 text-xs whitespace-nowrap">{fmtDate(l.loginAt)}</td>
                   <td className="py-2.5 pr-4">
@@ -3412,6 +3755,11 @@ function LogisticsPage() {
               )}
             </tbody>
           </table>
+          {recentLogins.length > logVisible && (
+            <div className="text-center pt-3">
+              <Button variant="ghost" onClick={() => setLogVisible(v => v + 50)}>Show more ({recentLogins.length - logVisible} more)</Button>
+            </div>
+          )}
         </div>
       )}
 
@@ -3482,7 +3830,7 @@ function LogisticsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {recentEvents.map(e => (
+                    {recentEvents.slice(0, eventsVisible).map(e => (
                       <tr key={e.id} className="border-b border-cream/5 hover:bg-cream/3">
                         <td className="py-2 pr-4 text-cream/45 text-xs whitespace-nowrap">{fmtDate(e.loggedAt)}</td>
                         <td className="py-2 pr-4 text-xs">
@@ -3496,6 +3844,11 @@ function LogisticsPage() {
                     )}
                   </tbody>
                 </table>
+                {recentEvents.length > eventsVisible && (
+                  <div className="text-center pt-3">
+                    <Button variant="ghost" onClick={() => setEventsVisible(v => v + 50)}>Show more ({recentEvents.length - eventsVisible} more)</Button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -3816,13 +4169,16 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
     <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
       <header className="px-6 py-5 flex items-center justify-between border-b border-cream/10">
         <Logo size="sidebar" />
-        <div className="flex flex-col items-end gap-1">
-          <span className="text-cream text-sm font-medium">{me.displayName}</span>
-          <span className="text-cream/40 text-xs">{me.title || roleLabel(me.role)}</span>
-          <div className="flex gap-3 mt-0.5">
-            <button onClick={() => onNavigate({ type: 'profile' })} className="text-[11px] text-gold/60 hover:text-gold transition-colors">Profile</button>
-            <button onClick={() => onNavigate({ type: 'password' })} className="text-[11px] text-gold/60 hover:text-gold transition-colors">Password</button>
-            <button onClick={onLogout} className="text-[11px] text-red/60 hover:text-red transition-colors">Log out</button>
+        <div className="flex items-center gap-4">
+          <NotificationBell onNavigate={onNavigate} />
+          <div className="flex flex-col items-end gap-1">
+            <span className="text-cream text-sm font-medium">{me.displayName}</span>
+            <span className="text-cream/40 text-xs">{me.title || roleLabel(me.role)}</span>
+            <div className="flex gap-3 mt-0.5">
+              <button onClick={() => onNavigate({ type: 'profile' })} className="text-[11px] text-gold/60 hover:text-gold transition-colors">Profile</button>
+              <button onClick={() => onNavigate({ type: 'password' })} className="text-[11px] text-gold/60 hover:text-gold transition-colors">Password</button>
+              <button onClick={onLogout} className="text-[11px] text-red/60 hover:text-red transition-colors">Log out</button>
+            </div>
           </div>
         </div>
       </header>
@@ -3858,6 +4214,82 @@ function MyTeamView({ reports, onNavigate }) {
             </button>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// In-app notification bell with unread badge + dropdown. Polls periodically.
+const NOTIF_LINK_VIEWS = {
+  tasks: { type: 'mytasks' },
+  approvals: { type: 'approvals' },
+  submissions: { type: 'submissions' },
+  funding: { type: 'funding' },
+  'board-apps': { type: 'apply' },
+};
+function NotificationBell({ onNavigate, refreshSignal }) {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState([]);
+  const [unread, setUnread] = useState(0);
+
+  const load = useCallback(async () => {
+    try { const d = await api('/notifications'); setItems(d.notifications || []); setUnread(d.unread || 0); }
+    catch (_) {}
+  }, []);
+
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 60000);
+    return () => clearInterval(t);
+  }, [load, refreshSignal]);
+
+  async function openItem(n) {
+    if (!n.isRead) api('/notifications/read', { method: 'POST', body: { id: n.id } }).catch(() => {});
+    setOpen(false);
+    const v = NOTIF_LINK_VIEWS[n.link];
+    if (v && onNavigate) onNavigate(v);
+    setItems((prev) => prev.map((x) => x.id === n.id ? { ...x, isRead: 1 } : x));
+    setUnread((u) => (n.isRead ? u : Math.max(0, u - 1)));
+  }
+  async function markAll() {
+    await api('/notifications/read', { method: 'POST', body: {} }).catch(() => {});
+    setItems((prev) => prev.map((x) => ({ ...x, isRead: 1 })));
+    setUnread(0);
+  }
+
+  return (
+    <div className="relative">
+      <button onClick={() => { setOpen((o) => !o); if (!open) load(); }}
+        className="relative flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-gold hover:bg-navy3 transition-colors" aria-label="Notifications">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        {unread > 0 && (
+          <span className="absolute -top-1 -right-1 bg-red text-cream text-[9px] font-bold rounded-full min-w-[15px] h-[15px] flex items-center justify-center px-0.5">{unread > 9 ? '9+' : unread}</span>
+        )}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 mt-2 w-80 max-h-[26rem] overflow-y-auto bg-navy2 border border-cream/15 rounded-xl shadow-2xl z-40">
+            <div className="sticky top-0 bg-navy2 flex items-center justify-between px-4 py-2.5 border-b border-cream/10">
+              <span className="text-cream font-medium text-sm">Notifications</span>
+              {unread > 0 && <button onClick={markAll} className="text-xs text-gold/70 hover:text-gold">Mark all read</button>}
+            </div>
+            {items.length === 0 ? (
+              <div className="px-4 py-10 text-center text-cream/40 text-sm">You're all caught up. 🎉</div>
+            ) : items.map((n) => (
+              <button key={n.id} onClick={() => openItem(n)}
+                className={`block w-full text-left px-4 py-3 border-b border-cream/5 hover:bg-navy3 transition-colors ${n.isRead ? '' : 'bg-gold/5'}`}>
+                <div className="flex gap-2">
+                  <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${n.isRead ? 'bg-transparent' : 'bg-gold'}`} />
+                  <div>
+                    <div className="text-sm text-cream/85 leading-snug">{n.message}</div>
+                    <div className="text-[11px] text-cream/35 mt-1">{timeAgo(n.createdAt)}</div>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
@@ -3991,6 +4423,7 @@ function App() {
             </svg>
           </button>
           <span className="text-cream font-semibold text-base flex-1">{PAGE_TITLES[view.type] || ''}</span>
+          <NotificationBell onNavigate={navigate} refreshSignal={refreshSignal} />
           <button onClick={() => setAiNotesOpen(true)} className="relative flex items-center gap-1 text-cream/50 hover:text-gold transition-colors text-xs" aria-label="AI Notes">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
             {aiNotesCount > 0 && (

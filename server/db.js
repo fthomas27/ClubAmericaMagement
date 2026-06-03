@@ -199,6 +199,33 @@ function init() {
     );
     CREATE INDEX IF NOT EXISTS idx_ai_chat_session
       ON ai_chat_messages(userId, sessionId, createdAt);
+
+    -- In-app notifications (delivered regardless of whether email is configured).
+    CREATE TABLE IF NOT EXISTS notifications (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      userId    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type      TEXT NOT NULL DEFAULT 'info',
+      message   TEXT NOT NULL,
+      link      TEXT NOT NULL DEFAULT '',
+      isRead    INTEGER NOT NULL DEFAULT 0,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_notifications_user
+      ON notifications(userId, isRead, createdAt);
+
+    -- Audit trail for approvals / rejections / status changes on reviewable items.
+    CREATE TABLE IF NOT EXISTS approval_log (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      entityType TEXT NOT NULL,
+      entityId   INTEGER NOT NULL,
+      action     TEXT NOT NULL,
+      actorId    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      actorName  TEXT NOT NULL DEFAULT '',
+      detail     TEXT NOT NULL DEFAULT '',
+      createdAt  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_approval_log_entity
+      ON approval_log(entityType, entityId);
   `);
 
   // User column migrations.
@@ -288,7 +315,10 @@ function displayNameFor(u) {
 }
 
 function seed() {
-  const count = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
+  // The hidden 'logistics' observer is created in init() before seeding, so it
+  // must be excluded here — otherwise a fresh database would look "non-empty"
+  // and the board accounts would never be seeded.
+  const count = db.prepare("SELECT COUNT(*) AS n FROM users WHERE username != 'logistics'").get().n;
   if (count > 0) return false;
 
   const insert = db.prepare(`
