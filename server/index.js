@@ -1004,6 +1004,13 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     user.id,
   );
 
+  // If the username changed and the user hasn't set a custom password yet,
+  // keep the default password in sync with the new username.
+  if (newUsername && newUsername !== user.username && user.firstLogin) {
+    db.prepare('UPDATE users SET passwordHash = ? WHERE id = ?')
+      .run(bcrypt.hashSync(newUsername, 10), user.id);
+  }
+
   // Recompute manager flags for affected supervisors.
   if (prevManager) refreshRole(prevManager);
   if (newManagerId) refreshRole(newManagerId);

@@ -1219,14 +1219,15 @@ function SubmissionsInbox({ onChanged, refreshSignal }) {
 // ---------------------------------------------------------------------------
 function OrgNode({ title, name, tone = 'gold', children }) {
   const ring = tone === 'red' ? 'border-red' : tone === 'gold' ? 'border-gold' : 'border-cream/30';
+  const titleColor = tone === 'red' ? 'text-red' : 'text-gold';
   return (
     <div className="flex flex-col items-center">
-      <div className={`bg-navy2 border-2 ${ring} rounded-lg px-3 sm:px-4 py-2 text-center min-w-[120px] sm:min-w-[160px] shadow-lg`}>
-        <div className="font-display text-base sm:text-lg text-gold leading-tight">{title}</div>
-        {name && <div className="text-xs sm:text-sm text-cream/80">{name}</div>}
+      <div className={`bg-navy2 border-2 ${ring} rounded-xl px-5 py-3 text-center min-w-[160px] sm:min-w-[200px] shadow-xl`}>
+        <div className={`font-display text-lg sm:text-xl ${titleColor} leading-tight font-bold`}>{title}</div>
+        {name && <div className="text-sm sm:text-base text-cream/90 mt-0.5 font-medium">{name}</div>}
       </div>
-      {children && <div className="w-px h-5 bg-cream/20" />}
-      {children && <div className="flex flex-wrap justify-center gap-3 sm:gap-4">{children}</div>}
+      {children && <div className="w-0.5 h-6 bg-cream/40" />}
+      {children && <div className="flex flex-wrap justify-center gap-4 sm:gap-6">{children}</div>}
     </div>
   );
 }
@@ -1263,38 +1264,38 @@ function OrgChart() {
   }
 
   return (
-    <div>
+    <div className="w-full">
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Org Chart</h1>
       <p className="text-cream/50 mb-8">Club America — 2025–26 Board</p>
 
       <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-      <div className="flex flex-col items-center gap-5 pb-10 min-w-max sm:min-w-0 mx-auto">
+      <div className="flex flex-col items-center gap-6 pb-10 min-w-max sm:min-w-0 mx-auto">
         {roots.map((r, i) => (
           <React.Fragment key={r.id}>
-            {i > 0 && <div className="w-px h-5 bg-cream/20" />}
+            {i > 0 && <div className="w-0.5 h-6 bg-cream/40" />}
             {renderNode(r)}
           </React.Fragment>
         ))}
 
         {gradeReps.length > 0 && (
-          <div className="w-full mt-6">
-            <div className="font-display text-2xl text-gold text-center mb-1">Grade Representatives</div>
-            <div className="text-center text-cream/40 text-xs mb-3 tracking-wide uppercase">On the Board · Grade Reps</div>
-            <div className="flex flex-wrap justify-center gap-3">
+          <div className="w-full mt-8">
+            <div className="font-display text-3xl text-gold text-center mb-1">Grade Representatives</div>
+            <div className="text-center text-cream/40 text-sm mb-4 tracking-wide uppercase">On the Board · Grade Reps</div>
+            <div className="flex flex-wrap justify-center gap-4">
               {gradeReps.map((u) => (
-                <div key={u.id} className="bg-navy2 border-2 border-gold/60 rounded-lg px-4 py-2 text-center min-w-[140px]">
-                  <div className="text-xs uppercase tracking-wider text-gold/70 mb-0.5">Grade Rep</div>
-                  <div className="text-sm text-cream/90 font-medium">{u.displayName}</div>
+                <div key={u.id} className="bg-navy2 border-2 border-gold/60 rounded-xl px-5 py-3 text-center min-w-[160px] shadow-lg">
+                  <div className="text-xs uppercase tracking-wider text-gold/70 mb-1 font-semibold">Grade Rep</div>
+                  <div className="text-base text-cream/90 font-semibold">{u.displayName}</div>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        <div className="flex flex-wrap justify-center gap-6 text-xs text-cream/40 mt-6 pt-4 border-t border-cream/10">
-          <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm border-2 border-red" /> Big Board</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm border-2 border-gold/60" /> Grade Representative</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm border-2 border-cream/30" /> Board Member</span>
+        <div className="flex flex-wrap justify-center gap-6 text-sm text-cream/50 mt-8 pt-5 border-t border-cream/10 w-full">
+          <span className="flex items-center gap-2"><span className="inline-block w-4 h-4 rounded border-2 border-red" /> Big Board</span>
+          <span className="flex items-center gap-2"><span className="inline-block w-4 h-4 rounded border-2 border-gold/60" /> Grade Representative</span>
+          <span className="flex items-center gap-2"><span className="inline-block w-4 h-4 rounded border-2 border-cream/30" /> Board Member</span>
         </div>
       </div>
       </div>
@@ -3838,21 +3839,21 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
 
 function MyTeamView({ reports, onNavigate }) {
   return (
-    <div>
-      <h2 className="text-xl font-semibold text-cream mb-6">My Team</h2>
+    <div className="w-full">
+      <h2 className="font-display text-3xl text-cream mb-6">My Team</h2>
       {reports.length === 0 ? (
         <p className="text-cream/40">No direct reports.</p>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-w-2xl">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 w-full">
           {reports.map(r => (
             <button key={r.id} onClick={() => onNavigate({ type: 'person', userId: r.id })}
-              className="group bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/30 rounded-xl p-4 flex items-center gap-3 text-left transition-all duration-150 active:scale-95">
-              <div className="w-10 h-10 rounded-full bg-navy3 flex items-center justify-center text-cream/60 text-sm font-semibold shrink-0">
+              className="group bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/30 rounded-xl p-5 flex items-center gap-4 text-left transition-all duration-150 active:scale-95 w-full">
+              <div className="w-12 h-12 rounded-full bg-navy3 flex items-center justify-center text-cream/70 text-lg font-semibold shrink-0">
                 {r.displayName.charAt(0).toUpperCase()}
               </div>
               <div>
-                <div className="text-cream text-sm font-medium group-hover:text-gold transition-colors">{r.displayName}</div>
-                <div className="text-cream/40 text-xs">{r.title || roleLabel(r.role)}</div>
+                <div className="text-cream text-base font-semibold group-hover:text-gold transition-colors">{r.displayName}</div>
+                <div className="text-cream/50 text-sm mt-0.5">{r.title || roleLabel(r.role)}</div>
               </div>
             </button>
           ))}
