@@ -1406,12 +1406,17 @@ function OrgNode({ title, name, tone = 'gold', children }) {
 
 function OrgChart() {
   const [users, setUsers] = useState(null);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    api('/orgchart').then((d) => setUsers(d.users)).catch(() => setUsers([]));
+  const load = useCallback(() => {
+    setError('');
+    api('/orgchart').then((d) => setUsers(d.users)).catch((err) => setError(err.message || 'Failed to load org chart'));
   }, []);
 
-  if (!users) return <div className="text-cream/50 py-10 text-center">Loading…</div>;
+  useEffect(() => { load(); }, [load]);
+
+  if (!users && !error) return <Loading label="Loading org chart…" />;
+  if (error) return <ErrorState message={error} onRetry={load} />;
 
   const isGradeRep = (u) => (u.title || '').toLowerCase().includes('grade rep');
   const gradeReps = users.filter(isGradeRep);
@@ -1438,7 +1443,7 @@ function OrgChart() {
   return (
     <div className="w-full">
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Org Chart</h1>
-      <p className="text-cream/50 mb-8">Club America — 2025–26 Board</p>
+      <p className="text-cream/50 mb-8">Club America — {(() => { const y = new Date().getFullYear(); const s = new Date().getMonth() >= 7 ? y : y - 1; return `${s}–${String(s + 1).slice(2)}`; })()} Board</p>
 
       <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
       <div className="flex flex-col items-center gap-6 pb-10 min-w-max sm:min-w-0 mx-auto">
@@ -3008,6 +3013,8 @@ function WeeklyCheckinPage({ me }) {
           <Toggle enabled={enabled} onChange={toggleEnabled} disabled={busy} />
         </div>
       )}
+
+      {enabled === null && !error && <Loading label="Loading check-in settings…" />}
 
       {error && <div className="text-red text-sm mb-4">{error}</div>}
 
