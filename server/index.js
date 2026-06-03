@@ -1041,16 +1041,18 @@ app.patch('/api/tasks/:id', (req, res) => {
   if (!task) return res.status(404).json({ error: 'Task not found' });
   if (!canViewTasksOf(req.user, task.userId)) return res.status(403).json({ error: 'Not allowed' });
 
-  const { status, name, description, dueDate } = req.body || {};
+  const body = req.body || {};
+  const { status, name, description, dueDate } = body;
   if (status && !STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  const hasDueDate = 'dueDate' in body ? 1 : 0;
 
   db.prepare(`UPDATE tasks SET
        status = COALESCE(?, status),
        name = COALESCE(?, name),
        description = COALESCE(?, description),
-       dueDate = COALESCE(?, dueDate)
+       dueDate = CASE WHEN ? = 1 THEN ? ELSE dueDate END
      WHERE id = ?`)
-    .run(status || null, name || null, description ?? null, dueDate ?? null, task.id);
+    .run(status || null, name || null, description ?? null, hasDueDate, dueDate ?? null, task.id);
 
   res.json({ task: taskWithNames(getTask(task.id)) });
 });

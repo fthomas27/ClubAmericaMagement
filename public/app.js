@@ -194,6 +194,13 @@ function timeAgo(iso) {
   return d.toLocaleDateString();
 }
 
+// Format a "YYYY-MM-DD" date string as "Jun 5" for display in task cards.
+function fmtShortDate(iso) {
+  if (!iso) return '';
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? new Date(iso + 'T12:00:00') : new Date(iso);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 // Trigger a client-side CSV download from an array of plain objects.
 function downloadCSV(filename, rows) {
   if (!rows || !rows.length) return;
@@ -348,6 +355,7 @@ function ChangePassword({ user, onDone, forced }) {
   async function submit(e) {
     e.preventDefault();
     setError('');
+    if (pw.length < 4) return setError('Password must be at least 4 characters');
     if (pw !== confirm) return setError('Passwords do not match');
     setLoading(true);
     try {
@@ -621,7 +629,6 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
 // Task page (used for self and for managed reports)
 // ---------------------------------------------------------------------------
 function TaskCard({ task, canEdit, onChange, onDelete }) {
-  const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   return (
     <div className="bg-navy2 border border-cream/10 rounded-lg p-4">
@@ -633,7 +640,7 @@ function TaskCard({ task, canEdit, onChange, onDelete }) {
         <Badge tone={statusTone(task.status)}>{task.status}</Badge>
       </div>
       <div className="flex items-center flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-cream/50">
-        {task.dueDate && <span>Due {task.dueDate}</span>}
+        {task.dueDate && <span>Due {fmtShortDate(task.dueDate)}</span>}
         <span>Assigned by <span className="text-gold/80">{task.assignedByName}</span></span>
         {task.approvalStatus === 'pending' && <Badge tone="red">Pending approval</Badge>}
       </div>
@@ -811,7 +818,7 @@ function PersonalCalendarSection({ userId }) {
         <span className="text-lg">📅</span>
         <div className="font-display text-2xl text-gold">My Calendar</div>
       </div>
-      {loading && <div className="text-cream/40 text-sm">Loading events…</div>}
+      {loading && <Loading label="Loading events…" />}
       {calError && <div className="text-red text-sm">{calError}</div>}
       {!loading && !calError && events.length === 0 && (
         <div className="text-cream/40 text-sm">No upcoming events.</div>
@@ -839,6 +846,7 @@ function CopyableFormSection({ title, fields }) {
 
   const [values, setValues] = useState({});
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState('');
 
   function setField(field, val) {
     setValues((v) => ({ ...v, [field]: val }));
@@ -854,8 +862,11 @@ function CopyableFormSection({ title, fields }) {
     try {
       await navigator.clipboard.writeText(lines.join('\n'));
       setCopied(true);
+      setCopyError('');
       setTimeout(() => setCopied(false), 2000);
-    } catch (_) {}
+    } catch (_) {
+      setCopyError('Copy failed — please copy manually.');
+    }
   }
 
   if (parsedFields.length === 0) return null;
@@ -873,7 +884,8 @@ function CopyableFormSection({ title, fields }) {
       <Button variant="gold" onClick={copyToClipboard}>
         {copied ? '✓ Copied to Clipboard!' : 'Copy to Clipboard'}
       </Button>
-      <p className="text-xs text-cream/40 mt-2">Fill in the fields above, then copy and paste anywhere.</p>
+      {copyError && <p className="text-xs text-red mt-2">{copyError}</p>}
+      {!copyError && <p className="text-xs text-cream/40 mt-2">Fill in the fields above, then copy and paste anywhere.</p>}
     </div>
   );
 }
@@ -1385,7 +1397,7 @@ function SubmissionsInbox({ onChanged, refreshSignal }) {
               </div>
             </div>
             {s.message && <div className="text-sm text-cream/70 mt-2 whitespace-pre-line">{s.message}</div>}
-            <div className="text-xs text-cream/40 mt-2">{(s.createdAt || '').replace('T', ' ').slice(0, 16)}</div>
+            <div className="text-xs text-cream/40 mt-2">{timeAgo(s.createdAt)}</div>
             <div className="flex gap-2 mt-3 items-center">
               <a href={`mailto:${s.email}`} className="text-xs text-gold/80 hover:text-gold mr-auto">Email {s.name.split(' ')[0]}</a>
               <Button variant={s.handled ? 'ghost' : 'gold'} onClick={() => toggle(s)} disabled={busyId === s.id}>
@@ -1719,8 +1731,8 @@ function AdminPanel({ users, reload }) {
             <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
               <div>
                 <div className="text-cream/50 uppercase tracking-wider mb-1">Role</div>
-                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full"
-                  value={u.role} onChange={(e) => updateUser(u, { role: e.target.value })}>
+                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full disabled:opacity-40"
+                  value={u.role} disabled={saving} onChange={(e) => updateUser(u, { role: e.target.value })}>
                   <option value="member">Member</option>
                   <option value="manager">Manager</option>
                   <option value="admin">Admin</option>
@@ -1728,16 +1740,16 @@ function AdminPanel({ users, reload }) {
               </div>
               <div>
                 <div className="text-cream/50 uppercase tracking-wider mb-1">Reports To</div>
-                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full"
-                  value={u.managerId || ''} onChange={(e) => updateUser(u, { managerId: e.target.value ? Number(e.target.value) : null })}>
+                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full disabled:opacity-40"
+                  value={u.managerId || ''} disabled={saving} onChange={(e) => updateUser(u, { managerId: e.target.value ? Number(e.target.value) : null })}>
                   <option value="">— none —</option>
                   {users.filter((x) => x.id !== u.id).map((x) => <option key={x.id} value={x.id}>{x.displayName}</option>)}
                 </select>
               </div>
               <div>
                 <div className="text-cream/50 uppercase tracking-wider mb-1">Grade</div>
-                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full"
-                  value={u.grade || ''} onChange={(e) => updateUser(u, { grade: e.target.value })}>
+                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full disabled:opacity-40"
+                  value={u.grade || ''} disabled={saving} onChange={(e) => updateUser(u, { grade: e.target.value })}>
                   <option value="">—</option>
                   {GRADES.map((g) => <option key={g} value={g}>{gradeOption(g)}</option>)}
                 </select>
@@ -1745,7 +1757,7 @@ function AdminPanel({ users, reload }) {
               <div>
                 <div className="text-cream/50 uppercase tracking-wider mb-1">Managed Grade</div>
                 <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full"
-                  value={u.managedGrade || ''} onChange={(e) => updateUser(u, { managedGrade: e.target.value ? Number(e.target.value) : null })}>
+                  value={u.managedGrade || ''} disabled={saving} onChange={(e) => updateUser(u, { managedGrade: e.target.value ? Number(e.target.value) : null })}>
                   <option value="">— none —</option>
                   {[9,10,11,12].map((g) => <option key={g} value={g}>{g}th Grade</option>)}
                 </select>
@@ -1761,8 +1773,9 @@ function AdminPanel({ users, reload }) {
                 ].map(({ key, label }) => (
                   <label key={key} className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={!!u[key]}
+                      disabled={saving}
                       onChange={(e) => updateUser(u, { [key]: e.target.checked })}
-                      className="accent-gold" />
+                      className="accent-gold disabled:opacity-40" />
                     <span className="text-cream/70">{label}</span>
                   </label>
                 ))}
@@ -3194,7 +3207,7 @@ function FundingRequestPage({ me }) {
                 <div className="font-medium text-cream">{r.title}</div>
                 {r.description && <div className="text-sm text-cream/60 mt-1">{r.description}</div>}
                 <div className="text-xs text-cream/40 mt-2">
-                  By {r.submitterName} · ${Number(r.amount).toFixed(2)}
+                  By {r.submitterName}{r.amount > 0 ? ` · $${Number(r.amount).toFixed(2)}` : ''}
                   {r.reviewerName && <> · Reviewed by {r.reviewerName}</>}
                   {r.reviewNotes && <> · "{r.reviewNotes}"</>}
                 </div>
@@ -3486,7 +3499,7 @@ function AdminDashboardPage({ me }) {
                 <div>
                   <div className="font-medium text-cream">{r.title}</div>
                   {r.description && <div className="text-sm text-cream/60 mt-1">{r.description}</div>}
-                  <div className="text-xs text-cream/40 mt-1">By {r.submitterName} · ${Number(r.amount).toFixed(2)} · {fmtDate(r.createdAt)}</div>
+                  <div className="text-xs text-cream/40 mt-1">By {r.submitterName}{r.amount > 0 ? ` · $${Number(r.amount).toFixed(2)}` : ''} · {fmtDate(r.createdAt)}</div>
                 </div>
                 <Badge tone="slate">pending</Badge>
               </div>
@@ -3590,7 +3603,7 @@ function AdminDashboardPage({ me }) {
               {recentActivity.map((a) => (
                 <div key={a.id} className="px-4 py-2.5 flex items-center justify-between gap-3 text-sm">
                   <span className="text-cream/80">{fmtActivity(a)}</span>
-                  <span className="text-xs text-cream/40 shrink-0">{(a.createdAt || '').replace('T', ' ').slice(5, 16)}</span>
+                  <span className="text-xs text-cream/40 shrink-0">{timeAgo(a.createdAt)}</span>
                 </div>
               ))}
             </div>
