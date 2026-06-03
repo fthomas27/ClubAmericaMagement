@@ -630,6 +630,7 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
 // ---------------------------------------------------------------------------
 function TaskCard({ task, canEdit, onChange, onDelete }) {
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
   return (
     <div className="bg-navy2 border border-cream/10 rounded-lg p-4">
       <div className="flex items-start justify-between gap-3">
@@ -653,7 +654,9 @@ function TaskCard({ task, canEdit, onChange, onDelete }) {
               disabled={saving}
               onChange={async (e) => {
                 setSaving(true);
-                try { await onChange(task, { status: e.target.value }); } catch (_) {}
+                setSaveError('');
+                try { await onChange(task, { status: e.target.value }); }
+                catch (err) { setSaveError(err.message || 'Failed to save'); }
                 finally { setSaving(false); }
               }}
             >
@@ -662,6 +665,7 @@ function TaskCard({ task, canEdit, onChange, onDelete }) {
               <option>Complete</option>
             </select>
             {saving && <span className="flex items-center gap-1 text-xs text-cream/40"><Spinner className="w-3 h-3" /> Saving…</span>}
+            {saveError && <span className="text-xs text-red/80">{saveError}</span>}
           </div>
           {onDelete && (
             <button onClick={() => onDelete(task)} className="text-xs text-red/80 hover:text-red ml-auto">
@@ -1331,7 +1335,7 @@ function Approvals({ onChanged, refreshSignal }) {
             {t.description && <div className="text-sm text-cream/60 mt-1">{t.description}</div>}
             <div className="text-xs text-cream/50 mt-2">
               For <span className="text-gold/80">{t.ownerName}</span> · from <span className="text-gold/80">{t.assignedByName}</span>
-              {t.dueDate && <> · due {t.dueDate}</>}
+              {t.dueDate && <> · due {fmtShortDate(t.dueDate)}</>}
             </div>
             <div className="flex gap-2 mt-3">
               <Button variant="gold" disabled={!!busy} onClick={() => act(t, 'approve')}>{busy === `${t.id}:approve` ? <span className="flex items-center gap-2"><Spinner /> Approving…</span> : 'Approve'}</Button>
@@ -1620,7 +1624,7 @@ function AdminPanel({ users, reload }) {
   const [error, setError] = useState('');
   const [editTarget, setEditTarget] = useState(null);
   const [adding, setAdding] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useState('');
   const [confirmEl, confirm] = useConfirm();
 
   async function addUser(e) {
@@ -1642,12 +1646,12 @@ function AdminPanel({ users, reload }) {
 
   async function updateUser(u, patch) {
     setError('');
-    setSaving(true);
+    setSaving('updateUser');
     try {
       await api(`/admin/users/${u.id}`, { method: 'PATCH', body: patch });
       reload();
     } catch (err) { setError(err.message); }
-    finally { setSaving(false); }
+    finally { setSaving(''); }
   }
   async function removeUser(u) {
     if (!(await confirm({ title: `Remove ${u.displayName}?`, message: 'Their direct reports roll up to their manager. This cannot be undone.', confirmLabel: 'Remove', danger: true }))) return;
@@ -1659,12 +1663,12 @@ function AdminPanel({ users, reload }) {
   }
   async function resetPw(u) {
     if (!(await confirm({ title: `Reset password?`, message: `${u.displayName}'s password will be reset to their default and they'll set a new one at next login.`, confirmLabel: 'Reset password' }))) return;
-    setSaving(true);
+    setSaving('resetPw');
     try {
       const d = await api(`/admin/users/${u.id}/reset-password`, { method: 'POST' });
       setNotice(`${u.displayName}'s password reset to default "${d.defaultPassword}". They'll set a new one at next login.`);
     } catch (err) { setError(err.message); }
-    finally { setSaving(false); }
+    finally { setSaving(''); }
   }
 
   const byId = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
@@ -1732,7 +1736,7 @@ function AdminPanel({ users, reload }) {
               <div>
                 <div className="text-cream/50 uppercase tracking-wider mb-1">Role</div>
                 <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full disabled:opacity-40"
-                  value={u.role} disabled={saving} onChange={(e) => updateUser(u, { role: e.target.value })}>
+                  value={u.role} disabled={!!saving} onChange={(e) => updateUser(u, { role: e.target.value })}>
                   <option value="member">Member</option>
                   <option value="manager">Manager</option>
                   <option value="admin">Admin</option>
@@ -1741,7 +1745,7 @@ function AdminPanel({ users, reload }) {
               <div>
                 <div className="text-cream/50 uppercase tracking-wider mb-1">Reports To</div>
                 <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full disabled:opacity-40"
-                  value={u.managerId || ''} disabled={saving} onChange={(e) => updateUser(u, { managerId: e.target.value ? Number(e.target.value) : null })}>
+                  value={u.managerId || ''} disabled={!!saving} onChange={(e) => updateUser(u, { managerId: e.target.value ? Number(e.target.value) : null })}>
                   <option value="">— none —</option>
                   {users.filter((x) => x.id !== u.id).map((x) => <option key={x.id} value={x.id}>{x.displayName}</option>)}
                 </select>
@@ -1749,7 +1753,7 @@ function AdminPanel({ users, reload }) {
               <div>
                 <div className="text-cream/50 uppercase tracking-wider mb-1">Grade</div>
                 <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full disabled:opacity-40"
-                  value={u.grade || ''} disabled={saving} onChange={(e) => updateUser(u, { grade: e.target.value })}>
+                  value={u.grade || ''} disabled={!!saving} onChange={(e) => updateUser(u, { grade: e.target.value })}>
                   <option value="">—</option>
                   {GRADES.map((g) => <option key={g} value={g}>{gradeOption(g)}</option>)}
                 </select>
@@ -1757,7 +1761,7 @@ function AdminPanel({ users, reload }) {
               <div>
                 <div className="text-cream/50 uppercase tracking-wider mb-1">Managed Grade</div>
                 <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full"
-                  value={u.managedGrade || ''} disabled={saving} onChange={(e) => updateUser(u, { managedGrade: e.target.value ? Number(e.target.value) : null })}>
+                  value={u.managedGrade || ''} disabled={!!saving} onChange={(e) => updateUser(u, { managedGrade: e.target.value ? Number(e.target.value) : null })}>
                   <option value="">— none —</option>
                   {[9,10,11,12].map((g) => <option key={g} value={g}>{g}th Grade</option>)}
                 </select>
@@ -1773,7 +1777,7 @@ function AdminPanel({ users, reload }) {
                 ].map(({ key, label }) => (
                   <label key={key} className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={!!u[key]}
-                      disabled={saving}
+                      disabled={!!saving}
                       onChange={(e) => updateUser(u, { [key]: e.target.checked })}
                       className="accent-gold disabled:opacity-40" />
                     <span className="text-cream/70">{label}</span>
@@ -1805,7 +1809,7 @@ function InstagramIcon({ className = 'w-5 h-5' }) {
 }
 
 // Ensure external URLs always have a protocol so they don't become relative links.
-function ensureHttps(url) {
+function ensureAbsoluteUrl(url) {
   if (!url) return url;
   return /^https?:\/\//i.test(url) ? url : 'https://' + url;
 }
@@ -1814,7 +1818,7 @@ function ensureHttps(url) {
 function InstagramLink({ url, className = '' }) {
   if (!url) return null;
   return (
-    <a href={ensureHttps(url)} target="_blank" rel="noopener"
+    <a href={ensureAbsoluteUrl(url)} target="_blank" rel="noopener"
       className={`inline-flex items-center gap-2 px-4 py-2 rounded-md bg-gradient-to-r from-red to-gold text-cream text-sm font-medium hover:opacity-90 transition-opacity ${className}`}>
       <InstagramIcon className="w-4 h-4" /> Follow on Instagram
     </a>
@@ -1906,7 +1910,7 @@ function PodcastCard({ home }) {
             )}
           </div>
           {home.podcastUrl && (
-            <a href={ensureHttps(home.podcastUrl)} target="_blank" rel="noopener"
+            <a href={ensureAbsoluteUrl(home.podcastUrl)} target="_blank" rel="noopener"
               onClick={() => track('podcast_watch', home.podcastUrl)}
               className="mt-4 inline-block bg-gold hover:bg-gold/85 text-navy font-semibold text-sm px-4 py-2 rounded-md transition-colors">
               ▶ Watch on YouTube
@@ -2232,22 +2236,28 @@ function BoardModal({ member, onClose }) {
 
 function MeetTheBoard() {
   const [members, setMembers] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [sel, setSel] = useState(null);
   const [error, setError] = useState('');
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setError('');
+    setLoading(true);
     api('/board')
       .then((d) => setMembers(d.members))
-      .catch((err) => setError(err.message || 'Failed to load board'));
+      .catch((err) => setError(err.message || 'Failed to load board'))
+      .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   if (error) return (
     <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6">
       <h2 className="font-display text-3xl text-gold mb-4">Meet the Board</h2>
-      <ErrorState message={error} onRetry={() => { setError(''); setMembers(null); api('/board').then((d) => setMembers(d.members)).catch((e) => setError(e.message)); }} />
+      <ErrorState message={error} onRetry={load} />
     </section>
   );
-  if (!members || members.length === 0) return null;
+  if (loading || !members || members.length === 0) return null;
 
   const tree = buildBoardTree(members);
   const renderNode = (node) => (
@@ -2357,7 +2367,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         <footer className="border-t border-cream/10 py-6 text-center text-cream/40 text-sm space-y-3">
           {home.instagramUrl && (
             <div className="flex justify-center">
-              <a href={ensureHttps(home.instagramUrl)} target="_blank" rel="noopener"
+              <a href={ensureAbsoluteUrl(home.instagramUrl)} target="_blank" rel="noopener"
                 className="inline-flex items-center gap-2 text-cream/60 hover:text-gold transition-colors">
                 <InstagramIcon className="w-5 h-5" /> @ our Instagram
               </a>
@@ -3555,7 +3565,7 @@ function AdminDashboardPage({ me }) {
               {t.description && <div className="text-sm text-cream/60 mt-1">{t.description}</div>}
               <div className="text-xs text-cream/50 mt-2">
                 For <span className="text-gold/80">{t.ownerName}</span> · from <span className="text-gold/80">{t.assignedByName}</span>
-                {t.dueDate && <> · due {t.dueDate}</>}
+                {t.dueDate && <> · due {fmtShortDate(t.dueDate)}</>}
               </div>
               <div className="flex gap-2 mt-3">
                 <Button variant="gold" className="text-xs px-3 py-1" onClick={() => taskAction(t, 'approve')} disabled={!!busy}>
