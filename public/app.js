@@ -1431,17 +1431,24 @@ function AdminPanel({ users, reload }) {
   }
 
   async function updateUser(u, patch) {
-    await api(`/admin/users/${u.id}`, { method: 'PATCH', body: patch });
-    reload();
+    try {
+      await api(`/admin/users/${u.id}`, { method: 'PATCH', body: patch });
+      reload();
+    } catch (err) { setError(err.message || 'Failed to update user'); }
   }
   async function removeUser(u) {
     if (!confirm(`Remove ${u.displayName}? Their reports roll up to their manager.`)) return;
-    await api(`/admin/users/${u.id}`, { method: 'DELETE' });
-    reload();
+    try {
+      await api(`/admin/users/${u.id}`, { method: 'DELETE' });
+      reload();
+    } catch (err) { setError(err.message || 'Failed to remove user'); }
   }
   async function resetPw(u) {
-    const d = await api(`/admin/users/${u.id}/reset-password`, { method: 'POST' });
-    setNotice(`${u.displayName}'s password reset to default "${d.defaultPassword}". They'll set a new one at next login.`);
+    try {
+      const d = await api(`/admin/users/${u.id}/reset-password`, { method: 'POST' });
+      setNotice(`${u.displayName}'s password reset. Login: "${d.defaultPassword}" / Password: "${d.defaultPassword}". They'll be prompted to set a new one.`);
+      reload();
+    } catch (err) { setError(err.message || 'Failed to reset password'); }
   }
 
   const byId = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
