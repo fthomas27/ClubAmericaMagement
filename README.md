@@ -86,20 +86,29 @@ does the right thing without the warning.
 |---|---|
 | `JWT_SECRET` | **Set this in production.** A strong random string that signs login sessions. Without it the app warns and uses an insecure default (sessions could be forged). |
 | `DB_PATH` | Where the SQLite file lives (see above). Auto-detected on Railway via its volume. |
-| `RESEND_API_KEY` | Enables **email notifications** via [Resend](https://resend.com). Without it, notifications are simply skipped (the app still works). |
+| `RESEND_API_KEY` | Enables **email notifications** via [Resend](https://resend.com). Without it, emails are skipped — but **in-app notifications still work** (the app shows them in the bell menu). |
 | `MAIL_FROM` | The sender address for emails, e.g. `Club America <noreply@yourdomain.org>`. Defaults to Resend's test sender. |
 | `APP_URL` | Public URL of the app (used for the "Open Club America" button in emails). |
 | `PORT` | Port to listen on (Railway sets this automatically). |
 
-### Email notifications
-When `RESEND_API_KEY` is set, the app emails:
-- the **assignee** when a task is assigned to them (or approved),
-- the **approver** when a task needs their sign-off,
-- the routed board members (that grade's reps + President/VP) when a **Get Involved** form is submitted.
+### Notifications
+Every board member has an **in-app notification bell** (top-right) that works
+whether or not email is configured. Notifications are created when:
+- a task is **assigned** to you (or your assignment is approved/rejected),
+- a task needs **your approval**,
+- a **funding request** is submitted (CFO + admins) or reviewed (the submitter),
+- a **board application** is submitted (admins) or reviewed (the applicant),
+- a **Get Involved** form is submitted (that grade's reps + President/VP).
 
-Board members add their notification email on the profile setup screen (right
-after first login) or under **Edit profile**; admins can also set it in the
-Admin Panel.
+When `RESEND_API_KEY` is set, those same events are **also** emailed. Board
+members add their notification email on the profile setup screen (right after
+first login) or under **Edit profile**; admins can also set it in the Admin
+Panel.
+
+### Weekly check-ins
+Check-ins are due every **Friday**. Each member submits one update per week, and
+the Dashboard shows who still owes the current week's check-in. Managers/admins
+can review all check-ins and export them to CSV.
 
 ---
 
