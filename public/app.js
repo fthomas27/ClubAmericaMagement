@@ -1082,8 +1082,10 @@ function TeamAnnouncementView({ me, reports }) {
     finally { setBusy(false); }
   }
 
+  const [confirmEl, confirm] = useConfirm();
+
   async function remove() {
-    if (!confirm("Remove the team announcement? It will disappear from your reports' pages.")) return;
+    if (!(await confirm({ title: 'Remove announcement?', message: "This will disappear from your reports' pages.", confirmLabel: 'Remove', danger: true }))) return;
     setBusy(true); setSaved(false);
     try {
       await api('/team-announcement', { method: 'DELETE' });
@@ -1100,6 +1102,7 @@ function TeamAnnouncementView({ me, reports }) {
 
   return (
     <div className="max-w-2xl">
+      {confirmEl}
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Team Announcement</h1>
       <p className="text-cream/50 mb-6">
         Post a message that appears at the top of the My Page for {scope}. One active announcement at a time.
@@ -1985,16 +1988,19 @@ function GetInvolved() {
   const [form, setForm] = useState({ name: '', email: '', grade: '', message: '' });
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
+  const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   async function submit(e) {
     e.preventDefault();
     setError('');
     if (!form.grade) { setError('Please select your grade.'); return; }
+    setBusy(true);
     try {
       await api('/submissions', { method: 'POST', body: { ...form, type: tab } });
       setDone(true);
     } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
   }
 
   const TabBtn = ({ id, children }) => (
@@ -2045,7 +2051,9 @@ function GetInvolved() {
           </div>
           {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
           <div className="sm:col-span-2">
-            <Button type="submit" variant="gold">{tab === 'board' ? 'Submit Application' : 'Join the Club'}</Button>
+            <Button type="submit" variant="gold" disabled={busy}>
+              {busy ? <span className="flex items-center gap-2"><Spinner /> Submitting…</span> : tab === 'board' ? 'Submit Application' : 'Join the Club'}
+            </Button>
           </div>
         </form>
       )}
@@ -3330,7 +3338,10 @@ function AdminDashboardPage({ me }) {
 
   function fmtDate(iso) {
     if (!iso) return '';
-    return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    // Date-only strings ("YYYY-MM-DD") parse as UTC midnight and show the wrong
+    // day in western timezones — anchor to local noon to get the right date.
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? new Date(iso + 'T12:00:00') : new Date(iso);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
 
   if (error && !data) return <div className="max-w-5xl"><ErrorState message={error} onRetry={load} /></div>;
