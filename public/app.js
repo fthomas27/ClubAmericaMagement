@@ -1982,6 +1982,7 @@ function GetInvolved() {
     e.preventDefault();
     setError('');
     if (!form.grade) { setError('Please select your grade.'); return; }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) { setError('Please enter a valid email address.'); return; }
     setBusy(true);
     try {
       await api('/submissions', { method: 'POST', body: { ...form, type: tab } });
@@ -2099,7 +2100,7 @@ function HomeAnnouncementEditor({ home, onSaved }) {
     <section className="bg-navy2 border border-cream/10 rounded-2xl p-6 space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-2xl text-cream">Homepage Announcement</h2>
-        <button onClick={() => setOpen(false)} className="text-cream/50 hover:text-cream text-2xl leading-none">×</button>
+        <button onClick={() => setOpen(false)} aria-label="Close" className="text-cream/50 hover:text-cream text-2xl leading-none">×</button>
       </div>
       <Field label="Announcement (leave blank to remove)">
         <textarea className={inputCls} rows="3"
@@ -2156,7 +2157,7 @@ function BoardModal({ member, onClose }) {
   }, [onClose]);
   return (
     <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
-      <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-md w-full p-6 relative">
+      <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-md w-full p-6 relative max-h-[85vh] overflow-y-auto">
         <button onClick={onClose} aria-label="Close" className="absolute top-2 right-4 text-cream/60 hover:text-cream text-3xl leading-none">×</button>
         <div className="flex items-center gap-4">
           <Avatar member={member} size={84} />

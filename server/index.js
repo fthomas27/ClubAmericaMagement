@@ -190,7 +190,7 @@ app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 40, name:
   res.json({ token: signToken(user), user: publicUser(user) });
 });
 
-app.post('/api/auth/change-password', authenticate, (req, res) => {
+app.post('/api/auth/change-password', authenticate, rateLimit({ windowMs: 15 * 60 * 1000, max: 10, name: 'change-password' }), (req, res) => {
   const { newPassword } = req.body || {};
   if (!newPassword || String(newPassword).length < 4) {
     return res.status(400).json({ error: 'New password must be at least 4 characters' });
@@ -231,10 +231,11 @@ app.get('/api/home', async (req, res) => {
 });
 
 // Public board roster for the "Meet the Board" page (no private info, no auth).
+// Filtered to bigBoard users so only actual board leaders appear publicly.
 // Returns hasPhoto (boolean) instead of the full base64 blob to keep the payload small.
 app.get('/api/board', (req, res) => {
   const members = db
-    .prepare("SELECT id, displayName, title, role, grade, managerId, bio, photo FROM users ORDER BY displayName")
+    .prepare("SELECT id, displayName, title, role, grade, managerId, bio, photo FROM users WHERE bigBoard = 1 ORDER BY displayName")
     .all()
     .map(({ photo, ...m }) => ({ ...m, hasPhoto: !!photo }));
   res.json({ members });
@@ -433,7 +434,14 @@ function canPostAnnouncement(user) {
 }
 app.put('/api/home', (req, res) => {
   if (!canEditHome(req.user)) return res.status(403).json({ error: 'Only the Digital Presence Manager can edit the homepage' });
-  const { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, aboutText } = req.body || {};
+  let { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, aboutText } = req.body || {};
+  if (meetingDate   !== undefined) meetingDate    = String(meetingDate).trim().slice(0, 100);
+  if (meetingTime   !== undefined) meetingTime    = String(meetingTime).trim().slice(0, 100);
+  if (meetingLocation !== undefined) meetingLocation = String(meetingLocation).trim().slice(0, 300);
+  if (podcastUrl    !== undefined) podcastUrl     = String(podcastUrl).trim().slice(0, 500);
+  if (calendarUrl   !== undefined) calendarUrl    = String(calendarUrl).trim().slice(0, 500);
+  if (instagramUrl  !== undefined) instagramUrl   = String(instagramUrl).trim().slice(0, 300);
+  if (aboutText     !== undefined) aboutText      = String(aboutText).trim().slice(0, 8000);
   const podcastEnabledVal = podcastEnabled === undefined ? null : (podcastEnabled ? 1 : 0);
   db.prepare(`UPDATE site_settings SET
        meetingDate = COALESCE(?, meetingDate),
@@ -563,7 +571,7 @@ app.get('/api/team-announcement', (req, res) => {
 
 app.put('/api/team-announcement', (req, res) => {
   if (req.user.role === 'member') return res.status(403).json({ error: 'Not allowed' });
-  const trimmed = String((req.body || {}).text || '').trim();
+  const trimmed = String((req.body || {}).text || '').trim().slice(0, 2000);
   if (!trimmed) return res.status(400).json({ error: 'Announcement text required' });
   db.prepare(`
     INSERT INTO team_announcements (authorId, text) VALUES (?, ?)
@@ -660,9 +668,11 @@ app.post('/api/roster', (req, res) => {
   }
   const info = db.prepare(`INSERT INTO roster_members (firstName,lastName,phone,email,grade,gender,roleDescription,status,notes)
     VALUES (?,?,?,?,?,?,?,?,?)`).run(
-    String(firstName).trim(), String(lastName||'').trim(), String(phone||'').trim(),
-    String(email||'').trim(), grade||null, String(gender||'').trim(),
-    String(roleDescription||'').trim(), status||'Prospect', String(notes||'').trim()
+    String(firstName).trim().slice(0, 100), String(lastName||'').trim().slice(0, 100),
+    String(phone||'').trim().slice(0, 30), String(email||'').trim().slice(0, 200),
+    grade||null, String(gender||'').trim().slice(0, 30),
+    String(roleDescription||'').trim().slice(0, 500), status||'Prospect',
+    String(notes||'').trim().slice(0, 2000)
   );
   res.status(201).json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(info.lastInsertRowid) });
 });
@@ -810,21 +820,23 @@ app.get('/api/funding', (req, res) => {
   res.json({ requests: rows });
 });
 
-app.post('/api/funding', (req, res) => {
+app.post('/api/funding', rateLimit({ windowMs: 60 * 60 * 1000, max: 20, name: 'funding' }), (req, res) => {
   const { title, description, amount } = req.body || {};
   if (!title || !String(title).trim()) return res.status(400).json({ error: 'Title required' });
   const amt = Number(amount) || 0;
   if (amt < 0) return res.status(400).json({ error: 'Amount cannot be negative' });
+  const safeTitle = String(title).trim().slice(0, 300);
+  const safeDesc = String(description || '').trim().slice(0, 4000);
   const info = db.prepare(`INSERT INTO funding_requests (submittedById,title,description,amount)
-    VALUES (?,?,?,?)`).run(req.user.id, String(title).trim(), String(description||'').trim(), amt);
+    VALUES (?,?,?,?)`).run(req.user.id, safeTitle, safeDesc, amt);
 
   // Notify the CFO + admins that a funding request is awaiting review.
   const reviewers = db.prepare("SELECT id, email FROM users WHERE role = 'admin' OR title = 'CFO'").all();
   for (const r of reviewers) {
     if (r.id === req.user.id) continue;
     notify(r.email, 'New funding request', 'Funding request awaiting review',
-      `<b>${req.user.displayName}</b> requested funding: <b>${String(title).trim()}</b> ($${amt}).`);
-    pushNotification(r.id, `${req.user.displayName} submitted a funding request: "${String(title).trim()}" ($${amt})`, 'funding', 'funding');
+      `<b>${req.user.displayName}</b> requested funding: <b>${safeTitle}</b> ($${amt}).`);
+    pushNotification(r.id, `${req.user.displayName} submitted a funding request: "${safeTitle}" ($${amt})`, 'funding', 'funding');
   }
   res.status(201).json({ request: db.prepare('SELECT * FROM funding_requests WHERE id=?').get(info.lastInsertRowid) });
 });
@@ -836,16 +848,22 @@ app.patch('/api/funding/:id', (req, res) => {
   const { action, reviewNotes } = req.body || {};
   if (!isPrivileged) return res.status(403).json({ error: 'Not allowed' });
   if (action === 'approve') {
-    db.prepare(`UPDATE funding_requests SET status='approved', reviewedById=?, reviewedAt=datetime('now'), reviewNotes=COALESCE(?,reviewNotes) WHERE id=?`).run(req.user.id, reviewNotes??null, fr.id);
-    logApproval('funding', fr.id, 'approved', req.user, reviewNotes || fr.title);
+    db.transaction(() => {
+      db.prepare(`UPDATE funding_requests SET status='approved', reviewedById=?, reviewedAt=datetime('now'), reviewNotes=COALESCE(?,reviewNotes) WHERE id=?`).run(req.user.id, reviewNotes??null, fr.id);
+      logApproval('funding', fr.id, 'approved', req.user, reviewNotes || fr.title);
+    })();
     pushNotification(fr.submittedById, `Your funding request "${fr.title}" was approved by ${req.user.displayName}`, 'funding', 'funding');
   } else if (action === 'deny') {
-    db.prepare(`UPDATE funding_requests SET status='denied', reviewedById=?, reviewedAt=datetime('now'), reviewNotes=COALESCE(?,reviewNotes) WHERE id=?`).run(req.user.id, reviewNotes??null, fr.id);
-    logApproval('funding', fr.id, 'denied', req.user, reviewNotes || fr.title);
+    db.transaction(() => {
+      db.prepare(`UPDATE funding_requests SET status='denied', reviewedById=?, reviewedAt=datetime('now'), reviewNotes=COALESCE(?,reviewNotes) WHERE id=?`).run(req.user.id, reviewNotes??null, fr.id);
+      logApproval('funding', fr.id, 'denied', req.user, reviewNotes || fr.title);
+    })();
     pushNotification(fr.submittedById, `Your funding request "${fr.title}" was denied by ${req.user.displayName}`, 'funding', 'funding');
   } else if (action === 'purchased') {
-    db.prepare(`UPDATE funding_requests SET status='purchased', purchasedById=?, purchasedAt=datetime('now') WHERE id=?`).run(req.user.id, fr.id);
-    logApproval('funding', fr.id, 'purchased', req.user, fr.title);
+    db.transaction(() => {
+      db.prepare(`UPDATE funding_requests SET status='purchased', purchasedById=?, purchasedAt=datetime('now') WHERE id=?`).run(req.user.id, fr.id);
+      logApproval('funding', fr.id, 'purchased', req.user, fr.title);
+    })();
     pushNotification(fr.submittedById, `Your funding request "${fr.title}" was marked purchased by ${req.user.displayName}`, 'funding', 'funding');
   }
   res.json({ request: db.prepare('SELECT * FROM funding_requests WHERE id=?').get(fr.id) });
@@ -867,11 +885,13 @@ app.get('/api/board-apps', (req, res) => {
   res.json({ applications: rows });
 });
 
-app.post('/api/board-apps', (req, res) => {
+app.post('/api/board-apps', rateLimit({ windowMs: 60 * 60 * 1000, max: 10, name: 'board-apps' }), (req, res) => {
   const { positionTitle, statement } = req.body || {};
   if (!positionTitle || !String(positionTitle).trim()) return res.status(400).json({ error: 'Position title required' });
+  const safePosition = String(positionTitle).trim().slice(0, 200);
+  const safeStatement = String(statement || '').trim().slice(0, 6000);
   const info = db.prepare(`INSERT INTO board_applications (userId,positionTitle,statement) VALUES (?,?,?)`).run(
-    req.user.id, String(positionTitle).trim(), String(statement||'').trim()
+    req.user.id, safePosition, safeStatement
   );
 
   // Notify admins that a leadership application is awaiting review.
@@ -879,8 +899,8 @@ app.post('/api/board-apps', (req, res) => {
   for (const a of admins) {
     if (a.id === req.user.id) continue;
     notify(a.email, 'New board application', 'Board application awaiting review',
-      `<b>${req.user.displayName}</b> applied for <b>${String(positionTitle).trim()}</b>.`);
-    pushNotification(a.id, `${req.user.displayName} applied for "${String(positionTitle).trim()}"`, 'board-apps', 'board-app');
+      `<b>${req.user.displayName}</b> applied for <b>${safePosition}</b>.`);
+    pushNotification(a.id, `${req.user.displayName} applied for "${safePosition}"`, 'board-apps', 'board-app');
   }
   res.status(201).json({ application: db.prepare('SELECT * FROM board_applications WHERE id=?').get(info.lastInsertRowid) });
 });
@@ -892,8 +912,10 @@ app.patch('/api/board-apps/:id', (req, res) => {
   const { action } = req.body || {};
   if (action === 'accept' || action === 'decline') {
     const status = action === 'accept' ? 'accepted' : 'declined';
-    db.prepare(`UPDATE board_applications SET status=?, reviewedById=?, reviewedAt=datetime('now') WHERE id=?`).run(status, req.user.id, ba.id);
-    logApproval('board-app', ba.id, status, req.user, ba.positionTitle);
+    db.transaction(() => {
+      db.prepare(`UPDATE board_applications SET status=?, reviewedById=?, reviewedAt=datetime('now') WHERE id=?`).run(status, req.user.id, ba.id);
+      logApproval('board-app', ba.id, status, req.user, ba.positionTitle);
+    })();
     pushNotification(ba.userId, `Your application for "${ba.positionTitle}" was ${status} by ${req.user.displayName}`, 'board-apps', 'board-app');
   }
   res.json({ application: db.prepare('SELECT * FROM board_applications WHERE id=?').get(ba.id) });
@@ -967,7 +989,7 @@ app.get('/api/users/:id/tasks', (req, res) => {
 // Create a task. If targetUserId is omitted or equals self -> own task.
 // If sending to someone else -> pending their manager's approval,
 // unless the sender is an admin (President/VP), who can assign directly.
-app.post('/api/tasks', (req, res) => {
+app.post('/api/tasks', rateLimit({ windowMs: 60 * 60 * 1000, max: 60, name: 'tasks' }), (req, res) => {
   const { name, description, dueDate, targetUserId } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'Task name required' });
 
@@ -998,14 +1020,16 @@ app.post('/api/tasks', (req, res) => {
     }
   }
 
+  const safeName = String(name).trim().slice(0, 300);
+  const safeDesc = String(description || '').trim().slice(0, 5000);
   const info = db
     .prepare(`INSERT INTO tasks (userId, name, description, dueDate, status, assignedById, approvalStatus, approverId)
               VALUES (?, ?, ?, ?, 'Not Started', ?, ?, ?)`)
-    .run(ownerId, String(name).trim(), description || '', dueDate || null, req.user.id, approvalStatus, approverId);
+    .run(ownerId, safeName, safeDesc, dueDate || null, req.user.id, approvalStatus, approverId);
 
   // Notifications
   if (!isSelf) {
-    const taskName = String(name).trim();
+    const taskName = safeName;
     if (approvalStatus === 'approved') {
       // Assigned directly (by an admin, or auto-approved) — tell the assignee.
       notify(owner.email, 'New task assigned to you',
@@ -1082,8 +1106,10 @@ app.post('/api/tasks/:id/approve', (req, res) => {
   if (!task) return res.status(404).json({ error: 'Task not found' });
   if (task.approvalStatus !== 'pending') return res.status(400).json({ error: 'Task is not pending' });
   if (!canApprove(req.user, task)) return res.status(403).json({ error: 'Not allowed to approve' });
-  db.prepare("UPDATE tasks SET approvalStatus = 'approved' WHERE id = ?").run(task.id);
-  logApproval('task', task.id, 'approved', req.user, task.name);
+  db.transaction(() => {
+    db.prepare("UPDATE tasks SET approvalStatus = 'approved' WHERE id = ?").run(task.id);
+    logApproval('task', task.id, 'approved', req.user, task.name);
+  })();
   // Now that it's approved, the assignee should know about their new task.
   const owner = getUser(task.userId);
   const assigner = task.assignedById ? getUser(task.assignedById) : null;
@@ -1103,8 +1129,10 @@ app.post('/api/tasks/:id/reject', (req, res) => {
   if (!task) return res.status(404).json({ error: 'Task not found' });
   if (task.approvalStatus !== 'pending') return res.status(400).json({ error: 'Task is not pending' });
   if (!canApprove(req.user, task)) return res.status(403).json({ error: 'Not allowed to reject' });
-  db.prepare("UPDATE tasks SET approvalStatus = 'rejected' WHERE id = ?").run(task.id);
-  logApproval('task', task.id, 'rejected', req.user, task.name);
+  db.transaction(() => {
+    db.prepare("UPDATE tasks SET approvalStatus = 'rejected' WHERE id = ?").run(task.id);
+    logApproval('task', task.id, 'rejected', req.user, task.name);
+  })();
   // Tell whoever proposed the assignment that it was turned down.
   if (task.assignedById && task.assignedById !== req.user.id) {
     pushNotification(task.assignedById, `${req.user.displayName} rejected the task "${task.name}" you proposed`, 'tasks', 'task');
@@ -1113,7 +1141,7 @@ app.post('/api/tasks/:id/reject', (req, res) => {
 });
 
 // ---- Admin Panel ------------------------------------------------------------
-app.post('/api/admin/users', requireAdmin, (req, res) => {
+app.post('/api/admin/users', requireAdmin, rateLimit({ windowMs: 60 * 60 * 1000, max: 30, name: 'admin-create-user' }), (req, res) => {
   let { firstName, lastName, role, title, managerId, grade, email } = req.body || {};
   firstName = (firstName || '').trim();
   lastName = (lastName || '').trim();
@@ -1252,7 +1280,7 @@ app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
 });
 
 // Reset a user's password back to their username default (admin convenience).
-app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
+app.post('/api/admin/users/:id/reset-password', requireAdmin, rateLimit({ windowMs: 15 * 60 * 1000, max: 15, name: 'admin-reset-pw' }), (req, res) => {
   const target = getUser(Number(req.params.id));
   if (!target) return res.status(404).json({ error: 'User not found' });
   db.prepare('UPDATE users SET passwordHash = ?, firstLogin = 1 WHERE id = ?')

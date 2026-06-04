@@ -226,6 +226,21 @@ function init() {
     );
     CREATE INDEX IF NOT EXISTS idx_approval_log_entity
       ON approval_log(entityType, entityId);
+
+    CREATE INDEX IF NOT EXISTS idx_roster_status_grade
+      ON roster_members(status, grade);
+    CREATE INDEX IF NOT EXISTS idx_roster_claimed
+      ON roster_members(claimedByUserId);
+    CREATE INDEX IF NOT EXISTS idx_funding_submitter
+      ON funding_requests(submittedById, status);
+    CREATE INDEX IF NOT EXISTS idx_board_apps_user
+      ON board_applications(userId, status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_user
+      ON tasks(userId, approvalStatus);
+    CREATE INDEX IF NOT EXISTS idx_login_logs_user
+      ON login_logs(userId);
+    CREATE INDEX IF NOT EXISTS idx_checkins_week
+      ON weekly_checkins(weekOf);
   `);
 
   // User column migrations.
