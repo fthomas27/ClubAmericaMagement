@@ -684,7 +684,7 @@ function NewTaskForm({ targetUserId, onCreated }) {
   async function submit(e) {
     e.preventDefault();
     if (!name.trim()) { setError('Please enter a task name.'); return; }
-    if (dueDate && dueDate < new Date().toISOString().slice(0, 10)) { setError('Due date can’t be in the past.'); return; }
+    if (dueDate && dueDate < new Date().toISOString().slice(0, 10)) { setError("Due date can't be in the past."); return; }
     try {
       await run(() => api('/tasks', { method: 'POST', body: { name: name.trim(), description: description.trim(), dueDate: dueDate || null, targetUserId } }));
       setName(''); setDescription(''); setDueDate(''); setOpen(false);
@@ -723,7 +723,7 @@ function AssignTaskForm({ me, users, onCreated }) {
     setMsg('');
     if (!targetUserId) { setError('Please choose who to send this to.'); return; }
     if (!name.trim()) { setError('Please enter a task name.'); return; }
-    if (dueDate && dueDate < new Date().toISOString().slice(0, 10)) { setError('Due date can’t be in the past.'); return; }
+    if (dueDate && dueDate < new Date().toISOString().slice(0, 10)) { setError("Due date can't be in the past."); return; }
     try {
       const data = await run(() => api('/tasks', { method: 'POST', body: { name: name.trim(), description: description.trim(), dueDate: dueDate || null, targetUserId: Number(targetUserId) } }));
       setName(''); setDescription(''); setDueDate(''); setTargetUserId('');
@@ -3020,24 +3020,24 @@ function FundingRequestPage({ me }) {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   async function submit(e) {
-    e.preventDefault(); setNotice(‘’);
-    if (!form.title.trim()) { setError(‘Please enter a title.’); return; }
-    if (form.amount && Number(form.amount) < 0) { setError(‘Amount can’t be negative.’); return; }
-    setError(‘’); setBusy(‘submit’);
+    e.preventDefault(); setNotice('');
+    if (!form.title.trim()) { setError('Please enter a title.'); return; }
+    if (form.amount && Number(form.amount) < 0) { setError("Amount can't be negative."); return; }
+    setError(''); setBusy('submit');
     try {
-      await api(‘/funding’, { method: ‘POST’, body: { ...form, title: form.title.trim(), amount: Number(form.amount) || 0 } });
-      setForm({ title: ‘’, description: ‘’, amount: ‘’ });
-      setOpen(false); setNotice(‘Funding request submitted!’); load();
+      await api('/funding', { method: 'POST', body: { ...form, title: form.title.trim(), amount: Number(form.amount) || 0 } });
+      setForm({ title: '', description: '', amount: '' });
+      setOpen(false); setNotice('Funding request submitted!'); load();
     } catch (err) { setError(err.message); }
-    finally { setBusy(‘’); }
+    finally { setBusy(''); }
   }
 
   async function reviewAction(id, action, reviewNotes) {
-    if (action === ‘deny’ && !(await confirm({ title: ‘Deny request?’, message: ‘The submitter will be notified that this request was denied.’, confirmLabel: ‘Deny’, danger: true }))) return;
+    if (action === 'deny' && !(await confirm({ title: 'Deny request?', message: 'The submitter will be notified that this request was denied.', confirmLabel: 'Deny', danger: true }))) return;
     setBusy(`${id}:${action}`);
-    try { await api(`/funding/${id}`, { method: ‘PATCH’, body: { action, reviewNotes } }); load(); }
+    try { await api(`/funding/${id}`, { method: 'PATCH', body: { action, reviewNotes } }); load(); }
     catch (err) { setError(err.message); }
-    finally { setBusy(‘’); }
+    finally { setBusy(''); }
   }
 
   function exportCSV() {
