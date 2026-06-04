@@ -14,7 +14,6 @@ process.on('uncaughtException', (err) => {
 });
 
 const { db, init, seed } = require('./db');
-const { fetchUpcoming, clearCache } = require('./calendar');
 const { notify } = require('./email');
 const { analyzeTeamHealth, chatWithAI, aiEnabled } = require('./ai');
 const {
@@ -159,7 +158,6 @@ function getPageSettings(userId) {
   if (!row) return {
     userId,
     bannerEnabled: false, bannerTitle: '', bannerUrl: '',
-    calendarEnabled: false, calendarUrl: '',
     formEnabled: false, formTitle: '', formFields: [],
     announcementEnabled: false, announcementText: '',
     bioEnabled: false, bioText: '',
@@ -169,7 +167,6 @@ function getPageSettings(userId) {
   return {
     ...row,
     bannerEnabled: !!row.bannerEnabled,
-    calendarEnabled: !!row.calendarEnabled,
     formEnabled: !!row.formEnabled,
     announcementEnabled: !!row.announcementEnabled,
     bioEnabled: !!row.bioEnabled,
@@ -211,7 +208,7 @@ app.get('/api/me', authenticate, (req, res) => {
 
 // ---- Public homepage content (no auth) --------------------------------------
 function getHome() {
-  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, aboutText, homeAnnouncement, homeAnnouncementEnabled, announcementPostedAt, updatedAt FROM site_settings WHERE id = 1').get();
+  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, instagramUrl, aboutText, homeAnnouncement, homeAnnouncementEnabled, announcementPostedAt, updatedAt FROM site_settings WHERE id = 1').get();
   // Auto-expire the announcement after 7 days.
   let announcementEnabled = !!row.homeAnnouncementEnabled;
   if (announcementEnabled && row.announcementPostedAt) {
@@ -223,22 +220,30 @@ function getHome() {
   }
   return { ...row, podcastEnabled: !!row.podcastEnabled, homeAnnouncementEnabled: announcementEnabled };
 }
-app.get('/api/home', async (req, res) => {
-  const home = getHome();
-  let events = [];
-  try { events = await fetchUpcoming(home.calendarUrl, 3); } catch (_) {}
-  // Don't leak the raw calendar URL to the public payload.
-  const { calendarUrl, ...publicHome } = home;
-  res.json({ home: { ...publicHome, calendarConfigured: !!calendarUrl }, events });
+app.get('/api/home', (req, res) => {
+  res.json({ home: getHome() });
 });
 
 // Public board roster for the "Meet the Board" page (no private info, no auth).
+// Returns hasPhoto (boolean) instead of the full base64 blob to keep the payload small.
 app.get('/api/board', (req, res) => {
   const members = db
     .prepare("SELECT id, displayName, title, role, grade, managerId, bio, photo FROM users ORDER BY displayName")
     .all()
-    .map((m) => ({ ...m, photo: m.photo || null }));
+    .map(({ photo, ...m }) => ({ ...m, hasPhoto: !!photo }));
   res.json({ members });
+});
+
+// Serves a single user's profile photo. No auth required (same data shown publicly).
+app.get('/api/users/:id/photo', (req, res) => {
+  const row = db.prepare('SELECT photo FROM users WHERE id = ?').get(Number(req.params.id));
+  if (!row || !row.photo) return res.status(404).end();
+  // photo is stored as a data URL: "data:image/jpeg;base64,..."
+  const m = String(row.photo).match(/^data:(image\/[a-z+]+);base64,(.+)$/s);
+  if (!m) return res.status(404).end();
+  res.set('Content-Type', m[1]);
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.send(Buffer.from(m[2], 'base64'));
 });
 
 // Public "Get Involved" submission (club-join or board application). No auth.
@@ -406,7 +411,7 @@ app.delete('/api/submissions/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// The full settings (including the calendar URL) for authorized editors.
+// The full settings for authorized editors.
 app.get('/api/home/settings', (req, res) => {
   if (!canEditHome(req.user)) return res.status(403).json({ error: 'Not allowed' });
   res.json({ home: getHome() });
@@ -422,7 +427,7 @@ function canPostAnnouncement(user) {
 }
 app.put('/api/home', (req, res) => {
   if (!canEditHome(req.user)) return res.status(403).json({ error: 'Only the Digital Presence Manager can edit the homepage' });
-  const { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, aboutText } = req.body || {};
+  const { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, instagramUrl, aboutText } = req.body || {};
   const podcastEnabledVal = podcastEnabled === undefined ? null : (podcastEnabled ? 1 : 0);
   db.prepare(`UPDATE site_settings SET
        meetingDate = COALESCE(?, meetingDate),
@@ -430,7 +435,6 @@ app.put('/api/home', (req, res) => {
        meetingLocation = COALESCE(?, meetingLocation),
        podcastUrl = COALESCE(?, podcastUrl),
        podcastEnabled = COALESCE(?, podcastEnabled),
-       calendarUrl = COALESCE(?, calendarUrl),
        instagramUrl = COALESCE(?, instagramUrl),
        aboutText = COALESCE(?, aboutText),
        updatedAt = datetime('now')
@@ -441,27 +445,12 @@ app.put('/api/home', (req, res) => {
       meetingLocation ?? null,
       podcastUrl ?? null,
       podcastEnabledVal,
-      calendarUrl ?? null,
       instagramUrl ?? null,
       aboutText ?? null,
     );
   res.json({ home: getHome() });
 });
 
-// Force-refresh the iCal cache for the configured calendar URL.
-app.post('/api/home/calendar/refresh', async (req, res) => {
-  if (!canEditHome(req.user)) return res.status(403).json({ error: 'Not allowed' });
-  const home = getHome();
-  const url = db.prepare('SELECT calendarUrl FROM site_settings WHERE id = 1').get().calendarUrl;
-  if (!url) return res.status(400).json({ error: 'No calendar URL configured' });
-  clearCache(url);
-  try {
-    const events = await fetchUpcoming(url, 3);
-    res.json({ ok: true, events });
-  } catch (_) {
-    res.status(502).json({ error: 'Failed to fetch calendar — check the URL' });
-  }
-});
 
 // Homepage announcement — secretary, digital presence, VP, president.
 app.put('/api/home/announcement', (req, res) => {
@@ -511,7 +500,7 @@ app.put('/api/users/:id/page-settings', (req, res) => {
   if (req.user.role !== 'admin' && !isManagerOf(req.user, targetId)) {
     return res.status(403).json({ error: 'Only admins or the direct manager can edit page settings' });
   }
-  const { bannerEnabled, bannerTitle, bannerUrl, calendarEnabled, calendarUrl,
+  const { bannerEnabled, bannerTitle, bannerUrl,
           formEnabled, formTitle, formFields, announcementEnabled, announcementText,
           bioEnabled, bioText } = req.body || {};
   db.prepare('INSERT OR IGNORE INTO user_page_settings (userId) VALUES (?)').run(targetId);
@@ -519,8 +508,6 @@ app.put('/api/users/:id/page-settings', (req, res) => {
     bannerEnabled       = COALESCE(?, bannerEnabled),
     bannerTitle         = COALESCE(?, bannerTitle),
     bannerUrl           = COALESCE(?, bannerUrl),
-    calendarEnabled     = COALESCE(?, calendarEnabled),
-    calendarUrl         = COALESCE(?, calendarUrl),
     formEnabled         = COALESCE(?, formEnabled),
     formTitle           = COALESCE(?, formTitle),
     formFields          = COALESCE(?, formFields),
@@ -533,8 +520,6 @@ app.put('/api/users/:id/page-settings', (req, res) => {
     bannerEnabled !== undefined ? (bannerEnabled ? 1 : 0) : null,
     bannerTitle ?? null,
     bannerUrl ?? null,
-    calendarEnabled !== undefined ? (calendarEnabled ? 1 : 0) : null,
-    calendarUrl ?? null,
     formEnabled !== undefined ? (formEnabled ? 1 : 0) : null,
     formTitle ?? null,
     formFields !== undefined ? JSON.stringify(Array.isArray(formFields) ? formFields : []) : null,
@@ -545,19 +530,6 @@ app.put('/api/users/:id/page-settings', (req, res) => {
     targetId,
   );
   res.json({ settings: getPageSettings(targetId) });
-});
-
-app.get('/api/users/:id/calendar', async (req, res) => {
-  const targetId = Number(req.params.id);
-  if (!canViewTasksOf(req.user, targetId)) return res.status(403).json({ error: 'Not allowed' });
-  const settings = getPageSettings(targetId);
-  if (!settings.calendarEnabled || !settings.calendarUrl) return res.json({ events: [] });
-  try {
-    const events = await fetchUpcoming(settings.calendarUrl, 5);
-    res.json({ events });
-  } catch (_) {
-    res.json({ events: [], error: 'Failed to fetch calendar events' });
-  }
 });
 
 // ---- Team announcements (broadcast from manager/admin to all their reports) --
@@ -1041,16 +1013,18 @@ app.patch('/api/tasks/:id', (req, res) => {
   if (!task) return res.status(404).json({ error: 'Task not found' });
   if (!canViewTasksOf(req.user, task.userId)) return res.status(403).json({ error: 'Not allowed' });
 
-  const { status, name, description, dueDate } = req.body || {};
+  const body = req.body || {};
+  const { status, name, description, dueDate } = body;
   if (status && !STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  const hasDueDate = 'dueDate' in body ? 1 : 0;
 
   db.prepare(`UPDATE tasks SET
        status = COALESCE(?, status),
        name = COALESCE(?, name),
        description = COALESCE(?, description),
-       dueDate = COALESCE(?, dueDate)
+       dueDate = CASE WHEN ? = 1 THEN ? ELSE dueDate END
      WHERE id = ?`)
-    .run(status || null, name || null, description ?? null, dueDate ?? null, task.id);
+    .run(status || null, name || null, description ?? null, hasDueDate, dueDate ?? null, task.id);
 
   res.json({ task: taskWithNames(getTask(task.id)) });
 });
@@ -1161,6 +1135,18 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
   const newManagerId = managerId === undefined ? user.managerId : (managerId || null);
   if (newManagerId === user.id) return res.status(400).json({ error: 'A user cannot manage themselves' });
 
+  // Detect transitive cycles: walk up the proposed manager's chain; if we reach user.id, it's circular.
+  if (newManagerId) {
+    let cur = getUser(newManagerId);
+    const seen = new Set();
+    while (cur && cur.managerId) {
+      if (seen.has(cur.id)) break;
+      seen.add(cur.id);
+      if (cur.managerId === user.id) return res.status(400).json({ error: 'This would create a circular reporting chain' });
+      cur = getUser(cur.managerId);
+    }
+  }
+
   // managedGrade is nullable, so handle it directly (COALESCE can't clear a value).
   const newManagedGrade = managedGrade === undefined ? user.managedGrade : (managedGrade || null);
 
@@ -1224,9 +1210,21 @@ app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
   if (!target) return res.status(404).json({ error: 'User not found' });
   if (target.id === req.user.id) return res.status(400).json({ error: 'You cannot remove yourself' });
   const formerManager = target.managerId;
-  // Orphaned reports roll up to the removed user's manager.
-  db.prepare('UPDATE users SET managerId = ? WHERE managerId = ?').run(formerManager, target.id);
-  db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
+  db.transaction(() => {
+    // Re-parent direct reports to the removed user's manager.
+    db.prepare('UPDATE users SET managerId = ? WHERE managerId = ?').run(formerManager, target.id);
+    // Clean up all rows owned by or referencing this user.
+    db.prepare('DELETE FROM notifications WHERE userId = ?').run(target.id);
+    db.prepare('DELETE FROM team_announcements WHERE authorId = ?').run(target.id);
+    db.prepare('DELETE FROM board_applications WHERE userId = ?').run(target.id);
+    db.prepare('DELETE FROM ai_chat_messages WHERE userId = ?').run(target.id);
+    db.prepare('DELETE FROM ai_notes WHERE userId = ?').run(target.id);
+    db.prepare('UPDATE roster_members SET claimedByUserId = NULL WHERE claimedByUserId = ?').run(target.id);
+    db.prepare('UPDATE funding_requests SET reviewedById = NULL WHERE reviewedById = ?').run(target.id);
+    db.prepare('UPDATE funding_requests SET purchasedById = NULL WHERE purchasedById = ?').run(target.id);
+    db.prepare('UPDATE board_applications SET reviewedById = NULL WHERE reviewedById = ?').run(target.id);
+    db.prepare('DELETE FROM users WHERE id = ?').run(target.id);
+  })();
   if (formerManager) refreshRole(formerManager);
   res.json({ ok: true });
 });

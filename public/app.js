@@ -194,6 +194,13 @@ function timeAgo(iso) {
   return d.toLocaleDateString();
 }
 
+// Format a "YYYY-MM-DD" date string as "Jun 5" for display in task cards.
+function fmtShortDate(iso) {
+  if (!iso) return '';
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? new Date(iso + 'T12:00:00') : new Date(iso);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 // Trigger a client-side CSV download from an array of plain objects.
 function downloadCSV(filename, rows) {
   if (!rows || !rows.length) return;
@@ -348,6 +355,7 @@ function ChangePassword({ user, onDone, forced }) {
   async function submit(e) {
     e.preventDefault();
     setError('');
+    if (pw.length < 4) return setError('Password must be at least 4 characters');
     if (pw !== confirm) return setError('Passwords do not match');
     setLoading(true);
     try {
@@ -621,7 +629,7 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
 // Task page (used for self and for managed reports)
 // ---------------------------------------------------------------------------
 function TaskCard({ task, canEdit, onChange, onDelete }) {
-  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
   return (
     <div className="bg-navy2 border border-cream/10 rounded-lg p-4">
       <div className="flex items-start justify-between gap-3">
@@ -632,21 +640,29 @@ function TaskCard({ task, canEdit, onChange, onDelete }) {
         <Badge tone={statusTone(task.status)}>{task.status}</Badge>
       </div>
       <div className="flex items-center flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-cream/50">
-        {task.dueDate && <span>Due {task.dueDate}</span>}
+        {task.dueDate && <span>Due {fmtShortDate(task.dueDate)}</span>}
         <span>Assigned by <span className="text-gold/80">{task.assignedByName}</span></span>
         {task.approvalStatus === 'pending' && <Badge tone="red">Pending approval</Badge>}
       </div>
       {canEdit && task.approvalStatus === 'approved' && (
         <div className="flex items-center gap-2 mt-3">
-          <select
-            className="bg-navy border border-cream/20 rounded px-2 py-1 text-sm"
-            value={task.status}
-            onChange={(e) => onChange(task, { status: e.target.value })}
-          >
-            <option>Not Started</option>
-            <option>In Progress</option>
-            <option>Complete</option>
-          </select>
+          <div className="flex items-center gap-2">
+            <select
+              className="bg-navy border border-cream/20 rounded px-2 py-1 text-sm disabled:opacity-50"
+              value={task.status}
+              disabled={saving}
+              onChange={async (e) => {
+                setSaving(true);
+                try { await onChange(task, { status: e.target.value }); } catch (_) {}
+                finally { setSaving(false); }
+              }}
+            >
+              <option>Not Started</option>
+              <option>In Progress</option>
+              <option>Complete</option>
+            </select>
+            {saving && <span className="flex items-center gap-1 text-xs text-cream/40"><Spinner className="w-3 h-3" /> Saving…</span>}
+          </div>
           {onDelete && (
             <button onClick={() => onDelete(task)} className="text-xs text-red/80 hover:text-red ml-auto">
               Delete
@@ -781,46 +797,6 @@ function AnnouncementSection({ text }) {
   );
 }
 
-function PersonalCalendarSection({ userId }) {
-  const [events, setEvents] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [calError, setCalError] = useState('');
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setCalError('');
-    api(`/users/${userId}/calendar`)
-      .then((d) => { if (!cancelled) { setEvents(d.events || []); setLoading(false); } })
-      .catch((err) => { if (!cancelled) { setCalError(err.message); setLoading(false); } });
-    return () => { cancelled = true; };
-  }, [userId]);
-
-  return (
-    <div className="bg-navy2 border border-cream/10 rounded-xl p-5 mb-6">
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-lg">📅</span>
-        <div className="font-display text-2xl text-gold">My Calendar</div>
-      </div>
-      {loading && <div className="text-cream/40 text-sm">Loading events…</div>}
-      {calError && <div className="text-red text-sm">{calError}</div>}
-      {!loading && !calError && events.length === 0 && (
-        <div className="text-cream/40 text-sm">No upcoming events.</div>
-      )}
-      {!loading && events.length > 0 && (
-        <ul className="space-y-3">
-          {events.map((e, i) => (
-            <li key={i} className="border-l-2 border-gold/50 pl-3">
-              <div className="text-cream font-medium leading-tight">{e.title}</div>
-              <div className="text-sm text-gold/80">{fmtEvent(e.start)}</div>
-              {e.location && <div className="text-sm text-cream/50">{e.location}</div>}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
 
 function CopyableFormSection({ title, fields }) {
   const parsedFields = useMemo(() => {
@@ -830,6 +806,7 @@ function CopyableFormSection({ title, fields }) {
 
   const [values, setValues] = useState({});
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState('');
 
   function setField(field, val) {
     setValues((v) => ({ ...v, [field]: val }));
@@ -845,8 +822,11 @@ function CopyableFormSection({ title, fields }) {
     try {
       await navigator.clipboard.writeText(lines.join('\n'));
       setCopied(true);
+      setCopyError('');
       setTimeout(() => setCopied(false), 2000);
-    } catch (_) {}
+    } catch (_) {
+      setCopyError('Copy failed — please copy manually.');
+    }
   }
 
   if (parsedFields.length === 0) return null;
@@ -864,7 +844,8 @@ function CopyableFormSection({ title, fields }) {
       <Button variant="gold" onClick={copyToClipboard}>
         {copied ? '✓ Copied to Clipboard!' : 'Copy to Clipboard'}
       </Button>
-      <p className="text-xs text-cream/40 mt-2">Fill in the fields above, then copy and paste anywhere.</p>
+      {copyError && <p className="text-xs text-red mt-2">{copyError}</p>}
+      {!copyError && <p className="text-xs text-cream/40 mt-2">Fill in the fields above, then copy and paste anywhere.</p>}
     </div>
   );
 }
@@ -965,25 +946,6 @@ function PageAdminControls({ targetUser, onUpdated }) {
                   <textarea className={inputCls} rows="2" defaultValue={settings.announcementText}
                     onBlur={(e) => e.target.value !== settings.announcementText && save({ announcementText: e.target.value })}
                     placeholder="e.g. Please submit your weekly report by Friday." />
-                </Field>
-              </div>
-            )}
-          </div>
-
-          <div className="py-4">
-            <div className="flex items-start justify-between gap-4 mb-2">
-              <div>
-                <div className="text-cream font-medium">Personal Calendar</div>
-                <div className="text-cream/50 text-sm">Shows upcoming events from an iCal / .ics feed.</div>
-              </div>
-              <Toggle enabled={settings.calendarEnabled} onChange={() => toggle('calendarEnabled')} disabled={busy} />
-            </div>
-            {settings.calendarEnabled && (
-              <div className="mt-3">
-                <Field label="iCal URL (.ics address)">
-                  <input className={inputCls} defaultValue={settings.calendarUrl}
-                    onBlur={(e) => e.target.value !== settings.calendarUrl && save({ calendarUrl: e.target.value })}
-                    placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" />
                 </Field>
               </div>
             )}
@@ -1232,7 +1194,6 @@ function TaskPage({ me, userId, users, refreshSignal }) {
       {ps.bannerEnabled && <BannerSection title={ps.bannerTitle} url={ps.bannerUrl} />}
       {ps.announcementEnabled && <AnnouncementSection text={ps.announcementText} />}
       {ps.bioEnabled && <BioSection text={ps.bioText} />}
-      {ps.calendarEnabled && <PersonalCalendarSection userId={userId} />}
       {ps.formEnabled && <CopyableFormSection title={ps.formTitle} fields={ps.formFields} />}
 
       <div className="space-y-3 mb-6">
@@ -1314,7 +1275,7 @@ function Approvals({ onChanged, refreshSignal }) {
             </div>
             <div className="flex gap-2 mt-3">
               <Button variant="gold" disabled={!!busy} onClick={() => act(t, 'approve')}>{busy === `${t.id}:approve` ? <span className="flex items-center gap-2"><Spinner /> Approving…</span> : 'Approve'}</Button>
-              <Button variant="danger" disabled={!!busy} onClick={() => act(t, 'reject')}>{busy === `${t.id}:reject` ? 'Rejecting…' : 'Reject'}</Button>
+              <Button variant="danger" disabled={!!busy} onClick={() => act(t, 'reject')}>{busy === `${t.id}:reject` ? <span className="flex items-center gap-2"><Spinner /> Rejecting…</span> : 'Reject'}</Button>
             </div>
           </div>
         ))}
@@ -1327,6 +1288,7 @@ function Approvals({ onChanged, refreshSignal }) {
 function SubmissionsInbox({ onChanged, refreshSignal }) {
   const [items, setItems] = useState(null);
   const [error, setError] = useState('');
+  const [busyId, setBusyId] = useState('');
   const [confirmEl, confirm] = useConfirm();
   const load = useCallback(async () => {
     setError('');
@@ -1336,11 +1298,13 @@ function SubmissionsInbox({ onChanged, refreshSignal }) {
   useEffect(() => { load(); }, [load, refreshSignal]);
 
   async function toggle(s) {
+    setBusyId(s.id);
     try {
       await api(`/submissions/${s.id}/handled`, { method: 'POST' });
       await load();
       onChanged && onChanged();
     } catch (err) { setError(err.message); }
+    finally { setBusyId(''); }
   }
   async function remove(s) {
     if (!(await confirm({ title: 'Delete submission?', message: `${s.name}'s ${s.type === 'board' ? 'board application' : 'club-join request'} will be permanently deleted.`, confirmLabel: 'Delete', danger: true }))) return;
@@ -1373,10 +1337,12 @@ function SubmissionsInbox({ onChanged, refreshSignal }) {
               </div>
             </div>
             {s.message && <div className="text-sm text-cream/70 mt-2 whitespace-pre-line">{s.message}</div>}
-            <div className="text-xs text-cream/40 mt-2">{(s.createdAt || '').replace('T', ' ').slice(0, 16)}</div>
+            <div className="text-xs text-cream/40 mt-2">{timeAgo(s.createdAt)}</div>
             <div className="flex gap-2 mt-3 items-center">
               <a href={`mailto:${s.email}`} className="text-xs text-gold/80 hover:text-gold mr-auto">Email {s.name.split(' ')[0]}</a>
-              <Button variant={s.handled ? 'ghost' : 'gold'} onClick={() => toggle(s)}>{s.handled ? 'Reopen' : 'Mark handled'}</Button>
+              <Button variant={s.handled ? 'ghost' : 'gold'} onClick={() => toggle(s)} disabled={busyId === s.id}>
+                {busyId === s.id ? <span className="flex items-center gap-2"><Spinner /> Saving…</span> : s.handled ? 'Reopen' : 'Mark handled'}
+              </Button>
               <Button variant="danger" onClick={() => remove(s)}>Delete</Button>
             </div>
           </div>
@@ -1406,12 +1372,17 @@ function OrgNode({ title, name, tone = 'gold', children }) {
 
 function OrgChart() {
   const [users, setUsers] = useState(null);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    api('/orgchart').then((d) => setUsers(d.users)).catch(() => setUsers([]));
+  const load = useCallback(() => {
+    setError('');
+    api('/orgchart').then((d) => setUsers(d.users)).catch((err) => setError(err.message || 'Failed to load org chart'));
   }, []);
 
-  if (!users) return <div className="text-cream/50 py-10 text-center">Loading…</div>;
+  useEffect(() => { load(); }, [load]);
+
+  if (!users && !error) return <Loading label="Loading org chart…" />;
+  if (error) return <ErrorState message={error} onRetry={load} />;
 
   const isGradeRep = (u) => (u.title || '').toLowerCase().includes('grade rep');
   const gradeReps = users.filter(isGradeRep);
@@ -1425,9 +1396,10 @@ function OrgChart() {
     else roots.push(byId[u.id]);
   });
 
-  function renderNode(node) {
+  function renderNode(node, depth = 0) {
+    if (depth > 20) return null;
     const tone = node.bigBoard ? 'red' : 'slate';
-    const childNodes = node.children.length > 0 ? node.children.map(renderNode) : null;
+    const childNodes = node.children.length > 0 ? node.children.map((n) => renderNode(n, depth + 1)) : null;
     return (
       <OrgNode key={node.id} title={node.title || roleLabel(node.role)} name={node.displayName} tone={tone}>
         {childNodes}
@@ -1438,7 +1410,7 @@ function OrgChart() {
   return (
     <div className="w-full">
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Org Chart</h1>
-      <p className="text-cream/50 mb-8">Club America — 2025–26 Board</p>
+      <p className="text-cream/50 mb-8">Club America — {(() => { const y = new Date().getFullYear(); const s = new Date().getMonth() >= 7 ? y : y - 1; return `${s}–${String(s + 1).slice(2)}`; })()} Board</p>
 
       <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
       <div className="flex flex-col items-center gap-6 pb-10 min-w-max sm:min-w-0 mx-auto">
@@ -1589,6 +1561,7 @@ function AdminPanel({ users, reload }) {
   const [error, setError] = useState('');
   const [editTarget, setEditTarget] = useState(null);
   const [adding, setAdding] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [confirmEl, confirm] = useConfirm();
 
   async function addUser(e) {
@@ -1610,10 +1583,12 @@ function AdminPanel({ users, reload }) {
 
   async function updateUser(u, patch) {
     setError('');
+    setSaving(true);
     try {
       await api(`/admin/users/${u.id}`, { method: 'PATCH', body: patch });
       reload();
     } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
   }
   async function removeUser(u) {
     if (!(await confirm({ title: `Remove ${u.displayName}?`, message: 'Their direct reports roll up to their manager. This cannot be undone.', confirmLabel: 'Remove', danger: true }))) return;
@@ -1625,10 +1600,12 @@ function AdminPanel({ users, reload }) {
   }
   async function resetPw(u) {
     if (!(await confirm({ title: `Reset password?`, message: `${u.displayName}'s password will be reset to their default and they'll set a new one at next login.`, confirmLabel: 'Reset password' }))) return;
+    setSaving(true);
     try {
       const d = await api(`/admin/users/${u.id}/reset-password`, { method: 'POST' });
       setNotice(`${u.displayName}'s password reset to default "${d.defaultPassword}". They'll set a new one at next login.`);
     } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
   }
 
   const byId = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
@@ -1673,7 +1650,10 @@ function AdminPanel({ users, reload }) {
         {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
       </form>
 
-      <div className="font-display text-2xl text-gold mb-3">All Members ({users.length})</div>
+      <div className="flex items-center gap-3 mb-3">
+        <div className="font-display text-2xl text-gold">All Members ({users.length})</div>
+        {saving && <span className="flex items-center gap-1.5 text-xs text-cream/50"><Spinner className="w-3 h-3" /> Saving…</span>}
+      </div>
       <div className="space-y-3">
         {users.map((u) => (
           <div key={u.id} className="bg-navy2 border border-cream/10 rounded-xl p-4">
@@ -1692,8 +1672,8 @@ function AdminPanel({ users, reload }) {
             <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
               <div>
                 <div className="text-cream/50 uppercase tracking-wider mb-1">Role</div>
-                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full"
-                  value={u.role} onChange={(e) => updateUser(u, { role: e.target.value })}>
+                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full disabled:opacity-40"
+                  value={u.role} disabled={saving} onChange={(e) => updateUser(u, { role: e.target.value })}>
                   <option value="member">Member</option>
                   <option value="manager">Manager</option>
                   <option value="admin">Admin</option>
@@ -1701,16 +1681,16 @@ function AdminPanel({ users, reload }) {
               </div>
               <div>
                 <div className="text-cream/50 uppercase tracking-wider mb-1">Reports To</div>
-                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full"
-                  value={u.managerId || ''} onChange={(e) => updateUser(u, { managerId: e.target.value ? Number(e.target.value) : null })}>
+                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full disabled:opacity-40"
+                  value={u.managerId || ''} disabled={saving} onChange={(e) => updateUser(u, { managerId: e.target.value ? Number(e.target.value) : null })}>
                   <option value="">— none —</option>
                   {users.filter((x) => x.id !== u.id).map((x) => <option key={x.id} value={x.id}>{x.displayName}</option>)}
                 </select>
               </div>
               <div>
                 <div className="text-cream/50 uppercase tracking-wider mb-1">Grade</div>
-                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full"
-                  value={u.grade || ''} onChange={(e) => updateUser(u, { grade: e.target.value })}>
+                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full disabled:opacity-40"
+                  value={u.grade || ''} disabled={saving} onChange={(e) => updateUser(u, { grade: e.target.value })}>
                   <option value="">—</option>
                   {GRADES.map((g) => <option key={g} value={g}>{gradeOption(g)}</option>)}
                 </select>
@@ -1718,7 +1698,7 @@ function AdminPanel({ users, reload }) {
               <div>
                 <div className="text-cream/50 uppercase tracking-wider mb-1">Managed Grade</div>
                 <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs w-full"
-                  value={u.managedGrade || ''} onChange={(e) => updateUser(u, { managedGrade: e.target.value ? Number(e.target.value) : null })}>
+                  value={u.managedGrade || ''} disabled={saving} onChange={(e) => updateUser(u, { managedGrade: e.target.value ? Number(e.target.value) : null })}>
                   <option value="">— none —</option>
                   {[9,10,11,12].map((g) => <option key={g} value={g}>{g}th Grade</option>)}
                 </select>
@@ -1734,8 +1714,9 @@ function AdminPanel({ users, reload }) {
                 ].map(({ key, label }) => (
                   <label key={key} className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={!!u[key]}
+                      disabled={saving}
                       onChange={(e) => updateUser(u, { [key]: e.target.checked })}
-                      className="accent-gold" />
+                      className="accent-gold disabled:opacity-40" />
                     <span className="text-cream/70">{label}</span>
                   </label>
                 ))}
@@ -1764,11 +1745,17 @@ function InstagramIcon({ className = 'w-5 h-5' }) {
   );
 }
 
+// Ensure external URLs always have a protocol so they don't become relative links.
+function ensureHttps(url) {
+  if (!url) return url;
+  return /^https?:\/\//i.test(url) ? url : 'https://' + url;
+}
+
 // A "Follow on Instagram" button, only rendered when a link is configured.
 function InstagramLink({ url, className = '' }) {
   if (!url) return null;
   return (
-    <a href={url} target="_blank" rel="noopener"
+    <a href={ensureHttps(url)} target="_blank" rel="noopener"
       className={`inline-flex items-center gap-2 px-4 py-2 rounded-md bg-gradient-to-r from-red to-gold text-cream text-sm font-medium hover:opacity-90 transition-opacity ${className}`}>
       <InstagramIcon className="w-4 h-4" /> Follow on Instagram
     </a>
@@ -1782,51 +1769,21 @@ function ytId(url) {
   return m ? m[1] : null;
 }
 
-function fmtEvent(iso) {
-  const d = new Date(iso);
-  if (isNaN(d)) return '';
-  // If the time is exactly midnight local, treat it as an all-day event.
-  const allDay = d.getHours() === 0 && d.getMinutes() === 0;
-  const date = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-  if (allDay) return date;
-  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  return `${date} · ${time}`;
-}
-
-// Shows the next few calendar events when a calendar is connected; otherwise
-// falls back to the manually-entered "Next Meeting" details.
-function MeetingCard({ home, events }) {
-  const hasEvents = events && events.length > 0;
+function MeetingCard({ home }) {
   return (
     <section className="bg-navy2 border border-gold/30 rounded-2xl p-6">
       <div className="flex items-center justify-between">
-        <h2 className="font-display text-3xl text-gold">{hasEvents ? 'Upcoming Events' : 'Next Meeting'}</h2>
+        <h2 className="font-display text-3xl text-gold">Next Meeting</h2>
         <span className="text-red text-xl">📅</span>
       </div>
-
-      {hasEvents ? (
-        <ul className="mt-4 space-y-3">
-          {events.map((e, i) => (
-            <li key={i} className="border-l-2 border-gold/50 pl-3">
-              <div className="text-lg text-cream font-medium leading-tight">{e.title}</div>
-              <div className="text-sm text-gold/80">{fmtEvent(e.start)}</div>
-              {e.location && <div className="text-sm text-cream/50">{e.location}</div>}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <div className="mt-4 space-y-3">
-          {[['Date', home.meetingDate], ['Time', home.meetingTime], ['Location', home.meetingLocation]].map(([label, val]) => (
-            <div key={label}>
-              <div className="text-xs uppercase tracking-wider text-cream/50">{label}</div>
-              <div className="text-2xl text-cream font-medium">{val || '—'}</div>
-            </div>
-          ))}
-          {home.calendarConfigured && (
-            <p className="text-xs text-cream/40">No upcoming events found on the connected calendar.</p>
-          )}
-        </div>
-      )}
+      <div className="mt-4 space-y-3">
+        {[['Date', home.meetingDate], ['Time', home.meetingTime], ['Location', home.meetingLocation]].map(([label, val]) => (
+          <div key={label}>
+            <div className="text-xs uppercase tracking-wider text-cream/50">{label}</div>
+            <div className="text-2xl text-cream font-medium">{val || '—'}</div>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
@@ -1860,7 +1817,7 @@ function PodcastCard({ home }) {
             )}
           </div>
           {home.podcastUrl && (
-            <a href={home.podcastUrl} target="_blank" rel="noopener"
+            <a href={ensureHttps(home.podcastUrl)} target="_blank" rel="noopener"
               onClick={() => track('podcast_watch', home.podcastUrl)}
               className="mt-4 inline-block bg-gold hover:bg-gold/85 text-navy font-semibold text-sm px-4 py-2 rounded-md transition-colors">
               ▶ Watch on YouTube
@@ -1877,23 +1834,12 @@ function HomeEditor({ onSaved }) {
   const [form, setForm] = useState(null);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
-  const [calRefreshing, setCalRefreshing] = useState(false);
-  const [calMsg, setCalMsg] = useState('');
-
-  async function refreshCalendar() {
-    setCalRefreshing(true); setCalMsg('');
-    try {
-      const d = await api('/home/calendar/refresh', { method: 'POST' });
-      setCalMsg(`✓ Refreshed — ${d.events.length} upcoming event${d.events.length === 1 ? '' : 's'} loaded.`);
-      onSaved && onSaved();
-    } catch (err) { setCalMsg('✗ ' + err.message); }
-    finally { setCalRefreshing(false); }
-  }
+  const [saving, setSaving] = useState(false);
 
   async function start() {
     setError(''); setSaved(false);
     try {
-      // Load the full settings (including the private calendar URL).
+      // Load the full site settings for the editor form.
       const d = await api('/home/settings');
       setForm(d.home);
       setOpen(true);
@@ -1901,14 +1847,13 @@ function HomeEditor({ onSaved }) {
   }
   async function submit(e) {
     e.preventDefault();
-    setError('');
+    setError(''); setSaving(true);
     try {
       const d = await api('/home', { method: 'PUT', body: {
         meetingDate: form.meetingDate,
         meetingTime: form.meetingTime,
         meetingLocation: form.meetingLocation,
         podcastUrl: form.podcastUrl,
-        calendarUrl: form.calendarUrl,
         instagramUrl: form.instagramUrl,
         aboutText: form.aboutText,
         podcastEnabled: form.podcastEnabled,
@@ -1917,6 +1862,7 @@ function HomeEditor({ onSaved }) {
       setSaved(true);
       setOpen(false);
     } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
   }
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
@@ -1925,40 +1871,23 @@ function HomeEditor({ onSaved }) {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h2 className="font-display text-2xl text-cream">Website Controls</h2>
-          <p className="text-cream/50 text-sm">President, VP, and the Digital Presence Manager can edit the meeting details, calendar feed, and podcast link shown on the public homepage.</p>
+          <p className="text-cream/50 text-sm">President, VP, and the Digital Presence Manager can edit the meeting details and podcast link shown on the public homepage.</p>
         </div>
         {!open && <Button variant="ghost" onClick={start}>Edit page</Button>}
       </div>
       {saved && !open && <div className="text-emerald-300 text-sm mt-3">Saved — the public homepage is updated.</div>}
       {open && form && (
         <form onSubmit={submit} className="mt-5 grid sm:grid-cols-2 gap-4">
-          <div className="sm:col-span-2">
-            <Field label="Calendar feed URL (iCal / .ics — e.g. Google Calendar public address)">
-              <input className={inputCls} value={form.calendarUrl || ''} onChange={set('calendarUrl')} placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" />
-            </Field>
-            <div className="flex items-center gap-3 mt-2 flex-wrap">
-              <p className="text-xs text-cream/40 flex-1">When set, the homepage shows the next 3 events from this calendar automatically. Leave blank to use the manual meeting fields below. Events cache for 5 minutes.</p>
-              {form.calendarUrl && (
-                <button type="button" onClick={refreshCalendar} disabled={calRefreshing}
-                  className="text-xs px-3 py-1.5 rounded-md border border-gold/40 text-gold/80 hover:border-gold hover:text-gold transition-colors disabled:opacity-40 shrink-0">
-                  {calRefreshing ? 'Refreshing…' : '↺ Force Reload'}
-                </button>
-              )}
-            </div>
-            {calMsg && (
-              <p className={`text-xs mt-1 ${calMsg.startsWith('✓') ? 'text-emerald-300' : 'text-red'}`}>{calMsg}</p>
-            )}
-          </div>
-          <Field label="Meeting date (fallback)"><input className={inputCls} value={form.meetingDate || ''} onChange={set('meetingDate')} placeholder="e.g. Thursday, June 12" /></Field>
-          <Field label="Meeting time (fallback)"><input className={inputCls} value={form.meetingTime || ''} onChange={set('meetingTime')} placeholder="e.g. 3:30 PM" /></Field>
-          <div className="sm:col-span-2"><Field label="Meeting location (fallback)"><input className={inputCls} value={form.meetingLocation || ''} onChange={set('meetingLocation')} placeholder="e.g. Room 214" /></Field></div>
+          <Field label="Meeting date"><input className={inputCls} value={form.meetingDate || ''} onChange={set('meetingDate')} placeholder="e.g. Thursday, June 12" /></Field>
+          <Field label="Meeting time"><input className={inputCls} value={form.meetingTime || ''} onChange={set('meetingTime')} placeholder="e.g. 3:30 PM" /></Field>
+          <div className="sm:col-span-2"><Field label="Meeting location"><input className={inputCls} value={form.meetingLocation || ''} onChange={set('meetingLocation')} placeholder="e.g. Room 214" /></Field></div>
           <div className="sm:col-span-2"><Field label="Podcast link (YouTube video or page URL)"><input className={inputCls} value={form.podcastUrl || ''} onChange={set('podcastUrl')} placeholder="https://www.youtube.com/watch?v=…" /></Field></div>
           <div className="sm:col-span-2"><Field label="Instagram link"><input className={inputCls} value={form.instagramUrl || ''} onChange={set('instagramUrl')} placeholder="https://www.instagram.com/yourclub" /></Field></div>
           <div className="sm:col-span-2"><Field label="About / Mission (shown on the public homepage)"><textarea className={inputCls + ' min-h-[120px] resize-y'} value={form.aboutText || ''} onChange={set('aboutText')} placeholder="Tell visitors who Club America is and what you stand for…" /></Field></div>
           {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
           <div className="sm:col-span-2 flex gap-2">
-            <Button type="submit" variant="gold">Save</Button>
-            <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button type="submit" variant="gold" disabled={saving}>{saving ? <span className="flex items-center gap-2"><Spinner /> Saving…</span> : 'Save'}</Button>
+            <Button variant="ghost" onClick={() => setOpen(false)} disabled={saving}>Cancel</Button>
           </div>
         </form>
       )}
@@ -2137,8 +2066,8 @@ function HomeAnnouncementEditor({ home, onSaved }) {
 
 // ---- Meet the Board (public, data-driven org chart with click-for-bio) ------
 function Avatar({ member, size = 56 }) {
-  if (member.photo) {
-    return <img src={member.photo} alt={member.displayName}
+  if (member.hasPhoto) {
+    return <img src={`/api/users/${member.id}/photo`} alt={member.displayName}
       style={{ width: size, height: size }} className="rounded-full object-cover border-2 border-gold/40" />;
   }
   const initials = (member.displayName || '?').split(/\s+/).map((s) => s[0]).slice(0, 2).join('').toUpperCase();
@@ -2162,6 +2091,11 @@ function buildBoardTree(members) {
 }
 
 function BoardModal({ member, onClose }) {
+  useEffect(() => {
+    const fn = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', fn);
+    return () => document.removeEventListener('keydown', fn);
+  }, [onClose]);
   return (
     <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
       <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-md w-full p-6 relative">
@@ -2185,25 +2119,40 @@ function BoardModal({ member, onClose }) {
 function MeetTheBoard() {
   const [members, setMembers] = useState(null);
   const [sel, setSel] = useState(null);
+  const [error, setError] = useState('');
 
-  useEffect(() => { api('/board').then((d) => setMembers(d.members)).catch(() => setMembers([])); }, []);
+  useEffect(() => {
+    api('/board')
+      .then((d) => setMembers(d.members))
+      .catch((err) => setError(err.message || 'Failed to load board'));
+  }, []);
+
+  if (error) return (
+    <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6">
+      <h2 className="font-display text-3xl text-gold mb-4">Meet the Board</h2>
+      <ErrorState message={error} onRetry={() => { setError(''); setMembers(null); api('/board').then((d) => setMembers(d.members)).catch((e) => setError(e.message)); }} />
+    </section>
+  );
   if (!members || members.length === 0) return null;
 
   const tree = buildBoardTree(members);
-  const renderNode = (node) => (
-    <div key={node.id} className="flex flex-col items-center">
-      <button onClick={() => { setSel(node); track('board_profile', node.displayName); }}
-        className="bg-navy2 border border-cream/15 rounded-xl px-4 py-3 flex flex-col items-center gap-2 w-36 hover:border-gold transition-colors">
-        <Avatar member={node} size={56} />
-        <div className="text-cream text-sm font-medium text-center leading-tight">{node.displayName}</div>
-        <div className="text-gold/80 text-xs text-center leading-tight">{node.title || roleLabel(node.role)}</div>
-      </button>
-      {node.children.length > 0 && <div className="w-px h-4 bg-cream/20" />}
-      {node.children.length > 0 && (
-        <div className="flex flex-wrap justify-center gap-4">{node.children.map(renderNode)}</div>
-      )}
-    </div>
-  );
+  const renderNode = (node, depth = 0) => {
+    if (depth > 20) return null;
+    return (
+      <div key={node.id} className="flex flex-col items-center">
+        <button onClick={() => { setSel(node); track('board_profile', node.displayName); }}
+          className="bg-navy2 border border-cream/15 rounded-xl px-4 py-3 flex flex-col items-center gap-2 w-36 hover:border-gold transition-colors">
+          <Avatar member={node} size={56} />
+          <div className="text-cream text-sm font-medium text-center leading-tight">{node.displayName}</div>
+          <div className="text-gold/80 text-xs text-center leading-tight">{node.title || roleLabel(node.role)}</div>
+        </button>
+        {node.children.length > 0 && <div className="w-px h-4 bg-cream/20" />}
+        {node.children.length > 0 && (
+          <div className="flex flex-wrap justify-center gap-4">{node.children.map((n) => renderNode(n, depth + 1))}</div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6">
@@ -2219,23 +2168,22 @@ function MeetTheBoard() {
 
 function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onBack }) {
   const [home, setHome] = useState(null);
-  const [events, setEvents] = useState([]);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
-    try { const d = await api('/home'); setHome(d.home); setEvents(d.events || []); }
+    try { const d = await api('/home'); setHome(d.home); }
     catch (err) { setError(err.message); }
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  if (error) return <div className="text-red p-8">{error}</div>;
-  if (!home) return <div className="text-cream/50 p-8">Loading…</div>;
+  if (error) return <div className="p-8 max-w-lg mx-auto"><ErrorState message={error} onRetry={load} /></div>;
+  if (!home) return <div className="flex items-center justify-center gap-2 text-cream/50 p-8"><Spinner /> Loading…</div>;
 
   const canAnnounce = me && (me.role === 'admin' || !!me.canAnnounce);
 
   const cards = (
     <div className="grid md:grid-cols-2 gap-6">
-      <MeetingCard home={home} events={events} />
+      <MeetingCard home={home} />
       <PodcastCard home={home} />
     </div>
   );
@@ -2297,7 +2245,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         <footer className="border-t border-cream/10 py-6 text-center text-cream/40 text-sm space-y-3">
           {home.instagramUrl && (
             <div className="flex justify-center">
-              <a href={home.instagramUrl} target="_blank" rel="noopener"
+              <a href={ensureHttps(home.instagramUrl)} target="_blank" rel="noopener"
                 className="inline-flex items-center gap-2 text-cream/60 hover:text-gold transition-colors">
                 <InstagramIcon className="w-5 h-5" /> @ our Instagram
               </a>
@@ -2344,7 +2292,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
       <footer className="border-t border-cream/10 py-6 text-center text-cream/40 text-sm space-y-3">
         {home.instagramUrl && (
           <div className="flex justify-center">
-            <a href={home.instagramUrl} target="_blank" rel="noopener"
+            <a href={ensureHttps(home.instagramUrl)} target="_blank" rel="noopener"
               className="inline-flex items-center gap-2 text-cream/60 hover:text-gold transition-colors">
               <InstagramIcon className="w-5 h-5" /> @ our Instagram
             </a>
@@ -2449,7 +2397,7 @@ function InterestSurvey({ onBack }) {
           </Field>
           {error && <div className="text-red text-sm">{error}</div>}
           <Button type="submit" variant="gold" className="w-full" disabled={busy}>
-            {busy ? 'Submitting…' : 'Submit'}
+            {busy ? <span className="flex items-center gap-2"><Spinner /> Submitting…</span> : 'Submit'}
           </Button>
           <button type="button" onClick={onBack} className="block mx-auto text-xs text-cream/50 hover:text-gold">
             ← Back to homepage
@@ -2477,14 +2425,16 @@ function validNextStatuses(current) {
 }
 
 function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState('');
   const [converting, setConverting] = useState(false);
   const [convertForm, setConvertForm] = useState({ grade: member.grade || '', roleDescription: member.roleDescription || '' });
 
+  const busy = !!busyAction;
+
   async function act(action, body) {
-    setBusy(true);
+    setBusyAction(action);
     try { await onAction(member.id, action, body); }
-    finally { setBusy(false); }
+    finally { setBusyAction(''); }
   }
 
   const statusColors = {
@@ -2516,12 +2466,12 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
           <>
             {!member.claimedByUserId && (
               <Button variant="gold" className="text-xs px-3 py-1" onClick={() => act('claim')} disabled={busy}>
-                Manage This
+                {busyAction === 'claim' ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Saving…</span> : 'Manage This'}
               </Button>
             )}
             {(member.claimedByUserId === me.id || me.role === 'admin' || me.role === 'manager') && (
               <Button variant="ghost" className="text-xs px-3 py-1" onClick={() => act('contacted')} disabled={busy}>
-                Mark Contacted
+                {busyAction === 'contacted' ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Saving…</span> : 'Mark Contacted'}
               </Button>
             )}
           </>
@@ -2534,7 +2484,7 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
                   They Joined ✓
                 </Button>
                 <Button variant="danger" className="text-xs px-3 py-1" onClick={() => act('decline')} disabled={busy}>
-                  Not Joining
+                  {busyAction === 'decline' ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Saving…</span> : 'Not Joining'}
                 </Button>
               </>
             ) : (
@@ -2552,7 +2502,9 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
                   </Field>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="gold" className="text-xs px-3 py-1" onClick={() => act('convert', convertForm)} disabled={busy}>Confirm</Button>
+                  <Button variant="gold" className="text-xs px-3 py-1" onClick={() => act('convert', convertForm)} disabled={busy}>
+                    {busyAction === 'convert' ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Saving…</span> : 'Confirm'}
+                  </Button>
                   <Button variant="ghost" className="text-xs px-3 py-1" onClick={() => setConverting(false)}>Cancel</Button>
                 </div>
               </div>
@@ -3009,6 +2961,8 @@ function WeeklyCheckinPage({ me }) {
         </div>
       )}
 
+      {enabled === null && !error && <Loading label="Loading check-in settings…" />}
+
       {error && <div className="text-red text-sm mb-4">{error}</div>}
 
       {enabled === false && !isManager && (
@@ -3051,7 +3005,7 @@ function FundingRequestPage({ me }) {
   const [form, setForm] = useState({ title: '', description: '', amount: '' });
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState('');
   const [confirmEl, confirm] = useConfirm();
   const isPrivileged = me.role === 'admin' || me.role === 'manager';
 
@@ -3066,24 +3020,24 @@ function FundingRequestPage({ me }) {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   async function submit(e) {
-    e.preventDefault(); setNotice('');
-    if (!form.title.trim()) { setError('Please enter a title.'); return; }
-    if (form.amount && Number(form.amount) < 0) { setError('Amount can’t be negative.'); return; }
-    setError(''); setBusy(true);
+    e.preventDefault(); setNotice(‘’);
+    if (!form.title.trim()) { setError(‘Please enter a title.’); return; }
+    if (form.amount && Number(form.amount) < 0) { setError(‘Amount can’t be negative.’); return; }
+    setError(‘’); setBusy(‘submit’);
     try {
-      await api('/funding', { method: 'POST', body: { ...form, title: form.title.trim(), amount: Number(form.amount) || 0 } });
-      setForm({ title: '', description: '', amount: '' });
-      setOpen(false); setNotice('Funding request submitted!'); load();
+      await api(‘/funding’, { method: ‘POST’, body: { ...form, title: form.title.trim(), amount: Number(form.amount) || 0 } });
+      setForm({ title: ‘’, description: ‘’, amount: ‘’ });
+      setOpen(false); setNotice(‘Funding request submitted!’); load();
     } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
+    finally { setBusy(‘’); }
   }
 
   async function reviewAction(id, action, reviewNotes) {
-    if (action === 'deny' && !(await confirm({ title: 'Deny request?', message: 'The submitter will be notified that this request was denied.', confirmLabel: 'Deny', danger: true }))) return;
-    setBusy(true);
-    try { await api(`/funding/${id}`, { method: 'PATCH', body: { action, reviewNotes } }); load(); }
+    if (action === ‘deny’ && !(await confirm({ title: ‘Deny request?’, message: ‘The submitter will be notified that this request was denied.’, confirmLabel: ‘Deny’, danger: true }))) return;
+    setBusy(`${id}:${action}`);
+    try { await api(`/funding/${id}`, { method: ‘PATCH’, body: { action, reviewNotes } }); load(); }
     catch (err) { setError(err.message); }
-    finally { setBusy(false); }
+    finally { setBusy(‘’); }
   }
 
   function exportCSV() {
@@ -3122,8 +3076,8 @@ function FundingRequestPage({ me }) {
             <Field label="Description"><textarea className={inputCls} rows="3" value={form.description} onChange={set('description')} placeholder="What is this for? Why is it needed?" /></Field>
             <Field label="Amount ($)"><input className={inputCls} type="number" min="0" step="0.01" value={form.amount} onChange={set('amount')} placeholder="0.00" /></Field>
             <div className="flex gap-2">
-              <Button type="submit" variant="gold" disabled={busy || !form.title.trim()}>{busy ? <span className="flex items-center gap-2"><Spinner /> Submitting…</span> : 'Submit'}</Button>
-              <Button variant="ghost" onClick={() => setOpen(false)} type="button" disabled={busy}>Cancel</Button>
+              <Button type="submit" variant="gold" disabled={!!busy || !form.title.trim()}>{busy === 'submit' ? <span className="flex items-center gap-2"><Spinner /> Submitting…</span> : 'Submit'}</Button>
+              <Button variant="ghost" onClick={() => setOpen(false)} type="button" disabled={!!busy}>Cancel</Button>
             </div>
           </form>
         )}
@@ -3141,7 +3095,7 @@ function FundingRequestPage({ me }) {
                 <div className="font-medium text-cream">{r.title}</div>
                 {r.description && <div className="text-sm text-cream/60 mt-1">{r.description}</div>}
                 <div className="text-xs text-cream/40 mt-2">
-                  By {r.submitterName} · ${Number(r.amount).toFixed(2)}
+                  By {r.submitterName}{r.amount > 0 ? ` · $${Number(r.amount).toFixed(2)}` : ''}
                   {r.reviewerName && <> · Reviewed by {r.reviewerName}</>}
                   {r.reviewNotes && <> · "{r.reviewNotes}"</>}
                 </div>
@@ -3150,13 +3104,19 @@ function FundingRequestPage({ me }) {
             </div>
             {isPrivileged && r.status === 'pending' && (
               <div className="flex gap-2 mt-3">
-                <Button variant="gold" className="text-xs px-3 py-1" onClick={() => reviewAction(r.id, 'approve')} disabled={busy}>Approve</Button>
-                <Button variant="danger" className="text-xs px-3 py-1" onClick={() => reviewAction(r.id, 'deny')} disabled={busy}>Deny</Button>
+                <Button variant="gold" className="text-xs px-3 py-1" onClick={() => reviewAction(r.id, 'approve')} disabled={!!busy}>
+                  {busy === `${r.id}:approve` ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Approving…</span> : 'Approve'}
+                </Button>
+                <Button variant="danger" className="text-xs px-3 py-1" onClick={() => reviewAction(r.id, 'deny')} disabled={!!busy}>
+                  {busy === `${r.id}:deny` ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Denying…</span> : 'Deny'}
+                </Button>
               </div>
             )}
             {isPrivileged && r.status === 'approved' && (
               <div className="flex gap-2 mt-3">
-                <Button variant="ghost" className="text-xs px-3 py-1" onClick={() => reviewAction(r.id, 'purchased')} disabled={busy}>Mark Purchased</Button>
+                <Button variant="ghost" className="text-xs px-3 py-1" onClick={() => reviewAction(r.id, 'purchased')} disabled={!!busy}>
+                  {busy === `${r.id}:purchased` ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Saving…</span> : 'Mark Purchased'}
+                </Button>
               </div>
             )}
           </div>
@@ -3175,7 +3135,7 @@ function BoardApplicationsPage({ me }) {
   const [form, setForm] = useState({ positionTitle: '', statement: '' });
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState('');
   const [confirmEl, confirm] = useConfirm();
   const isPrivileged = me.role === 'admin' || me.role === 'manager';
 
@@ -3192,21 +3152,21 @@ function BoardApplicationsPage({ me }) {
   async function submit(e) {
     e.preventDefault(); setNotice('');
     if (!form.positionTitle.trim()) { setError('Please enter a position title.'); return; }
-    setError(''); setBusy(true);
+    setError(''); setBusy('submit');
     try {
       await api('/board-apps', { method: 'POST', body: { ...form, positionTitle: form.positionTitle.trim() } });
       setForm({ positionTitle: '', statement: '' });
       setOpen(false); setNotice('Application submitted!'); load();
     } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
+    finally { setBusy(''); }
   }
 
   async function reviewAction(id, action) {
     if (action === 'decline' && !(await confirm({ title: 'Decline application?', message: 'The applicant will be notified that their application was declined.', confirmLabel: 'Decline', danger: true }))) return;
-    setBusy(true);
+    setBusy(`${id}:${action}`);
     try { await api(`/board-apps/${id}`, { method: 'PATCH', body: { action } }); load(); }
     catch (err) { setError(err.message); }
-    finally { setBusy(false); }
+    finally { setBusy(''); }
   }
 
   const statusColors = { pending: 'slate', accepted: 'green', declined: 'red' };
@@ -3214,7 +3174,15 @@ function BoardApplicationsPage({ me }) {
   return (
     <div className="max-w-3xl">
       {confirmEl}
-      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Board Applications</h1>
+      <div className="flex items-end justify-between flex-wrap gap-3 mb-2">
+        <h1 className="font-display text-4xl sm:text-5xl text-cream">Board Applications</h1>
+        {isPrivileged && apps?.length > 0 && (
+          <Button variant="ghost" onClick={() => downloadCSV('board-apps.csv', apps.map((a) => ({
+            Name: a.submitterName, Position: a.positionTitle, Statement: a.statement,
+            Status: a.status, Submitted: a.createdAt, Reviewer: a.reviewerName || '',
+          })))}>Export CSV</Button>
+        )}
+      </div>
       <p className="text-cream/50 mb-6">
         Apply for a leadership position. {isPrivileged ? 'Review incoming applications below.' : ''}
       </p>
@@ -3237,8 +3205,8 @@ function BoardApplicationsPage({ me }) {
                 placeholder="Why do you want this position? What makes you a strong candidate?" />
             </Field>
             <div className="flex gap-2">
-              <Button type="submit" variant="gold" disabled={busy || !form.positionTitle.trim()}>{busy ? <span className="flex items-center gap-2"><Spinner /> Submitting…</span> : 'Submit'}</Button>
-              <Button variant="ghost" onClick={() => setOpen(false)} type="button" disabled={busy}>Cancel</Button>
+              <Button type="submit" variant="gold" disabled={!!busy || !form.positionTitle.trim()}>{busy === 'submit' ? <span className="flex items-center gap-2"><Spinner /> Submitting…</span> : 'Submit'}</Button>
+              <Button variant="ghost" onClick={() => setOpen(false)} type="button" disabled={!!busy}>Cancel</Button>
             </div>
           </form>
         )}
@@ -3264,8 +3232,12 @@ function BoardApplicationsPage({ me }) {
             </div>
             {isPrivileged && a.status === 'pending' && (
               <div className="flex gap-2 mt-3">
-                <Button variant="gold" className="text-xs px-3 py-1" onClick={() => reviewAction(a.id, 'accept')} disabled={busy}>Accept</Button>
-                <Button variant="danger" className="text-xs px-3 py-1" onClick={() => reviewAction(a.id, 'decline')} disabled={busy}>Decline</Button>
+                <Button variant="gold" className="text-xs px-3 py-1" onClick={() => reviewAction(a.id, 'accept')} disabled={!!busy}>
+                  {busy === `${a.id}:accept` ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Accepting…</span> : 'Accept'}
+                </Button>
+                <Button variant="danger" className="text-xs px-3 py-1" onClick={() => reviewAction(a.id, 'decline')} disabled={!!busy}>
+                  {busy === `${a.id}:decline` ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Declining…</span> : 'Decline'}
+                </Button>
               </div>
             )}
           </div>
@@ -3281,7 +3253,7 @@ function BoardApplicationsPage({ me }) {
 function AdminDashboardPage({ me }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState('');
   const [checkinEnabled, setCheckinEnabled] = useState(null);
   const [confirmEl, confirm] = useConfirm();
 
@@ -3298,26 +3270,26 @@ function AdminDashboardPage({ me }) {
 
   async function fundingAction(id, action) {
     if (action === 'deny' && !(await confirm({ title: 'Deny request?', message: 'The submitter will be notified.', confirmLabel: 'Deny', danger: true }))) return;
-    setBusy(true);
+    setBusy(`funding:${id}:${action}`);
     try { await api(`/funding/${id}`, { method: 'PATCH', body: { action } }); load(); }
     catch (err) { setError(err.message); }
-    finally { setBusy(false); }
+    finally { setBusy(''); }
   }
 
   async function appAction(id, action) {
     if (action === 'decline' && !(await confirm({ title: 'Decline application?', message: 'The applicant will be notified.', confirmLabel: 'Decline', danger: true }))) return;
-    setBusy(true);
+    setBusy(`app:${id}:${action}`);
     try { await api(`/board-apps/${id}`, { method: 'PATCH', body: { action } }); load(); }
     catch (err) { setError(err.message); }
-    finally { setBusy(false); }
+    finally { setBusy(''); }
   }
 
   async function taskAction(task, action) {
-    if (action === 'reject' && !(await confirm({ title: 'Reject task?', message: `“${task.name}” will be rejected and the sender notified.`, confirmLabel: 'Reject', danger: true }))) return;
-    setBusy(true);
+    if (action === 'reject' && !(await confirm({ title: 'Reject task?', message: `”${task.name}” will be rejected and the sender notified.`, confirmLabel: 'Reject', danger: true }))) return;
+    setBusy(`task:${task.id}:${action}`);
     try { await api(`/tasks/${task.id}/${action}`, { method: 'POST' }); load(); }
     catch (err) { setError(err.message); }
-    finally { setBusy(false); }
+    finally { setBusy(''); }
   }
 
   function exportCheckins() {
@@ -3328,12 +3300,12 @@ function AdminDashboardPage({ me }) {
   }
 
   async function toggleCheckins() {
-    setBusy(true);
+    setBusy('checkins');
     try {
       const d = await api('/checkins/settings', { method: 'PUT', body: { enabled: !checkinEnabled } });
       setCheckinEnabled(d.enabled);
     } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
+    finally { setBusy(''); }
   }
 
   function fmtDate(iso) {
@@ -3372,7 +3344,7 @@ function AdminDashboardPage({ me }) {
             <div className="text-cream font-medium">Weekly Check-Ins</div>
             <div className="text-cream/50 text-sm">{checkinEnabled ? 'Members can submit check-ins this week.' : 'Check-ins are currently disabled.'}</div>
           </div>
-          <Toggle enabled={checkinEnabled} onChange={toggleCheckins} disabled={busy} />
+          <Toggle enabled={checkinEnabled} onChange={toggleCheckins} disabled={!!busy} />
         </div>
       )}
 
@@ -3423,13 +3395,17 @@ function AdminDashboardPage({ me }) {
                 <div>
                   <div className="font-medium text-cream">{r.title}</div>
                   {r.description && <div className="text-sm text-cream/60 mt-1">{r.description}</div>}
-                  <div className="text-xs text-cream/40 mt-1">By {r.submitterName} · ${Number(r.amount).toFixed(2)} · {fmtDate(r.createdAt)}</div>
+                  <div className="text-xs text-cream/40 mt-1">By {r.submitterName}{r.amount > 0 ? ` · $${Number(r.amount).toFixed(2)}` : ''} · {fmtDate(r.createdAt)}</div>
                 </div>
                 <Badge tone="slate">pending</Badge>
               </div>
               <div className="flex gap-2 mt-3">
-                <Button variant="gold" className="text-xs px-3 py-1" onClick={() => fundingAction(r.id, 'approve')} disabled={busy}>Approve</Button>
-                <Button variant="danger" className="text-xs px-3 py-1" onClick={() => fundingAction(r.id, 'deny')} disabled={busy}>Deny</Button>
+                <Button variant="gold" className="text-xs px-3 py-1" onClick={() => fundingAction(r.id, 'approve')} disabled={!!busy}>
+                  {busy === `funding:${r.id}:approve` ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Approving…</span> : 'Approve'}
+                </Button>
+                <Button variant="danger" className="text-xs px-3 py-1" onClick={() => fundingAction(r.id, 'deny')} disabled={!!busy}>
+                  {busy === `funding:${r.id}:deny` ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Denying…</span> : 'Deny'}
+                </Button>
               </div>
             </div>
           ))}
@@ -3452,8 +3428,12 @@ function AdminDashboardPage({ me }) {
                 </div>
               </div>
               <div className="flex gap-2 mt-3">
-                <Button variant="gold" className="text-xs px-3 py-1" onClick={() => appAction(a.id, 'accept')} disabled={busy}>Accept</Button>
-                <Button variant="danger" className="text-xs px-3 py-1" onClick={() => appAction(a.id, 'decline')} disabled={busy}>Decline</Button>
+                <Button variant="gold" className="text-xs px-3 py-1" onClick={() => appAction(a.id, 'accept')} disabled={!!busy}>
+                  {busy === `app:${a.id}:accept` ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Accepting…</span> : 'Accept'}
+                </Button>
+                <Button variant="danger" className="text-xs px-3 py-1" onClick={() => appAction(a.id, 'decline')} disabled={!!busy}>
+                  {busy === `app:${a.id}:decline` ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Declining…</span> : 'Decline'}
+                </Button>
               </div>
             </div>
           ))}
@@ -3474,8 +3454,12 @@ function AdminDashboardPage({ me }) {
                 {t.dueDate && <> · due {t.dueDate}</>}
               </div>
               <div className="flex gap-2 mt-3">
-                <Button variant="gold" className="text-xs px-3 py-1" onClick={() => taskAction(t, 'approve')} disabled={busy}>Approve</Button>
-                <Button variant="danger" className="text-xs px-3 py-1" onClick={() => taskAction(t, 'reject')} disabled={busy}>Reject</Button>
+                <Button variant="gold" className="text-xs px-3 py-1" onClick={() => taskAction(t, 'approve')} disabled={!!busy}>
+                  {busy === `task:${t.id}:approve` ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Approving…</span> : 'Approve'}
+                </Button>
+                <Button variant="danger" className="text-xs px-3 py-1" onClick={() => taskAction(t, 'reject')} disabled={!!busy}>
+                  {busy === `task:${t.id}:reject` ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Rejecting…</span> : 'Reject'}
+                </Button>
               </div>
             </div>
           ))}
@@ -3515,7 +3499,7 @@ function AdminDashboardPage({ me }) {
               {recentActivity.map((a) => (
                 <div key={a.id} className="px-4 py-2.5 flex items-center justify-between gap-3 text-sm">
                   <span className="text-cream/80">{fmtActivity(a)}</span>
-                  <span className="text-xs text-cream/40 shrink-0">{(a.createdAt || '').replace('T', ' ').slice(5, 16)}</span>
+                  <span className="text-xs text-cream/40 shrink-0">{timeAgo(a.createdAt)}</span>
                 </div>
               ))}
             </div>
@@ -3614,9 +3598,10 @@ function LogisticsPage() {
         </div>
         <button
           onClick={load}
-          className="shrink-0 text-xs text-gold/80 hover:text-gold border border-gold/30 hover:border-gold/60 px-3 py-1.5 rounded transition-colors"
+          disabled={loading}
+          className="shrink-0 text-xs text-gold/80 hover:text-gold border border-gold/30 hover:border-gold/60 px-3 py-1.5 rounded transition-colors disabled:opacity-40 flex items-center gap-1.5"
         >
-          Refresh
+          {loading ? <><Spinner className="w-3 h-3" /> Refreshing…</> : 'Refresh'}
         </button>
       </div>
 
@@ -4101,7 +4086,7 @@ function AIChatPage({ me }) {
           disabled={busy}
         />
         <Button type="submit" variant="gold" disabled={busy || !input.trim()}>
-          {busy ? '…' : 'Send'}
+          {busy ? <Spinner /> : 'Send'}
         </Button>
       </form>
     </div>
@@ -4370,7 +4355,7 @@ function App() {
     setEnterPortal(false);
   }
 
-  if (!booted) return <div className="min-h-screen flex items-center justify-center text-cream/40">Loading…</div>;
+  if (!booted) return <div className="min-h-screen flex items-center justify-center gap-2 text-cream/40"><Spinner className="w-5 h-5" /> Loading…</div>;
   if (isSurveyPath) return <InterestSurvey onBack={() => { window.history.pushState(null, '', '/'); window.location.reload(); }} />;
   if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;
   if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); }} onBack={() => setEnterPortal(false)} />;
