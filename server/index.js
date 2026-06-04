@@ -14,6 +14,7 @@ process.on('uncaughtException', (err) => {
 });
 
 const { db, init, seed } = require('./db');
+const { fetchUpcoming, clearCache } = require('./calendar');
 const { notify } = require('./email');
 const { analyzeTeamHealth, chatWithAI, aiEnabled } = require('./ai');
 const {
@@ -208,7 +209,7 @@ app.get('/api/me', authenticate, (req, res) => {
 
 // ---- Public homepage content (no auth) --------------------------------------
 function getHome() {
-  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, instagramUrl, aboutText, homeAnnouncement, homeAnnouncementEnabled, announcementPostedAt, updatedAt FROM site_settings WHERE id = 1').get();
+  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, aboutText, homeAnnouncement, homeAnnouncementEnabled, announcementPostedAt, updatedAt FROM site_settings WHERE id = 1').get();
   // Auto-expire the announcement after 7 days.
   let announcementEnabled = !!row.homeAnnouncementEnabled;
   if (announcementEnabled && row.announcementPostedAt) {
@@ -220,8 +221,13 @@ function getHome() {
   }
   return { ...row, podcastEnabled: !!row.podcastEnabled, homeAnnouncementEnabled: announcementEnabled };
 }
-app.get('/api/home', (req, res) => {
-  res.json({ home: getHome() });
+app.get('/api/home', async (req, res) => {
+  const home = getHome();
+  let events = [];
+  try { events = await fetchUpcoming(home.calendarUrl, 3); } catch (_) {}
+  // Don't leak the raw calendar URL to the public payload.
+  const { calendarUrl, ...publicHome } = home;
+  res.json({ home: { ...publicHome, calendarConfigured: !!calendarUrl }, events });
 });
 
 // Public board roster for the "Meet the Board" page (no private info, no auth).
@@ -427,7 +433,7 @@ function canPostAnnouncement(user) {
 }
 app.put('/api/home', (req, res) => {
   if (!canEditHome(req.user)) return res.status(403).json({ error: 'Only the Digital Presence Manager can edit the homepage' });
-  const { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, instagramUrl, aboutText } = req.body || {};
+  const { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, aboutText } = req.body || {};
   const podcastEnabledVal = podcastEnabled === undefined ? null : (podcastEnabled ? 1 : 0);
   db.prepare(`UPDATE site_settings SET
        meetingDate = COALESCE(?, meetingDate),
@@ -435,6 +441,7 @@ app.put('/api/home', (req, res) => {
        meetingLocation = COALESCE(?, meetingLocation),
        podcastUrl = COALESCE(?, podcastUrl),
        podcastEnabled = COALESCE(?, podcastEnabled),
+       calendarUrl = COALESCE(?, calendarUrl),
        instagramUrl = COALESCE(?, instagramUrl),
        aboutText = COALESCE(?, aboutText),
        updatedAt = datetime('now')
@@ -445,12 +452,27 @@ app.put('/api/home', (req, res) => {
       meetingLocation ?? null,
       podcastUrl ?? null,
       podcastEnabledVal,
+      calendarUrl ?? null,
       instagramUrl ?? null,
       aboutText ?? null,
     );
   res.json({ home: getHome() });
 });
 
+
+// Force-refresh the iCal cache for the configured calendar URL.
+app.post('/api/home/calendar/refresh', async (req, res) => {
+  if (!canEditHome(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const url = db.prepare('SELECT calendarUrl FROM site_settings WHERE id = 1').get().calendarUrl;
+  if (!url) return res.status(400).json({ error: 'No calendar URL configured' });
+  clearCache(url);
+  try {
+    const events = await fetchUpcoming(url, 3);
+    res.json({ ok: true, events });
+  } catch (_) {
+    res.status(502).json({ error: 'Failed to fetch calendar — check the URL' });
+  }
+});
 
 // Homepage announcement — secretary, digital presence, VP, president.
 app.put('/api/home/announcement', (req, res) => {

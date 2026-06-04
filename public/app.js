@@ -1769,21 +1769,49 @@ function ytId(url) {
   return m ? m[1] : null;
 }
 
-function MeetingCard({ home }) {
+function fmtEvent(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const allDay = d.getHours() === 0 && d.getMinutes() === 0;
+  const date = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  if (allDay) return date;
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return `${date} · ${time}`;
+}
+
+// Shows upcoming events when a calendar is connected; otherwise falls back to
+// the manually-entered "Next Meeting" details.
+function MeetingCard({ home, events }) {
+  const hasEvents = events && events.length > 0;
   return (
     <section className="bg-navy2 border border-gold/30 rounded-2xl p-6">
       <div className="flex items-center justify-between">
-        <h2 className="font-display text-3xl text-gold">Next Meeting</h2>
+        <h2 className="font-display text-3xl text-gold">{hasEvents ? 'Upcoming Events' : 'Next Meeting'}</h2>
         <span className="text-red text-xl">📅</span>
       </div>
-      <div className="mt-4 space-y-3">
-        {[['Date', home.meetingDate], ['Time', home.meetingTime], ['Location', home.meetingLocation]].map(([label, val]) => (
-          <div key={label}>
-            <div className="text-xs uppercase tracking-wider text-cream/50">{label}</div>
-            <div className="text-2xl text-cream font-medium">{val || '—'}</div>
-          </div>
-        ))}
-      </div>
+      {hasEvents ? (
+        <ul className="mt-4 space-y-3">
+          {events.map((e, i) => (
+            <li key={i} className="border-l-2 border-gold/50 pl-3">
+              <div className="text-lg text-cream font-medium leading-tight">{e.title}</div>
+              <div className="text-sm text-gold/80">{fmtEvent(e.start)}</div>
+              {e.location && <div className="text-sm text-cream/50">{e.location}</div>}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="mt-4 space-y-3">
+          {[['Date', home.meetingDate], ['Time', home.meetingTime], ['Location', home.meetingLocation]].map(([label, val]) => (
+            <div key={label}>
+              <div className="text-xs uppercase tracking-wider text-cream/50">{label}</div>
+              <div className="text-2xl text-cream font-medium">{val || '—'}</div>
+            </div>
+          ))}
+          {home.calendarConfigured && (
+            <p className="text-xs text-cream/40">No upcoming events found on the connected calendar.</p>
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -1835,11 +1863,23 @@ function HomeEditor({ onSaved }) {
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [calRefreshing, setCalRefreshing] = useState(false);
+  const [calMsg, setCalMsg] = useState('');
+
+  async function refreshCalendar() {
+    setCalRefreshing(true); setCalMsg('');
+    try {
+      const d = await api('/home/calendar/refresh', { method: 'POST' });
+      setCalMsg(`✓ Refreshed — ${d.events.length} upcoming event${d.events.length === 1 ? '' : 's'} loaded.`);
+      onSaved && onSaved();
+    } catch (err) { setCalMsg('✗ ' + err.message); }
+    finally { setCalRefreshing(false); }
+  }
 
   async function start() {
     setError(''); setSaved(false);
     try {
-      // Load the full site settings for the editor form.
+      // Load the full settings (including the private calendar URL).
       const d = await api('/home/settings');
       setForm(d.home);
       setOpen(true);
@@ -1854,6 +1894,7 @@ function HomeEditor({ onSaved }) {
         meetingTime: form.meetingTime,
         meetingLocation: form.meetingLocation,
         podcastUrl: form.podcastUrl,
+        calendarUrl: form.calendarUrl,
         instagramUrl: form.instagramUrl,
         aboutText: form.aboutText,
         podcastEnabled: form.podcastEnabled,
@@ -1871,16 +1912,33 @@ function HomeEditor({ onSaved }) {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h2 className="font-display text-2xl text-cream">Website Controls</h2>
-          <p className="text-cream/50 text-sm">President, VP, and the Digital Presence Manager can edit the meeting details and podcast link shown on the public homepage.</p>
+          <p className="text-cream/50 text-sm">President, VP, and the Digital Presence Manager can edit the meeting details, calendar feed, and podcast link shown on the public homepage.</p>
         </div>
         {!open && <Button variant="ghost" onClick={start}>Edit page</Button>}
       </div>
       {saved && !open && <div className="text-emerald-300 text-sm mt-3">Saved — the public homepage is updated.</div>}
       {open && form && (
         <form onSubmit={submit} className="mt-5 grid sm:grid-cols-2 gap-4">
-          <Field label="Meeting date"><input className={inputCls} value={form.meetingDate || ''} onChange={set('meetingDate')} placeholder="e.g. Thursday, June 12" /></Field>
-          <Field label="Meeting time"><input className={inputCls} value={form.meetingTime || ''} onChange={set('meetingTime')} placeholder="e.g. 3:30 PM" /></Field>
-          <div className="sm:col-span-2"><Field label="Meeting location"><input className={inputCls} value={form.meetingLocation || ''} onChange={set('meetingLocation')} placeholder="e.g. Room 214" /></Field></div>
+          <div className="sm:col-span-2">
+            <Field label="Calendar feed URL (iCal / .ics — e.g. Google Calendar public address)">
+              <input className={inputCls} value={form.calendarUrl || ''} onChange={set('calendarUrl')} placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" />
+            </Field>
+            <div className="flex items-center gap-3 mt-2 flex-wrap">
+              <p className="text-xs text-cream/40 flex-1">When set, the homepage shows the next 3 events from this calendar automatically. Leave blank to use the manual meeting fields below. Events cache for 5 minutes.</p>
+              {form.calendarUrl && (
+                <button type="button" onClick={refreshCalendar} disabled={calRefreshing}
+                  className="text-xs px-3 py-1.5 rounded-md border border-gold/40 text-gold/80 hover:border-gold hover:text-gold transition-colors disabled:opacity-40 shrink-0">
+                  {calRefreshing ? 'Refreshing…' : '↺ Force Reload'}
+                </button>
+              )}
+            </div>
+            {calMsg && (
+              <p className={`text-xs mt-1 ${calMsg.startsWith('✓') ? 'text-emerald-300' : 'text-red'}`}>{calMsg}</p>
+            )}
+          </div>
+          <Field label="Meeting date (fallback)"><input className={inputCls} value={form.meetingDate || ''} onChange={set('meetingDate')} placeholder="e.g. Thursday, June 12" /></Field>
+          <Field label="Meeting time (fallback)"><input className={inputCls} value={form.meetingTime || ''} onChange={set('meetingTime')} placeholder="e.g. 3:30 PM" /></Field>
+          <div className="sm:col-span-2"><Field label="Meeting location (fallback)"><input className={inputCls} value={form.meetingLocation || ''} onChange={set('meetingLocation')} placeholder="e.g. Room 214" /></Field></div>
           <div className="sm:col-span-2"><Field label="Podcast link (YouTube video or page URL)"><input className={inputCls} value={form.podcastUrl || ''} onChange={set('podcastUrl')} placeholder="https://www.youtube.com/watch?v=…" /></Field></div>
           <div className="sm:col-span-2"><Field label="Instagram link"><input className={inputCls} value={form.instagramUrl || ''} onChange={set('instagramUrl')} placeholder="https://www.instagram.com/yourclub" /></Field></div>
           <div className="sm:col-span-2"><Field label="About / Mission (shown on the public homepage)"><textarea className={inputCls + ' min-h-[120px] resize-y'} value={form.aboutText || ''} onChange={set('aboutText')} placeholder="Tell visitors who Club America is and what you stand for…" /></Field></div>
@@ -2168,10 +2226,11 @@ function MeetTheBoard() {
 
 function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onBack }) {
   const [home, setHome] = useState(null);
+  const [events, setEvents] = useState([]);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
-    try { const d = await api('/home'); setHome(d.home); }
+    try { const d = await api('/home'); setHome(d.home); setEvents(d.events || []); }
     catch (err) { setError(err.message); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -2183,7 +2242,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
 
   const cards = (
     <div className="grid md:grid-cols-2 gap-6">
-      <MeetingCard home={home} />
+      <MeetingCard home={home} events={events} />
       <PodcastCard home={home} />
     </div>
   );
