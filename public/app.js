@@ -18,6 +18,10 @@ async function api(path, { method = 'GET', body } = {}) {
   let data = null;
   try { data = await res.json(); } catch (_) {}
   if (!res.ok) {
+    if (res.status === 401) {
+      localStorage.removeItem(TOKEN_KEY);
+      window.dispatchEvent(new Event('ca:session-expired'));
+    }
     const err = new Error((data && data.error) || 'Request failed');
     err.status = res.status;
     err.code = data && data.error;
@@ -207,7 +211,7 @@ function downloadCSV(filename, rows) {
   const headers = Object.keys(rows[0]);
   const esc = (v) => {
     const s = v == null ? '' : String(v);
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
   const csv = [headers.join(','), ...rows.map((r) => headers.map((h) => esc(r[h])).join(','))].join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -360,6 +364,7 @@ function ChangePassword({ user, onDone, forced }) {
     setLoading(true);
     try {
       const data = await api('/auth/change-password', { method: 'POST', body: { newPassword: pw } });
+      if (data.token) localStorage.setItem(TOKEN_KEY, data.token);
       onDone(data.user);
     } catch (err) {
       setError(err.message);
@@ -776,11 +781,12 @@ function Toggle({ enabled, onChange, disabled }) {
 }
 
 function BannerSection({ title, url }) {
+  const safeUrl = ensureHttps(url);
   return (
     <a
-      href={url || '#'}
-      target={url ? '_blank' : undefined}
-      rel="noopener"
+      href={safeUrl || '#'}
+      target={safeUrl && safeUrl !== '#' ? '_blank' : undefined}
+      rel="noopener noreferrer"
       className="block w-full bg-gold/15 border border-gold/40 rounded-xl px-6 py-5 text-center font-display text-2xl text-gold hover:bg-gold/25 transition-colors mb-6"
     >
       {title || 'Click Here →'}
@@ -1501,8 +1507,8 @@ function PodcastToggle() {
 }
 
 function EditMemberModal({ user, onSaved, onClose }) {
-  const [firstName, setFirstName] = useState(user.displayName.split(' ')[0] || '');
-  const [lastName, setLastName] = useState(user.displayName.split(' ').slice(1).join(' ') || '');
+  const [firstName, setFirstName] = useState(user.firstName || user.displayName.split(' ')[0] || '');
+  const [lastName, setLastName] = useState(user.lastName || user.displayName.split(' ').slice(1).join(' ') || '');
   const [username, setUsername] = useState(user.username || '');
   const [title, setTitle] = useState(user.title || '');
   const [error, setError] = useState('');
@@ -1747,7 +1753,8 @@ function InstagramIcon({ className = 'w-5 h-5' }) {
 
 // Ensure external URLs always have a protocol so they don't become relative links.
 function ensureHttps(url) {
-  if (!url) return url;
+  if (!url) return '';
+  if (/^javascript:/i.test(url.trim())) return '#';
   return /^https?:\/\//i.test(url) ? url : 'https://' + url;
 }
 
@@ -1981,6 +1988,7 @@ function GetInvolved() {
   async function submit(e) {
     e.preventDefault();
     setError('');
+    if (!form.name.trim()) { setError('Please enter your name.'); return; }
     if (!form.grade) { setError('Please select your grade.'); return; }
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) { setError('Please enter a valid email address.'); return; }
     setBusy(true);
@@ -2640,10 +2648,15 @@ function AddRosterMemberForm({ me, onCreated }) {
 
 function EditRosterMemberModal({ member, onSaved, onClose }) {
   const [form, setForm] = useState({
-    firstName: member.firstName, lastName: member.lastName,
-    phone: member.phone, email: member.email,
-    grade: member.grade || '', gender: member.gender,
-    roleDescription: member.roleDescription, status: member.status, notes: member.notes,
+    firstName: member.firstName || '',
+    lastName: member.lastName || '',
+    phone: member.phone || '',
+    email: member.email || '',
+    grade: member.grade || '',
+    gender: member.gender || '',
+    roleDescription: member.roleDescription || '',
+    status: member.status || 'Prospect',
+    notes: member.notes || '',
   });
   const { loading, error, setError, run } = useAction();
 
@@ -2792,16 +2805,16 @@ function RosterPage({ me }) {
   const [members, setMembers] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [myGrade, setMyGrade] = useState(null);
-  const [gradeFilter, setGradeFilter] = useState('');
+  const isPrivileged = me.role === 'admin' || me.role === 'manager';
+  const PAGE = 25;
+
+  const [gradeFilter, setGradeFilter] = useState(!isPrivileged && me.managedGrade ? String(me.managedGrade) : '');
   const [statusFilter, setStatusFilter] = useState('');
   const [tab, setTab] = useState('all');
   const [editing, setEditing] = useState(null);
   const [error, setError] = useState('');
   const [visible, setVisible] = useState(25);
   const [confirmEl, confirm] = useConfirm();
-
-  const isPrivileged = me.role === 'admin' || me.role === 'manager';
-  const PAGE = 25;
 
   const load = useCallback(async () => {
     setError('');
@@ -2817,11 +2830,6 @@ function RosterPage({ me }) {
   }, [gradeFilter, statusFilter]);
 
   useEffect(() => { load(); }, [load]);
-
-  // Grade reps default to their assigned grade filter
-  useEffect(() => {
-    if (me.managedGrade && !isPrivileged) setGradeFilter(String(me.managedGrade));
-  }, [me.managedGrade, isPrivileged]);
 
   async function handleAction(memberId, action, body) {
     try {
@@ -4408,6 +4416,16 @@ function App() {
 
   useEffect(() => { if (me && !me.firstLogin) loadShared(me); }, [me, refreshSignal, loadShared]);
 
+  useEffect(() => {
+    const handler = () => {
+      setMe(null);
+      setView({ type: 'apphome' });
+      setEnterPortal(false);
+    };
+    window.addEventListener('ca:session-expired', handler);
+    return () => window.removeEventListener('ca:session-expired', handler);
+  }, []);
+
   function logout() {
     localStorage.removeItem(TOKEN_KEY);
     setMe(null);
@@ -4452,17 +4470,17 @@ function App() {
   else if (view.type === 'mytasks') content = <TaskPage me={me} userId={me.id} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'person') content = <TaskPage me={me} userId={view.userId} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'myteam') content = <MyTeamView reports={reports} onNavigate={navigate} />;
-  else if (view.type === 'announce') content = <TeamAnnouncementView me={me} reports={reports} />;
+  else if (view.type === 'announce') content = (me.role === 'admin' || me.role === 'manager') ? <TeamAnnouncementView me={me} reports={reports} /> : null;
   else if (view.type === 'approvals') content = <Approvals onChanged={bump} refreshSignal={refreshSignal} />;
   else if (view.type === 'submissions') content = <SubmissionsInbox onChanged={bump} refreshSignal={refreshSignal} />;
   else if (view.type === 'roster') content = <RosterPage me={me} />;
   else if (view.type === 'checkin') content = <WeeklyCheckinPage me={me} />;
   else if (view.type === 'funding') content = <FundingRequestPage me={me} />;
   else if (view.type === 'apply') content = <BoardApplicationsPage me={me} />;
-  else if (view.type === 'dashboard') content = <AdminDashboardPage me={me} />;
+  else if (view.type === 'dashboard') content = (me.role === 'admin' || me.role === 'manager') ? <AdminDashboardPage me={me} /> : null;
   else if (view.type === 'org') content = <OrgChart />;
-  else if (view.type === 'admin') content = <AdminPanel users={users} reload={bump} />;
-  else if (view.type === 'logistics') content = <LogisticsPage />;
+  else if (view.type === 'admin') content = me.role === 'admin' ? <AdminPanel users={users} reload={bump} /> : null;
+  else if (view.type === 'logistics') content = (me.role === 'admin' || me.canViewLogistics) ? <LogisticsPage /> : null;
   else if (view.type === 'ai') content = me.role === 'admin' ? <AIChatPage me={me} /> : null;
   else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;
   else if (view.type === 'profile') content = <ProfileSetup me={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;

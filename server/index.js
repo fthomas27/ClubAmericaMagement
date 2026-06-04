@@ -15,7 +15,7 @@ process.on('uncaughtException', (err) => {
 
 const { db, init, seed } = require('./db');
 const { fetchUpcoming, clearCache } = require('./calendar');
-const { notify } = require('./email');
+const { notify, escHtml } = require('./email');
 const { analyzeTeamHealth, chatWithAI, aiEnabled } = require('./ai');
 const {
   signToken,
@@ -29,9 +29,36 @@ init();
 const seeded = seed();
 
 const app = express();
+app.disable('x-powered-by');
 app.set('trust proxy', 1); // behind Railway's proxy
-app.use(cors());
-app.use(express.json({ limit: '6mb' })); // profile photos travel as data URLs
+
+// Security headers (no helmet dependency needed).
+app.use((req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.set('X-Download-Options', 'noopen');
+  res.set('X-Permitted-Cross-Domain-Policies', 'none');
+  next();
+});
+
+// Restrict CORS to the configured APP_URL, with a localhost fallback for dev.
+const CORS_ORIGINS = process.env.APP_URL
+  ? [process.env.APP_URL, 'http://localhost:3000']
+  : null;
+app.use(cors(CORS_ORIGINS ? {
+  origin: (origin, cb) => {
+    if (!origin || CORS_ORIGINS.includes(origin)) return cb(null, true);
+    cb(new Error('CORS: origin not allowed'));
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+} : undefined));
+// Keep the global body limit small (photo upload gets its own parser).
+app.use((req, res, next) => {
+  const limit = req.method === 'PUT' && req.path === '/api/me/profile' ? '6mb' : '50kb';
+  express.json({ limit })(req, res, next);
+});
 
 const STATUSES = ['Not Started', 'In Progress', 'Complete'];
 const ROLES = ['admin', 'manager', 'member'];
@@ -81,10 +108,10 @@ function logApproval(entityType, entityId, action, actor, detail = '') {
 // Check-ins are due every Friday. The "week" runs Saturday→Friday and is keyed
 // by that Friday's date, so everyone is expected to submit one each Friday.
 function currentCheckinWeek(d = new Date()) {
-  const day = d.getDay();           // 0 = Sun … 6 = Sat
-  const offset = (5 - day + 7) % 7; // days until this week's Friday (0 if Friday)
+  const day = d.getUTCDay();            // 0 = Sun … 6 = Sat (UTC)
+  const offset = (5 - day + 7) % 7;    // days until this week's Friday
   const friday = new Date(d);
-  friday.setDate(d.getDate() + offset);
+  friday.setUTCDate(d.getUTCDate() + offset);
   return friday.toISOString().slice(0, 10);
 }
 
@@ -92,7 +119,7 @@ function currentCheckinWeek(d = new Date()) {
 const rateBuckets = new Map();
 function rateLimit({ windowMs, max, name = '' }) {
   return (req, res, next) => {
-    const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown';
     const key = name + '|' + ip;
     const now = Date.now();
     let bucket = rateBuckets.get(key);
@@ -200,7 +227,8 @@ app.post('/api/auth/change-password', authenticate, rateLimit({ windowMs: 15 * 6
   }
   const hash = bcrypt.hashSync(String(newPassword), 10);
   db.prepare('UPDATE users SET passwordHash = ?, firstLogin = 0 WHERE id = ?').run(hash, req.user.id);
-  res.json({ ok: true, user: publicUser(getUser(req.user.id)) });
+  const updatedUser = getUser(req.user.id);
+  res.json({ ok: true, user: publicUser(updatedUser), token: signToken(updatedUser) });
 });
 
 app.get('/api/me', authenticate, (req, res) => {
@@ -280,7 +308,7 @@ app.post('/api/submissions', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name
   for (const r of recipients) {
     notify(r.email, `New ${label}`,
       `New ${label}`,
-      `<b>${name}</b>${grade ? ' (grade ' + grade + ')' : ''} submitted a ${label}.<br/>Email: ${email}${message ? '<br/>Message: ' + message : ''}<br/><br/>See it in the Get Involved inbox.`);
+      `<b>${escHtml(name)}</b>${grade ? ' (grade ' + escHtml(grade) + ')' : ''} submitted a ${label}.<br/>Email: ${escHtml(email)}${message ? '<br/>Message: ' + escHtml(message) : ''}<br/><br/>See it in the Get Involved inbox.`);
     pushNotification(r.id, `New ${label} from ${name}${grade ? ' (grade ' + grade + ')' : ''}`, 'submissions', 'submission');
   }
 
@@ -497,7 +525,7 @@ app.put('/api/home/announcement', (req, res) => {
 
 // ---- Directory / org --------------------------------------------------------
 app.get('/api/users', (req, res) => {
-  const users = db.prepare("SELECT * FROM users ORDER BY displayName").all().map(publicUser);
+  const users = db.prepare("SELECT * FROM users WHERE username != 'logistics' ORDER BY displayName").all().map(publicUser);
   res.json({ users });
 });
 
@@ -506,9 +534,9 @@ app.get('/api/users', (req, res) => {
 app.get('/api/reports', (req, res) => {
   let reports;
   if (req.user.role === 'admin') {
-    reports = db.prepare("SELECT * FROM users WHERE id != ? ORDER BY displayName").all(req.user.id);
+    reports = db.prepare("SELECT * FROM users WHERE id != ? AND username != 'logistics' ORDER BY displayName").all(req.user.id);
   } else {
-    reports = directReports(req.user.id);
+    reports = directReports(req.user.id).filter(u => u.username !== 'logistics');
   }
   res.json({ reports: reports.map(publicUser) });
 });
@@ -533,6 +561,9 @@ app.put('/api/users/:id/page-settings', (req, res) => {
   const { bannerEnabled, bannerTitle, bannerUrl,
           formEnabled, formTitle, formFields, announcementEnabled, announcementText,
           bioEnabled, bioText } = req.body || {};
+  if (bannerUrl !== undefined && bannerUrl && !/^https?:\/\//i.test(bannerUrl.trim())) {
+    return res.status(400).json({ error: 'Banner URL must start with http:// or https://' });
+  }
   db.prepare('INSERT OR IGNORE INTO user_page_settings (userId) VALUES (?)').run(targetId);
   db.prepare(`UPDATE user_page_settings SET
     bannerEnabled       = COALESCE(?, bannerEnabled),
@@ -725,11 +756,14 @@ app.post('/api/roster/:id/contacted', (req, res) => {
 
 app.post('/api/roster/:id/convert', (req, res) => {
   if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const m = db.prepare('SELECT * FROM roster_members WHERE id=?').get(Number(req.params.id));
+  if (!m) return res.status(404).json({ error: 'Not found' });
+  if (m.status !== 'Contacted') return res.status(400).json({ error: 'Member must be Contacted before onboarding' });
   const { grade, roleDescription } = req.body || {};
   db.prepare(`UPDATE roster_members SET status='Onboarded', convertedAt=datetime('now'),
     grade=COALESCE(?,grade), roleDescription=COALESCE(?,roleDescription), updatedAt=datetime('now')
-    WHERE id=?`).run(grade||null, roleDescription||null, Number(req.params.id));
-  res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(Number(req.params.id)) });
+    WHERE id=?`).run(grade||null, roleDescription||null, m.id);
+  res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id) });
 });
 
 app.post('/api/roster/:id/decline', (req, res) => {
@@ -847,6 +881,12 @@ app.patch('/api/funding/:id', (req, res) => {
   if (!fr) return res.status(404).json({ error: 'Not found' });
   const { action, reviewNotes } = req.body || {};
   if (!isPrivileged) return res.status(403).json({ error: 'Not allowed' });
+  if ((action === 'approve' || action === 'deny') && fr.status !== 'pending') {
+    return res.status(400).json({ error: 'This request has already been reviewed' });
+  }
+  if (action === 'purchased' && fr.status !== 'approved') {
+    return res.status(400).json({ error: 'Only approved requests can be marked as purchased' });
+  }
   if (action === 'approve') {
     db.transaction(() => {
       db.prepare(`UPDATE funding_requests SET status='approved', reviewedById=?, reviewedAt=datetime('now'), reviewNotes=COALESCE(?,reviewNotes) WHERE id=?`).run(req.user.id, reviewNotes??null, fr.id);
@@ -911,12 +951,15 @@ app.patch('/api/board-apps/:id', (req, res) => {
   if (!ba) return res.status(404).json({ error: 'Not found' });
   const { action } = req.body || {};
   if (action === 'accept' || action === 'decline') {
+    if (ba.status !== 'pending') return res.status(400).json({ error: 'This application has already been reviewed' });
     const status = action === 'accept' ? 'accepted' : 'declined';
     db.transaction(() => {
       db.prepare(`UPDATE board_applications SET status=?, reviewedById=?, reviewedAt=datetime('now') WHERE id=?`).run(status, req.user.id, ba.id);
       logApproval('board-app', ba.id, status, req.user, ba.positionTitle);
     })();
     pushNotification(ba.userId, `Your application for "${ba.positionTitle}" was ${status} by ${req.user.displayName}`, 'board-apps', 'board-app');
+  } else {
+    return res.status(400).json({ error: 'Invalid action — use "accept" or "decline"' });
   }
   res.json({ application: db.prepare('SELECT * FROM board_applications WHERE id=?').get(ba.id) });
 });
@@ -1062,6 +1105,15 @@ app.patch('/api/tasks/:id', (req, res) => {
   const body = req.body || {};
   const { status, name, description, dueDate } = body;
   if (status && !STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  if (name !== undefined && !String(name).trim()) return res.status(400).json({ error: 'Task name cannot be blank' });
+  // Only admins, managers, or the original assigner may edit task content (name/description/dueDate).
+  // The task owner (regular member) may only update status.
+  const isOwnSelfCreated = task.userId === req.user.id && task.assignedById === req.user.id;
+  const canEditContent = req.user.role === 'admin' || req.user.role === 'manager' ||
+    task.assignedById === req.user.id || isOwnSelfCreated;
+  if (!canEditContent && (name !== undefined || description !== undefined || dueDate !== undefined)) {
+    return res.status(403).json({ error: 'You can only update the status of assigned tasks' });
+  }
   const hasDueDate = 'dueDate' in body ? 1 : 0;
 
   db.prepare(`UPDATE tasks SET
@@ -1149,6 +1201,7 @@ app.post('/api/admin/users', requireAdmin, rateLimit({ windowMs: 60 * 60 * 1000,
   if (!firstName) return res.status(400).json({ error: 'First name required' });
   role = ROLES.includes(role) ? role : 'member';
   grade = String(grade || '').trim().slice(0, 40);
+  if (grade && !GRADES.includes(grade)) return res.status(400).json({ error: 'Grade must be 9, 10, 11, or 12' });
 
   const base = ((firstName[0] || '') + lastName).toLowerCase().replace(/[^a-z0-9]/g, '');
   let username = base || 'member';
@@ -1181,9 +1234,13 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     if (clash) return res.status(400).json({ error: 'That username is already taken' });
   }
 
+  if (role !== undefined && !ROLES.includes(role)) return res.status(400).json({ error: 'Invalid role' });
   const newRole = ROLES.includes(role) ? role : user.role;
   const newManagerId = managerId === undefined ? user.managerId : (managerId || null);
   if (newManagerId === user.id) return res.status(400).json({ error: 'A user cannot manage themselves' });
+  if (grade !== undefined && grade !== '' && !GRADES.includes(String(grade).trim())) {
+    return res.status(400).json({ error: 'Grade must be 9, 10, 11, or 12' });
+  }
 
   // Detect transitive cycles: walk up the proposed manager's chain; if we reach user.id, it's circular.
   if (newManagerId) {
@@ -1249,9 +1306,10 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
       .run(bcrypt.hashSync(newUsername, 10), user.id);
   }
 
-  // Recompute manager flags for affected supervisors.
+  // Recompute manager flags for affected supervisors and the edited user themselves.
   if (prevManager) refreshRole(prevManager);
   if (newManagerId) refreshRole(newManagerId);
+  if (newRole !== 'admin') refreshRole(user.id);
   res.json({ user: publicUser(getUser(user.id)) });
 });
 
@@ -1324,7 +1382,7 @@ app.delete('/api/ai/notes/:id', requireAdmin, (req, res) => {
 });
 
 // POST /api/ai/chat — admin only chat; body: { message, sessionId? }
-app.post('/api/ai/chat', requireAdmin, async (req, res) => {
+app.post('/api/ai/chat', requireAdmin, rateLimit({ windowMs: 60 * 60 * 1000, max: 30, name: 'ai-chat' }), async (req, res) => {
   const { message, sessionId } = req.body || {};
   if (!message || typeof message !== 'string') return res.status(400).json({ error: 'Message required' });
   const sid = sessionId || `${req.user.id}-${Date.now()}`;
@@ -1366,7 +1424,7 @@ app.get('/api/ai/chat/history', requireAdmin, (req, res) => {
 });
 
 // POST /api/ai/analyze — admin only; manually trigger team health analysis
-app.post('/api/ai/analyze', requireAdmin, async (req, res) => {
+app.post('/api/ai/analyze', requireAdmin, rateLimit({ windowMs: 60 * 60 * 1000, max: 5, name: 'ai-analyze' }), async (req, res) => {
   if (!aiEnabled) return res.json({ ok: true, skipped: true, reason: 'AI not configured' });
   try {
     await runAIAnalysis();

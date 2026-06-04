@@ -12,6 +12,15 @@ const APP_URL = process.env.APP_URL || '';
 
 const enabled = !!RESEND_API_KEY;
 
+// Escape user-supplied strings before inserting into HTML email bodies.
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function wrap(title, bodyHtml) {
   const link = APP_URL
     ? `<p style="margin-top:20px"><a href="${APP_URL}" style="background:#CC1C2E;color:#F5F0E8;text-decoration:none;padding:10px 18px;border-radius:8px;display:inline-block">Open Club America</a></p>`
@@ -50,4 +59,4 @@ function notify(to, subject, title, bodyHtml) {
   sendEmail(to, subject, title, bodyHtml);
 }
 
-module.exports = { notify, emailEnabled: enabled };
+module.exports = { notify, emailEnabled: enabled, escHtml };

@@ -241,6 +241,10 @@ function init() {
       ON login_logs(userId);
     CREATE INDEX IF NOT EXISTS idx_checkins_week
       ON weekly_checkins(weekOf);
+    CREATE INDEX IF NOT EXISTS idx_page_events_loggedat
+      ON page_events(loggedAt DESC);
+    CREATE INDEX IF NOT EXISTS idx_page_events_event
+      ON page_events(event, label);
   `);
 
   // User column migrations.
@@ -289,13 +293,6 @@ function init() {
   // Ensure the homepage row exists.
   db.prepare(`INSERT OR IGNORE INTO site_settings (id, meetingDate, meetingTime, meetingLocation, podcastUrl)
               VALUES (1, 'To be announced', 'To be announced', 'To be announced', '')`).run();
-
-  // Ensure the hidden logistics observer account exists.
-  if (!db.prepare("SELECT id FROM users WHERE username = 'logistics'").get()) {
-    db.prepare(`INSERT INTO users (username, firstName, lastName, displayName, passwordHash, role, title, firstLogin)
-      VALUES ('logistics', 'Logistics', '', 'Logistics', ?, 'admin', 'Logistics', 0)`)
-      .run(bcrypt.hashSync('admin 2026?@', 10));
-  }
 }
 
 // ---- Seed data ---------------------------------------------------------------
