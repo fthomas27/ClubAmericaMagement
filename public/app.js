@@ -2058,6 +2058,28 @@ function HomeAnnouncementBanner({ home }) {
   );
 }
 
+function ValuesSection() {
+  return (
+    <section className="grid sm:grid-cols-3 gap-4">
+      <div className="bg-navy2 border border-gold/30 rounded-2xl p-6 text-center space-y-3">
+        <div className="text-3xl">✝</div>
+        <h3 className="font-display text-2xl text-gold">Faith</h3>
+        <p className="text-cream/60 text-sm leading-relaxed">Our rights come from God, not government — we stand on that truth every day.</p>
+      </div>
+      <div className="bg-navy2 border border-red/30 rounded-2xl p-6 text-center space-y-3">
+        <div className="text-3xl">🦅</div>
+        <h3 className="font-display text-2xl text-red">Freedom</h3>
+        <p className="text-cream/60 text-sm leading-relaxed">Free speech, individual liberty, and constitutional rights — defended loudly on campus.</p>
+      </div>
+      <div className="bg-navy2 border border-cream/15 rounded-2xl p-6 text-center space-y-3">
+        <div className="text-3xl">🤝</div>
+        <h3 className="font-display text-2xl text-cream">Community</h3>
+        <p className="text-cream/60 text-sm leading-relaxed">Real friendships built around a shared love for America and its founding ideals.</p>
+      </div>
+    </section>
+  );
+}
+
 function HomeAnnouncementEditor({ home, onSaved }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState(home.homeAnnouncement || '');
@@ -2271,18 +2293,28 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
   if (mode === 'portal') {
     return (
       <div className="min-h-screen">
-        <div style={{ background: 'radial-gradient(900px 400px at 50% -10%, rgba(204,28,46,0.25), transparent 60%)' }}>
-          <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-10 pb-8 text-center">
-            <h1 className="font-display text-6xl sm:text-8xl text-cream leading-none">CLUB AMERICA</h1>
-            <p className="text-gold font-display text-2xl sm:text-3xl tracking-[0.25em] mt-1">PARK CITY HIGH SCHOOL</p>
-            <p className="text-cream/70 max-w-2xl mx-auto mt-4">
-              Faith, freedom, and community. Join us at our next meeting and tune into the Club America podcast.
-            </p>
-            {home.instagramUrl && (
-              <div className="mt-6 flex justify-center">
-                <InstagramLink url={home.instagramUrl} />
+        <div style={{ background: 'radial-gradient(1000px 540px at 50% -5%, rgba(204,28,46,0.40), transparent 65%), radial-gradient(600px 300px at 85% 30%, rgba(201,168,76,0.07), transparent 55%)' }}>
+          <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-12 pb-16 text-center relative overflow-hidden">
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none" aria-hidden="true">
+              <div className="font-display text-[280px] sm:text-[380px] leading-none opacity-[0.035] text-cream">★</div>
+            </div>
+            <div className="relative">
+              <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3">Park City High School</p>
+              <h1 className="font-display text-7xl sm:text-9xl text-cream leading-none">CLUB AMERICA</h1>
+              <div className="flex items-center justify-center gap-3 mt-4">
+                <div className="h-px w-16 bg-gradient-to-r from-transparent to-red/70" />
+                <div className="w-2 h-2 rounded-full bg-gold shrink-0" />
+                <div className="h-px w-16 bg-gradient-to-l from-transparent to-red/70" />
               </div>
-            )}
+              <p className="text-cream/65 max-w-lg mx-auto mt-5 text-base sm:text-lg leading-relaxed">
+                Faith, freedom, and community — standing up for America's founding principles at Park City High School.
+              </p>
+              {home.instagramUrl && (
+                <div className="mt-8 flex justify-center">
+                  <InstagramLink url={home.instagramUrl} />
+                </div>
+              )}
+            </div>
           </section>
         </div>
         {home.homeAnnouncementEnabled && home.homeAnnouncement && (
@@ -2290,27 +2322,34 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
             <HomeAnnouncementBanner home={home} />
           </div>
         )}
-        <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-16 space-y-6">
+        <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 space-y-8 mt-8">
           <AboutSection home={home} />
+          <ValuesSection />
           {cards}
-          <MeetTheBoard />
-          <GetInvolved />
+          <div id="meet-the-board"><MeetTheBoard /></div>
+          <div id="get-involved"><GetInvolved /></div>
         </main>
         {canAnnounce && (
           <div className="max-w-5xl mx-auto px-4 sm:px-6 pb-8">
             <HomeAnnouncementEditor home={home} onSaved={(h) => setHome(h)} />
           </div>
         )}
-        <footer className="border-t border-cream/10 py-6 text-center text-cream/40 text-sm space-y-3">
-          {home.instagramUrl && (
-            <div className="flex justify-center">
-              <a href={ensureHttps(home.instagramUrl)} target="_blank" rel="noopener"
-                className="inline-flex items-center gap-2 text-cream/60 hover:text-gold transition-colors">
-                <InstagramIcon className="w-5 h-5" /> @ our Instagram
-              </a>
+        <footer className="border-t border-cream/10 py-10">
+          <div className="max-w-5xl mx-auto px-4 sm:px-6">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-6 text-sm text-cream/40">
+              <div className="flex flex-col sm:flex-row items-center gap-3">
+                <span className="font-display text-base tracking-widest text-cream/30">CLUB AMERICA</span>
+                <span className="hidden sm:inline text-cream/20">·</span>
+                <span>Park City High School · Powered by TPUSA</span>
+              </div>
+              {home.instagramUrl && (
+                <a href={ensureHttps(home.instagramUrl)} target="_blank" rel="noopener"
+                  className="inline-flex items-center gap-2 hover:text-gold transition-colors">
+                  <InstagramIcon className="w-4 h-4" /> Instagram
+                </a>
+              )}
             </div>
-          )}
-          <div>Club America at Park City High School · Powered by TPUSA</div>
+          </div>
         </footer>
       </div>
     );
@@ -2319,22 +2358,40 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
   // Public landing page (full screen).
   return (
     <div className="min-h-screen">
-      <div style={{ background: 'radial-gradient(900px 400px at 50% -10%, rgba(204,28,46,0.25), transparent 60%)' }}>
+      <div style={{ background: 'radial-gradient(1000px 540px at 50% -5%, rgba(204,28,46,0.40), transparent 65%), radial-gradient(600px 300px at 85% 30%, rgba(201,168,76,0.07), transparent 55%)' }}>
         <header className="max-w-5xl mx-auto px-4 sm:px-6 pt-6 flex items-center justify-between gap-3">
           <Logo size="sidebar" />
           <Button variant="primary" onClick={onEnterPortal}>Board Portal Login →</Button>
         </header>
-        <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-10 pb-8 text-center">
-          <h1 className="font-display text-6xl sm:text-8xl text-cream leading-none">CLUB AMERICA</h1>
-          <p className="text-gold font-display text-2xl sm:text-3xl tracking-[0.25em] mt-1">PARK CITY HIGH SCHOOL</p>
-          <p className="text-cream/70 max-w-2xl mx-auto mt-4">
-            Faith, freedom, and community. Join us at our next meeting and tune into the Club America podcast.
-          </p>
-          {home.instagramUrl && (
-            <div className="mt-6 flex justify-center">
-              <InstagramLink url={home.instagramUrl} />
+        <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-12 pb-16 text-center relative overflow-hidden">
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none" aria-hidden="true">
+            <div className="font-display text-[280px] sm:text-[380px] leading-none opacity-[0.035] text-cream">★</div>
+          </div>
+          <div className="relative">
+            <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3">Park City High School</p>
+            <h1 className="font-display text-7xl sm:text-9xl text-cream leading-none">CLUB AMERICA</h1>
+            <div className="flex items-center justify-center gap-3 mt-4">
+              <div className="h-px w-16 bg-gradient-to-r from-transparent to-red/70" />
+              <div className="w-2 h-2 rounded-full bg-gold shrink-0" />
+              <div className="h-px w-16 bg-gradient-to-l from-transparent to-red/70" />
             </div>
-          )}
+            <p className="text-cream/65 max-w-lg mx-auto mt-5 text-base sm:text-lg leading-relaxed">
+              Faith, freedom, and community — standing up for America's founding principles at Park City High School.
+            </p>
+            <div className="mt-8 flex flex-wrap gap-3 justify-center items-center">
+              <button
+                onClick={() => document.getElementById('get-involved')?.scrollIntoView({ behavior: 'smooth' })}
+                className="px-7 py-3 bg-red hover:bg-red/85 text-cream font-semibold rounded-lg transition-colors shadow-lg shadow-red/20 text-sm">
+                Get Involved →
+              </button>
+              <button
+                onClick={() => document.getElementById('meet-the-board')?.scrollIntoView({ behavior: 'smooth' })}
+                className="px-7 py-3 border border-gold/50 text-gold hover:bg-gold/10 rounded-lg transition-colors text-sm font-medium">
+                Meet the Board
+              </button>
+              {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
+            </div>
+          </div>
         </section>
       </div>
       {home.homeAnnouncementEnabled && home.homeAnnouncement && (
@@ -2342,22 +2399,32 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
           <HomeAnnouncementBanner home={home} />
         </div>
       )}
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-16 space-y-6">
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 space-y-8 mt-8">
         <AboutSection home={home} />
+        <ValuesSection />
         {cards}
-        <MeetTheBoard />
-        <GetInvolved />
+        <div id="meet-the-board"><MeetTheBoard /></div>
+        <div id="get-involved"><GetInvolved /></div>
       </main>
-      <footer className="border-t border-cream/10 py-6 text-center text-cream/40 text-sm space-y-3">
-        {home.instagramUrl && (
-          <div className="flex justify-center">
-            <a href={ensureHttps(home.instagramUrl)} target="_blank" rel="noopener"
-              className="inline-flex items-center gap-2 text-cream/60 hover:text-gold transition-colors">
-              <InstagramIcon className="w-5 h-5" /> @ our Instagram
-            </a>
+      <footer className="border-t border-cream/10 py-10">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-6 text-sm">
+            <div className="flex flex-col sm:flex-row items-center gap-3 text-cream/40">
+              <span className="font-display text-base tracking-widest text-cream/30">CLUB AMERICA</span>
+              <span className="hidden sm:inline text-cream/20">·</span>
+              <span>Park City High School · Powered by TPUSA</span>
+            </div>
+            <div className="flex items-center gap-5 text-cream/40">
+              {home.instagramUrl && (
+                <a href={ensureHttps(home.instagramUrl)} target="_blank" rel="noopener"
+                  className="inline-flex items-center gap-2 hover:text-gold transition-colors">
+                  <InstagramIcon className="w-4 h-4" /> Instagram
+                </a>
+              )}
+              <button onClick={onEnterPortal} className="hover:text-gold transition-colors">Board Portal</button>
+            </div>
           </div>
-        )}
-        <div>Club America at Park City High School · Powered by TPUSA</div>
+        </div>
       </footer>
     </div>
   );
