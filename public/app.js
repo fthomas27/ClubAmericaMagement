@@ -51,7 +51,7 @@ function Badge({ children, tone = 'gold' }) {
     blue: 'bg-sky-500/15 text-sky-300 border-sky-500/40',
   };
   return (
-    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border ${tones[tone] || tones.slate}`}>
+    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border transition-all duration-200 ${tones[tone] || tones.slate}`}>
       {children}
     </span>
   );
@@ -69,9 +69,9 @@ function roleLabel(role) {
 
 function Button({ children, onClick, variant = 'primary', type = 'button', className = '', disabled }) {
   const variants = {
-    primary: 'bg-red hover:bg-red/85 text-cream',
-    gold: 'bg-gold hover:bg-gold/85 text-navy font-semibold',
-    ghost: 'bg-transparent border border-cream/25 hover:border-gold text-cream',
+    primary: 'bg-red hover:bg-red/85 text-cream hover:shadow-lg hover:shadow-red/25',
+    gold: 'bg-gold hover:bg-gold/85 text-navy font-semibold hover:shadow-lg hover:shadow-gold/20',
+    ghost: 'bg-transparent border border-cream/25 hover:border-gold text-cream hover:text-gold',
     danger: 'bg-transparent border border-red/60 text-red hover:bg-red hover:text-cream',
   };
   return (
@@ -79,7 +79,7 @@ function Button({ children, onClick, variant = 'primary', type = 'button', class
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className={`px-4 py-2 rounded-md text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${variants[variant]} ${className}`}
+      className={`px-4 py-2 rounded-md text-sm transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 ${variants[variant]} ${className}`}
     >
       {children}
     </button>
@@ -96,7 +96,7 @@ function Field({ label, children }) {
 }
 
 const inputCls =
-  'w-full bg-navy border border-cream/20 rounded-md px-3 py-2 text-cream placeholder-cream/30 focus:outline-none focus:border-gold';
+  'w-full bg-navy border border-cream/20 rounded-md px-3 py-2 text-cream placeholder-cream/30 focus:outline-none focus:border-gold/80 focus:ring-2 focus:ring-gold/15 transition-colors';
 
 // ---------------------------------------------------------------------------
 // Shared UX primitives: loading, empty states, confirmation, retry, CSV export
@@ -113,7 +113,7 @@ function Spinner({ className = 'w-4 h-4' }) {
 // Full-section loading placeholder.
 function Loading({ label = 'Loading…' }) {
   return (
-    <div className="flex items-center justify-center gap-2 py-10 text-cream/50 text-sm">
+    <div className="flex items-center justify-center gap-2 py-10 text-cream/50 text-sm ca-fade-in">
       <Spinner /> {label}
     </div>
   );
@@ -148,7 +148,7 @@ function ErrorState({ message = 'Something went wrong.', onRetry }) {
 function ConfirmDialog({ title = 'Are you sure?', message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false, onConfirm, onCancel }) {
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onCancel}>
-      <div className="bg-navy2 border border-cream/15 rounded-xl p-5 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-navy2 border border-cream/15 rounded-xl p-5 max-w-sm w-full ca-scale-in" onClick={(e) => e.stopPropagation()}>
         <div className="font-display text-lg text-gold mb-1">{title}</div>
         {message && <p className="text-sm text-cream/70 mb-4 whitespace-pre-wrap">{message}</p>}
         <div className="flex gap-2 justify-end">
@@ -318,12 +318,12 @@ function Login({ onLogin, onBack }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
+    <div className="min-h-screen flex items-center justify-center p-4 ca-fade-in">
       <div className="w-full max-w-md">
-        <div className="mb-8">
+        <div className="mb-8 ca-slide-up">
           <Logo size="login" />
         </div>
-        <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4">
+        <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-slide-up" style={{ animationDelay: '60ms' }}>
           <Field label="Username">
             <input className={inputCls} value={username} autoFocus
               onChange={(e) => setUsername(e.target.value)} placeholder="e.g. fthomas" />
@@ -371,8 +371,8 @@ function ChangePassword({ user, onDone, forced }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
-      <form onSubmit={submit} className="w-full max-w-md bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4">
+    <div className="min-h-screen flex items-center justify-center p-4 ca-fade-in">
+      <form onSubmit={submit} className="w-full max-w-md bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-scale-in">
         <div className="font-display text-3xl text-gold">{forced ? 'Set Your Password' : 'Change Password'}</div>
         {forced && (
           <p className="text-sm text-cream/60">
@@ -485,7 +485,7 @@ function CropModal({ src, onCrop, onCancel }) {
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
       onMouseMove={onMove} onMouseUp={() => setDrag(null)} onMouseLeave={() => setDrag(null)}>
-      <div className="bg-navy2 border border-cream/10 rounded-xl p-5 max-w-2xl w-full">
+      <div className="bg-navy2 border border-cream/10 rounded-xl p-5 max-w-2xl w-full ca-scale-in">
         <div className="font-display text-xl text-gold mb-1">Crop Photo</div>
         <p className="text-xs text-cream/50 mb-3">Drag the circle to reposition · drag a corner to resize</p>
         <div className="relative inline-block select-none">
@@ -622,7 +622,7 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
   );
 
   if (forced) {
-    return <>{cropModal}<form onSubmit={submit} className="min-h-screen flex items-center justify-center p-4">{card}</form></>;
+    return <>{cropModal}<form onSubmit={submit} className="min-h-screen flex items-center justify-center p-4 ca-fade-in">{card}</form></>;
   }
   return <>{cropModal}<form onSubmit={submit} className="max-w-lg">{card}</form></>;
 }
@@ -633,7 +633,7 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
 function TaskCard({ task, canEdit, onChange, onDelete }) {
   const [saving, setSaving] = useState(false);
   return (
-    <div className="bg-navy2 border border-cream/10 rounded-lg p-4">
+    <div className="bg-navy2 border border-cream/10 rounded-lg p-4 hover:border-cream/25 hover:-translate-y-0.5 hover:shadow-md hover:shadow-black/25 transition-all duration-200">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="font-medium text-cream truncate">{task.name}</div>
@@ -696,7 +696,7 @@ function NewTaskForm({ targetUserId, onCreated }) {
 
   if (!open) return <Button variant="ghost" onClick={() => setOpen(true)}>+ New Task</Button>;
   return (
-    <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-lg p-4 space-y-3">
+    <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-lg p-4 space-y-3 ca-slide-up">
       <Field label="Task Name"><input className={inputCls} value={name} autoFocus onChange={(e) => setName(e.target.value)} /></Field>
       <Field label="Description"><textarea className={inputCls} rows="2" value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
       <Field label="Due Date"><input type="date" className={inputCls} value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field>
@@ -738,7 +738,7 @@ function AssignTaskForm({ me, users, onCreated }) {
 
   if (!open) return <Button variant="ghost" onClick={() => setOpen(true)}>↗ Send Task to Someone</Button>;
   return (
-    <form onSubmit={submit} className="bg-navy2 border border-cream/15 rounded-lg p-4 space-y-3">
+    <form onSubmit={submit} className="bg-navy2 border border-cream/15 rounded-lg p-4 space-y-3 ca-slide-up">
       <div className="font-display text-xl text-gold">Send a Task</div>
       <Field label="To">
         <select className={inputCls} value={targetUserId} onChange={(e) => setTargetUserId(e.target.value)}>
@@ -770,9 +770,9 @@ function Toggle({ enabled, onChange, disabled }) {
       onClick={onChange}
       disabled={disabled}
       aria-pressed={!!enabled}
-      className={`relative w-12 h-7 rounded-full transition-colors disabled:opacity-50 shrink-0 ${enabled ? 'bg-emerald-500' : 'bg-cream/20'}`}
+      className={`relative w-12 h-7 rounded-full transition-all duration-200 disabled:opacity-50 shrink-0 ${enabled ? 'bg-emerald-500 shadow-md shadow-emerald-500/30' : 'bg-cream/20'}`}
     >
-      <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white transition-transform ${enabled ? 'translate-x-5' : ''}`} />
+      <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-all duration-200 ${enabled ? 'translate-x-5' : ''}`} />
     </button>
   );
 }
@@ -784,7 +784,7 @@ function BannerSection({ title, url }) {
       href={safeUrl || '#'}
       target={safeUrl && safeUrl !== '#' ? '_blank' : undefined}
       rel="noopener noreferrer"
-      className="block w-full bg-gold/15 border border-gold/40 rounded-xl px-6 py-5 text-center font-display text-2xl text-gold hover:bg-gold/25 transition-colors mb-6"
+      className="block w-full bg-gold/15 border border-gold/40 rounded-xl px-6 py-5 text-center font-display text-2xl text-gold hover:bg-gold/25 hover:border-gold/70 hover:shadow-md hover:shadow-gold/10 transition-all duration-200 active:scale-[0.99] mb-6"
     >
       {title || 'Click Here →'}
     </a>
@@ -892,7 +892,7 @@ function PageAdminControls({ targetUser, onUpdated }) {
     <div className="mb-4">
       <button
         onClick={() => setOpen(true)}
-        className="text-sm text-gold/60 hover:text-gold flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gold/20 hover:border-gold/50 transition-colors"
+        className="text-sm text-gold/60 hover:text-gold flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gold/20 hover:border-gold/50 transition-all duration-150 active:scale-95"
       >
         ⚙ Page Settings
       </button>
@@ -900,7 +900,7 @@ function PageAdminControls({ targetUser, onUpdated }) {
   );
 
   return (
-    <div className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6">
+    <div className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 ca-slide-up">
       <div className="flex items-center justify-between mb-5">
         <div className="font-display text-xl text-gold">Page Settings — {targetUser.displayName}</div>
         <button onClick={() => setOpen(false)} className="text-cream/50 hover:text-cream text-2xl leading-none">×</button>
@@ -1269,7 +1269,7 @@ function Approvals({ onChanged, refreshSignal }) {
       )}
       <div className="space-y-3">
         {(items || []).map((t) => (
-          <div key={t.id} className="bg-navy2 border border-gold/30 rounded-lg p-4">
+          <div key={t.id} className="bg-navy2 border border-gold/30 rounded-lg p-4 hover:border-gold/50 hover:shadow-md hover:shadow-black/20 transition-all duration-200">
             <div className="font-medium text-cream">{t.name}</div>
             {t.description && <div className="text-sm text-cream/60 mt-1">{t.description}</div>}
             <div className="text-xs text-cream/50 mt-2">
@@ -1330,7 +1330,7 @@ function SubmissionsInbox({ onChanged, refreshSignal }) {
       )}
       <div className="space-y-3">
         {(items || []).map((s) => (
-          <div key={s.id} className={`bg-navy2 border rounded-lg p-4 ${s.handled ? 'border-cream/10 opacity-70' : 'border-gold/30'}`}>
+          <div key={s.id} className={`bg-navy2 border rounded-lg p-4 transition-all duration-200 hover:shadow-md hover:shadow-black/20 ${s.handled ? 'border-cream/10 opacity-70' : 'border-gold/30 hover:border-gold/50'}`}>
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div className="font-medium text-cream">{s.name} <span className="text-cream/40 text-sm">· {s.email}</span></div>
               <div className="flex gap-2 flex-wrap">
@@ -1363,7 +1363,7 @@ function OrgNode({ title, name, tone = 'gold', children }) {
   const titleColor = tone === 'red' ? 'text-red' : 'text-gold';
   return (
     <div className="flex flex-col items-center">
-      <div className={`bg-navy2 border-2 ${ring} rounded-xl px-5 py-3 text-center min-w-[160px] sm:min-w-[200px] shadow-xl`}>
+      <div className={`bg-navy2 border-2 ${ring} rounded-xl px-5 py-3 text-center min-w-[160px] sm:min-w-[200px] shadow-xl hover:shadow-2xl hover:-translate-y-0.5 transition-all duration-200`}>
         <div className={`font-display text-lg sm:text-xl ${titleColor} leading-tight font-bold`}>{title}</div>
         {name && <div className="text-sm sm:text-base text-cream/90 mt-0.5 font-medium">{name}</div>}
       </div>
@@ -1525,7 +1525,7 @@ function EditMemberModal({ user, onSaved, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <form onSubmit={save} onClick={(e) => e.stopPropagation()}
-        className="bg-navy2 border border-gold/30 rounded-xl p-6 max-w-md w-full space-y-4">
+        className="bg-navy2 border border-gold/30 rounded-xl p-6 max-w-md w-full space-y-4 ca-scale-in">
         <div className="font-display text-2xl text-gold">Edit Profile</div>
         <div className="grid grid-cols-2 gap-3">
           <Field label="First Name">
@@ -1659,7 +1659,7 @@ function AdminPanel({ users, reload }) {
       </div>
       <div className="space-y-3">
         {users.map((u) => (
-          <div key={u.id} className="bg-navy2 border border-cream/10 rounded-xl p-4">
+          <div key={u.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors duration-150">
             <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
               <div>
                 <div className="text-cream font-medium">{u.displayName}</div>
@@ -1788,7 +1788,7 @@ function fmtEvent(iso) {
 function MeetingCard({ home, events }) {
   const hasEvents = events && events.length > 0;
   return (
-    <section className="bg-navy2 border border-gold/30 rounded-2xl p-6">
+    <section className="bg-navy2 border border-gold/30 rounded-2xl p-6 hover:border-gold/50 hover:shadow-lg hover:shadow-black/20 transition-all duration-200">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-3xl text-gold">{hasEvents ? 'Upcoming Events' : 'Next Meeting'}</h2>
         <span className="text-red text-xl">📅</span>
@@ -1823,7 +1823,7 @@ function MeetingCard({ home, events }) {
 function PodcastCard({ home }) {
   const id = ytId(home.podcastUrl);
   return (
-    <section className="bg-navy2 border border-red/30 rounded-2xl p-6">
+    <section className="bg-navy2 border border-red/30 rounded-2xl p-6 hover:border-red/50 hover:shadow-lg hover:shadow-black/20 transition-all duration-200">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-3xl text-red">The Podcast</h2>
         <span className="text-xl">🎙️</span>
@@ -1998,7 +1998,7 @@ function GetInvolved() {
 
   const TabBtn = ({ id, children }) => (
     <button type="button" onClick={() => { setTab(id); setDone(false); setError(''); }}
-      className={`px-4 py-2 rounded-md text-sm transition-colors ${tab === id ? 'bg-red text-cream' : 'bg-navy border border-cream/20 text-cream/70 hover:border-gold'}`}>
+      className={`px-4 py-2 rounded-md text-sm transition-all duration-150 active:scale-95 ${tab === id ? 'bg-red text-cream shadow-md shadow-red/20' : 'bg-navy border border-cream/20 text-cream/70 hover:border-gold hover:text-cream/90'}`}>
       {children}
     </button>
   );
@@ -2014,7 +2014,7 @@ function GetInvolved() {
       </div>
 
       {done ? (
-        <div className="text-center py-6">
+        <div className="text-center py-6 ca-slide-up">
           <div className="text-4xl mb-2">🎉</div>
           <div className="font-display text-2xl text-gold">Thanks, {form.name.split(' ')[0] || 'friend'}!</div>
           <p className="text-cream/70 mt-1">
@@ -2067,15 +2067,15 @@ function HomeAnnouncementBanner({ home }) {
 function ValuesSection() {
   return (
     <section className="grid sm:grid-cols-3 gap-4">
-      <div className="bg-navy2 border border-gold/30 rounded-2xl p-6 text-center space-y-3">
+      <div className="bg-navy2 border border-gold/30 rounded-2xl p-6 text-center space-y-3 hover:border-gold/60 hover:-translate-y-1 hover:shadow-lg hover:shadow-black/25 transition-all duration-200">
         <h3 className="font-display text-2xl text-gold">Faith</h3>
         <p className="text-cream/60 text-sm leading-relaxed">Our rights come from God, not government — we stand on that truth every day.</p>
       </div>
-      <div className="bg-navy2 border border-red/30 rounded-2xl p-6 text-center space-y-3">
+      <div className="bg-navy2 border border-red/30 rounded-2xl p-6 text-center space-y-3 hover:border-red/60 hover:-translate-y-1 hover:shadow-lg hover:shadow-black/25 transition-all duration-200">
         <h3 className="font-display text-2xl text-red">Freedom</h3>
         <p className="text-cream/60 text-sm leading-relaxed">Free speech, individual liberty, and constitutional rights — defended loudly on campus.</p>
       </div>
-      <div className="bg-navy2 border border-cream/15 rounded-2xl p-6 text-center space-y-3">
+      <div className="bg-navy2 border border-cream/15 rounded-2xl p-6 text-center space-y-3 hover:border-cream/30 hover:-translate-y-1 hover:shadow-lg hover:shadow-black/25 transition-all duration-200">
         <h3 className="font-display text-2xl text-cream">Community</h3>
         <p className="text-cream/60 text-sm leading-relaxed">Real friendships built around a shared love for America and its founding ideals.</p>
       </div>
@@ -2181,7 +2181,7 @@ function BoardModal({ member, onClose }) {
   }, [onClose]);
   return (
     <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
-      <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-md w-full p-6 relative max-h-[85vh] overflow-y-auto">
+      <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-md w-full p-6 relative max-h-[85vh] overflow-y-auto ca-scale-in">
         <button onClick={onClose} aria-label="Close" className="absolute top-2 right-4 text-cream/60 hover:text-cream text-3xl leading-none">×</button>
         <div className="flex items-center gap-4">
           <Avatar member={member} size={84} />
@@ -2224,7 +2224,7 @@ function MeetTheBoard() {
     return (
       <div key={node.id} className="flex flex-col items-center">
         <button onClick={() => { setSel(node); track('board_profile', node.displayName); }}
-          className="bg-navy2 border border-cream/15 rounded-xl px-4 py-3 flex flex-col items-center gap-2 w-36 hover:border-gold transition-colors">
+          className="bg-navy2 border border-cream/15 rounded-xl px-4 py-3 flex flex-col items-center gap-2 w-36 hover:border-gold hover:-translate-y-1 hover:shadow-md hover:shadow-black/30 transition-all duration-200">
           <Avatar member={node} size={56} />
           <div className="text-cream text-sm font-medium text-center leading-tight">{node.displayName}</div>
           <div className="text-gold/80 text-xs text-center leading-tight">{node.title || roleLabel(node.role)}</div>
@@ -2371,9 +2371,9 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
               <div className="font-display text-[280px] sm:text-[380px] leading-none opacity-[0.035] text-cream">★</div>
             </div>
             <div className="relative">
-              <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3">Park City High School</p>
-              <h1 className="font-display text-7xl sm:text-9xl text-cream leading-none">CLUB AMERICA</h1>
-              <p className="text-cream/65 max-w-lg mx-auto mt-5 text-base sm:text-lg leading-relaxed">
+              <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3 ca-fade-in">Park City High School</p>
+              <h1 className="font-display text-7xl sm:text-9xl text-cream leading-none ca-slide-up" style={{ animationDelay: '60ms' }}>CLUB AMERICA</h1>
+              <p className="text-cream/65 max-w-lg mx-auto mt-5 text-base sm:text-lg leading-relaxed ca-fade-in" style={{ animationDelay: '160ms' }}>
                 Faith, freedom, and community — standing up for America's founding principles at Park City High School.
               </p>
               {home.instagramUrl && (
@@ -2433,20 +2433,20 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         </header>
         <section className="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 pt-12 pb-16 text-center">
           <div className="relative">
-            <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3">Park City High School</p>
-            <h1 className="font-display text-7xl sm:text-9xl text-cream leading-none">CLUB AMERICA</h1>
-            <p className="text-cream/65 max-w-lg mx-auto mt-5 text-base sm:text-lg leading-relaxed">
+            <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3 ca-fade-in">Park City High School</p>
+            <h1 className="font-display text-7xl sm:text-9xl text-cream leading-none ca-slide-up" style={{ animationDelay: '60ms' }}>CLUB AMERICA</h1>
+            <p className="text-cream/65 max-w-lg mx-auto mt-5 text-base sm:text-lg leading-relaxed ca-fade-in" style={{ animationDelay: '160ms' }}>
               Faith, freedom, and community — standing up for America's founding principles at Park City High School.
             </p>
-            <div className="mt-8 flex flex-wrap gap-3 justify-center items-center">
+            <div className="mt-8 flex flex-wrap gap-3 justify-center items-center ca-fade-in" style={{ animationDelay: '250ms' }}>
               <button
                 onClick={() => document.getElementById('get-involved')?.scrollIntoView({ behavior: 'smooth' })}
-                className="px-7 py-3 bg-red hover:bg-red/85 text-cream font-semibold rounded-lg transition-colors shadow-lg shadow-red/20 text-sm">
+                className="px-7 py-3 bg-red hover:bg-red/85 text-cream font-semibold rounded-lg transition-all shadow-lg shadow-red/20 text-sm active:scale-95 hover:shadow-xl hover:shadow-red/30">
                 Get Involved →
               </button>
               <button
                 onClick={() => document.getElementById('meet-the-board')?.scrollIntoView({ behavior: 'smooth' })}
-                className="px-7 py-3 border border-gold/50 text-gold hover:bg-gold/10 rounded-lg transition-colors text-sm font-medium">
+                className="px-7 py-3 border border-gold/50 text-gold hover:bg-gold/10 rounded-lg transition-all text-sm font-medium active:scale-95">
                 Meet the Board
               </button>
               {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
@@ -2559,7 +2559,7 @@ function InterestSurvey({ onBack }) {
         <p className="text-cream/60 text-sm mb-6">
           Interested in Club America at Park City High School? Fill out this short form and we'll reach out.
         </p>
-        <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4">
+        <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-slide-up" style={{ animationDelay: '80ms' }}>
           <div className="grid grid-cols-2 gap-4">
             <Field label="First Name *">
               <input className={inputCls} value={form.firstName} onChange={set('firstName')} required autoFocus />
@@ -2628,7 +2628,7 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
   };
 
   return (
-    <div className="bg-navy2 border border-cream/10 rounded-lg p-4">
+    <div className="bg-navy2 border border-cream/10 rounded-lg p-4 hover:border-cream/20 transition-all duration-200">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="min-w-0">
           <div className="font-medium text-cream">{member.firstName} {member.lastName}</div>
@@ -2728,7 +2728,7 @@ function AddRosterMemberForm({ me, onCreated }) {
 
   if (!open) return <Button variant="ghost" onClick={() => setOpen(true)}>+ Add Member</Button>;
   return (
-    <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3">
+    <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3 ca-slide-up">
       <div className="font-display text-xl text-gold">Add Roster Member</div>
       <div className="grid sm:grid-cols-2 gap-3">
         <Field label="First Name *"><input className={inputCls} value={form.firstName} onChange={set('firstName')} required autoFocus /></Field>
@@ -2792,7 +2792,7 @@ function EditRosterMemberModal({ member, onSaved, onClose }) {
 
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
-      <form onSubmit={submit} className="w-full max-w-lg bg-navy2 border border-cream/10 rounded-xl p-5 space-y-3 max-h-screen overflow-y-auto">
+      <form onSubmit={submit} className="w-full max-w-lg bg-navy2 border border-cream/10 rounded-xl p-5 space-y-3 max-h-screen overflow-y-auto ca-scale-in">
         <div className="flex items-center justify-between">
           <div className="font-display text-xl text-gold">Edit Member</div>
           <button type="button" onClick={onClose} className="text-cream/50 hover:text-cream text-2xl leading-none">×</button>
@@ -2882,9 +2882,9 @@ function GradeRepLeaderboard({ me }) {
           const isLeader = i === 0 && rep.count > 0;
           return (
             <div key={rep.id}
-              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-colors ${
-                isLeader ? 'bg-gold/15 border border-gold/40' :
-                isMe ? 'bg-navy border border-cream/20' : 'bg-navy/40'
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 ${
+                isLeader ? 'bg-gold/15 border border-gold/40 hover:border-gold/60' :
+                isMe ? 'bg-navy border border-cream/20 hover:border-cream/30' : 'bg-navy/40 hover:bg-navy/60'
               }`}>
               <div className={`font-display text-xl w-8 text-center shrink-0 ${isLeader ? 'text-gold' : 'text-cream/40'}`}>
                 {medals[i] || `${i + 1}`}
@@ -3030,7 +3030,7 @@ function RosterPage({ me }) {
       <div className="flex gap-1 mb-5 flex-wrap">
         {tabs.map((t) => (
           <button key={t.key} onClick={() => setTab(t.key)}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${tab === t.key ? 'bg-red text-cream' : 'bg-navy2 border border-cream/15 text-cream/70 hover:border-cream/30'}`}>
+            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-150 active:scale-95 ${tab === t.key ? 'bg-red text-cream shadow-md shadow-red/20' : 'bg-navy2 border border-cream/15 text-cream/70 hover:border-cream/30'}`}>
             {t.label} <span className="text-xs opacity-60">({counts[t.key]})</span>
           </button>
         ))}
@@ -3256,7 +3256,7 @@ function FundingRequestPage({ me }) {
         {!open ? (
           <Button variant="gold" onClick={() => setOpen(true)}>+ New Funding Request</Button>
         ) : (
-          <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3">
+          <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3 ca-slide-up">
             <div className="font-display text-xl text-gold">New Funding Request</div>
             <Field label="Title *"><input className={inputCls} value={form.title} onChange={set('title')} autoFocus placeholder="e.g. Flyers for fall recruitment" /></Field>
             <Field label="Description"><textarea className={inputCls} rows="3" value={form.description} onChange={set('description')} placeholder="What is this for? Why is it needed?" /></Field>
@@ -3275,7 +3275,7 @@ function FundingRequestPage({ me }) {
       )}
       <div className="space-y-3">
         {(requests || []).map((r) => (
-          <div key={r.id} className="bg-navy2 border border-cream/10 rounded-xl p-4">
+          <div key={r.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-all duration-200">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
                 <div className="font-medium text-cream">{r.title}</div>
@@ -3380,7 +3380,7 @@ function BoardApplicationsPage({ me }) {
         {!open ? (
           <Button variant="gold" onClick={() => setOpen(true)}>+ Apply for a Position</Button>
         ) : (
-          <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3">
+          <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3 ca-slide-up">
             <div className="font-display text-xl text-gold">New Application</div>
             <Field label="Position Title *">
               <input className={inputCls} value={form.positionTitle} onChange={set('positionTitle')} autoFocus
@@ -3404,7 +3404,7 @@ function BoardApplicationsPage({ me }) {
       )}
       <div className="space-y-3">
         {(apps || []).map((a) => (
-          <div key={a.id} className="bg-navy2 border border-cream/10 rounded-xl p-4">
+          <div key={a.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-all duration-200">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
                 <div className="font-medium text-cream">{a.positionTitle}</div>
@@ -3542,7 +3542,7 @@ function AdminDashboardPage({ me }) {
           { label: 'Pending Task Approvals', count: counts.tasks, color: 'text-red' },
           ...(checkinEnabled ? [{ label: 'Missing Check-Ins', count: counts.missingCheckins || 0, color: 'text-orange-300' }] : []),
         ].map(({ label, count, color }) => (
-          <div key={label} className="bg-navy2 border border-cream/10 rounded-xl p-5 text-center">
+          <div key={label} className="bg-navy2 border border-cream/10 rounded-xl p-5 text-center hover:border-cream/20 hover:-translate-y-0.5 hover:shadow-md hover:shadow-black/20 transition-all duration-200">
             <div className={`font-display text-4xl ${color}`}>{count}</div>
             <div className="text-cream/60 text-sm mt-1">{label}</div>
           </div>
@@ -3576,7 +3576,7 @@ function AdminDashboardPage({ me }) {
         {pendingFunding.length === 0 && <div className="text-cream/40">None pending.</div>}
         <div className="space-y-3">
           {pendingFunding.map((r) => (
-            <div key={r.id} className="bg-navy2 border border-gold/20 rounded-xl p-4">
+            <div key={r.id} className="bg-navy2 border border-gold/20 rounded-xl p-4 hover:border-gold/35 transition-all duration-200">
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div>
                   <div className="font-medium text-cream">{r.title}</div>
@@ -3767,7 +3767,7 @@ function LogisticsPage() {
   const TabBtn = ({ id, label }) => (
     <button
       onClick={() => setTab(id)}
-      className={`text-sm px-4 py-2 border-b-2 transition-colors ${
+      className={`text-sm px-4 py-2 border-b-2 transition-all duration-150 ${
         tab === id ? 'border-gold text-gold' : 'border-transparent text-cream/50 hover:text-cream/80'
       }`}
     >
@@ -4125,7 +4125,7 @@ function AINotesPanel({ onClose, onRead }) {
 
   return (
     <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
-      <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-lg w-full p-6 relative max-h-[80vh] overflow-y-auto">
+      <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-lg w-full p-6 relative max-h-[80vh] overflow-y-auto ca-scale-in">
         <button onClick={onClose} aria-label="Close" className="absolute top-2 right-4 text-cream/60 hover:text-cream text-3xl leading-none">×</button>
         <div className="font-display text-2xl text-gold mb-1">AI Notes</div>
         <p className="text-cream/40 text-xs mb-4">Private notes left by the AI when it notices something worth your attention.</p>
@@ -4135,7 +4135,7 @@ function AINotesPanel({ onClose, onRead }) {
         )}
         <div className="space-y-3">
           {notes.map((n) => (
-            <div key={n.id} className={`rounded-lg p-4 border ${n.isRead ? 'border-cream/10 bg-navy' : 'border-gold/40 bg-gold/5'}`}>
+            <div key={n.id} className={`rounded-lg p-4 border transition-all duration-200 ${n.isRead ? 'border-cream/10 bg-navy hover:border-cream/20' : 'border-gold/40 bg-gold/5 hover:border-gold/60'}`}>
               <div className="text-sm text-cream/85 whitespace-pre-wrap leading-relaxed">{n.content}</div>
               <div className="flex items-center justify-between mt-2">
                 <span className="text-xs text-cream/35">{new Date(n.createdAt).toLocaleDateString()}</span>
@@ -4241,7 +4241,7 @@ function AIChatPage({ me }) {
           </div>
         )}
         {messages.map((m, i) => (
-          <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+          <div key={i} className={`flex ca-slide-up ${m.role === 'user' ? 'justify-end' : 'justify-start'}`} style={{ animationDelay: '0ms' }}>
             <div className={`max-w-[82%] rounded-xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap
               ${m.role === 'user'
                 ? 'bg-red/20 text-cream border border-red/30'
@@ -4304,16 +4304,16 @@ function AppIcon({ name }) {
   }
 }
 
-function AppTile({ label, icon, badge, onClick }) {
+function AppTile({ label, icon, badge, onClick, style }) {
   return (
-    <button onClick={onClick}
-      className="group relative bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/30 rounded-2xl p-5 flex flex-col items-center gap-3 transition-all duration-150 active:scale-95 w-full">
+    <button onClick={onClick} style={style}
+      className="ca-fade-in group relative bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/30 rounded-2xl p-5 flex flex-col items-center gap-3 transition-all duration-200 active:scale-95 w-full hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/30">
       <div className="relative">
         <div className="w-14 h-14 rounded-xl bg-navy/60 flex items-center justify-center group-hover:bg-navy2 transition-colors duration-150">
           <AppIcon name={icon} />
         </div>
         {badge > 0 && (
-          <span className="absolute -top-1 -right-1 bg-red text-cream text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">{badge}</span>
+          <span className="absolute -top-1 -right-1 bg-red text-cream text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 ca-pulse">{badge}</span>
         )}
       </div>
       <span className="text-cream/80 text-xs font-medium text-center leading-tight group-hover:text-cream transition-colors">{label}</span>
@@ -4348,7 +4348,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
   ];
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
+    <div className="min-h-screen flex flex-col ca-fade-in" style={{ background: '#0d1b2e' }}>
       <header className="px-6 py-5 flex items-center justify-between border-b border-cream/10">
         <Logo size="sidebar" />
         <div className="flex items-center gap-4">
@@ -4366,8 +4366,10 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
       </header>
       <div className="flex-1 px-4 py-8">
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {tiles.map(t => (
-            <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge} onClick={t.onClick || (() => onNavigate({ type: t.type }))} />
+          {tiles.map((t, i) => (
+            <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge}
+              onClick={t.onClick || (() => onNavigate({ type: t.type }))}
+              style={{ animationDelay: `${i * 32}ms` }} />
           ))}
         </div>
       </div>
@@ -4385,7 +4387,7 @@ function MyTeamView({ reports, onNavigate }) {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 w-full">
           {reports.map(r => (
             <button key={r.id} onClick={() => onNavigate({ type: 'person', userId: r.id })}
-              className="group bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/30 rounded-xl p-5 flex items-center gap-4 text-left transition-all duration-150 active:scale-95 w-full">
+              className="group bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/30 rounded-xl p-5 flex items-center gap-4 text-left transition-all duration-200 active:scale-95 w-full hover:-translate-y-0.5 hover:shadow-md hover:shadow-black/25">
               <div className="w-12 h-12 rounded-full bg-navy3 flex items-center justify-center text-cream/70 text-lg font-semibold shrink-0">
                 {r.displayName.charAt(0).toUpperCase()}
               </div>
@@ -4445,13 +4447,13 @@ function NotificationBell({ onNavigate, refreshSignal }) {
         className="relative flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-gold hover:bg-navy3 transition-colors" aria-label="Notifications">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         {unread > 0 && (
-          <span className="absolute -top-1 -right-1 bg-red text-cream text-[9px] font-bold rounded-full min-w-[15px] h-[15px] flex items-center justify-center px-0.5">{unread > 9 ? '9+' : unread}</span>
+          <span className="absolute -top-1 -right-1 bg-red text-cream text-[9px] font-bold rounded-full min-w-[15px] h-[15px] flex items-center justify-center px-0.5 ca-pulse">{unread > 9 ? '9+' : unread}</span>
         )}
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 mt-2 w-80 max-h-[26rem] overflow-y-auto bg-navy2 border border-cream/15 rounded-xl shadow-2xl z-40">
+          <div className="absolute right-0 mt-2 w-80 max-h-[26rem] overflow-y-auto bg-navy2 border border-cream/15 rounded-xl shadow-2xl z-40 ca-slide-down">
             <div className="sticky top-0 bg-navy2 flex items-center justify-between px-4 py-2.5 border-b border-cream/10">
               <span className="text-cream font-medium text-sm">Notifications</span>
               {unread > 0 && <button onClick={markAll} className="text-xs text-gold/70 hover:text-gold">Mark all read</button>}
@@ -4460,7 +4462,7 @@ function NotificationBell({ onNavigate, refreshSignal }) {
               <div className="px-4 py-10 text-center text-cream/40 text-sm">You're all caught up. 🎉</div>
             ) : items.map((n) => (
               <button key={n.id} onClick={() => openItem(n)}
-                className={`block w-full text-left px-4 py-3 border-b border-cream/5 hover:bg-navy3 transition-colors ${n.isRead ? '' : 'bg-gold/5'}`}>
+                className={`block w-full text-left px-4 py-3 border-b border-cream/5 hover:bg-navy3 transition-all duration-150 ${n.isRead ? '' : 'bg-gold/5'}`}>
                 <div className="flex gap-2">
                   <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${n.isRead ? 'bg-transparent' : 'bg-gold'}`} />
                   <div>
@@ -4623,7 +4625,9 @@ function App() {
             )}
           </button>
         </header>
-        <main className={`flex-1 overflow-x-hidden ${view.type === 'home' ? '' : 'p-4 sm:p-6 lg:p-8'}`}>{content}</main>
+        <main className={`flex-1 overflow-x-hidden ${view.type === 'home' ? '' : 'p-4 sm:p-6 lg:p-8'}`}>
+          <div key={view.type + (view.userId || '')} className="ca-slide-up">{content}</div>
+        </main>
       </div>
     </>
   );

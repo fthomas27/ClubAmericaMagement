@@ -56,6 +56,35 @@
     ::-webkit-scrollbar-thumb { background: #16294A; border-radius: 6px; }
     select option { background: #0F1E33; color: #F5F0E8; }
     .ca-center { min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:12px; padding:24px; }
+    html { scroll-behavior: smooth; }
+
+    /* ── Entrance animations ── */
+    @keyframes ca-fade-in {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+    @keyframes ca-slide-up {
+      from { opacity: 0; transform: translateY(14px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes ca-scale-in {
+      from { opacity: 0; transform: scale(0.94); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+    @keyframes ca-slide-down {
+      from { opacity: 0; transform: translateY(-10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes ca-pulse-badge {
+      0%, 100% { transform: scale(1); }
+      50%       { transform: scale(1.3); }
+    }
+
+    .ca-fade-in  { animation: ca-fade-in  0.22s ease-out both; }
+    .ca-slide-up { animation: ca-slide-up 0.22s ease-out both; }
+    .ca-scale-in { animation: ca-scale-in 0.2s cubic-bezier(0.34, 1.15, 0.64, 1) both; }
+    .ca-slide-down { animation: ca-slide-down 0.16s ease-out both; }
+    .ca-pulse { animation: ca-pulse-badge 1.8s ease-in-out infinite; }
   </style>
 </head>
 <body>
