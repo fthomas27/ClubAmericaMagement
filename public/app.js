@@ -2255,6 +2255,75 @@ function MeetTheBoard() {
   );
 }
 
+function FlagBackground() {
+  return (
+    <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+      <svg
+        viewBox="0 0 1900 1000"
+        preserveAspectRatio="xMidYMid slice"
+        className="absolute inset-0 w-full h-full"
+        style={{ opacity: 0.22 }}
+      >
+        <defs>
+          <linearGradient id="flagGrad" x1="0" y1="0" x2="1" y2="0" gradientUnits="objectBoundingBox">
+            <stop offset="0%"   stopColor="#CC1C2E" stopOpacity="1" />
+            <stop offset="38%"  stopColor="#F5F0E8" stopOpacity="0.5" />
+            <stop offset="62%"  stopColor="#F5F0E8" stopOpacity="0.5" />
+            <stop offset="100%" stopColor="#002868" stopOpacity="1" />
+          </linearGradient>
+          <linearGradient id="vFade" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
+            <stop offset="50%"  stopColor="white" stopOpacity="1" />
+            <stop offset="100%" stopColor="white" stopOpacity="0" />
+          </linearGradient>
+          <mask id="bottomFade">
+            <rect x="0" y="0" width="1900" height="1000" fill="url(#vFade)" />
+          </mask>
+          <polygon id="fstar"
+            points="0,-10 2.94,-4.05 9.51,-3.09 4.76,1.55 5.88,8.09 0,5 -5.88,8.09 -4.76,1.55 -9.51,-3.09 -2.94,-4.05"
+          />
+        </defs>
+        <g mask="url(#bottomFade)">
+          {Array.from({ length: 13 }, (_, i) => (
+            <rect
+              key={i}
+              x="0" y={i * 76.92} width="1900" height="76.92"
+              fill="url(#flagGrad)"
+              fillOpacity={i % 2 === 0 ? 1 : 0.2}
+              stroke="#F5F0E8" strokeWidth="0.6" strokeOpacity="0.3"
+            />
+          ))}
+          <rect x="0" y="0" width="760" height="538.5"
+            fill="#001f5c" fillOpacity="0.5"
+            stroke="#F5F0E8" strokeWidth="1" strokeOpacity="0.35"
+          />
+          {(() => {
+            const stars = [];
+            const cw = 760, ch = 538.5;
+            const rowH = ch / 10;
+            const colW6 = cw / 7;
+            const colW5 = cw / 6;
+            for (let row = 0; row < 9; row++) {
+              const y = rowH * (row + 0.5);
+              const isWide = row % 2 === 0;
+              const cols = isWide ? 6 : 5;
+              const colW = isWide ? colW6 : colW5;
+              for (let col = 0; col < cols; col++) {
+                stars.push(
+                  <use key={`${row}-${col}`} href="#fstar"
+                    transform={`translate(${colW * (col + 0.5)},${y})`}
+                    fill="#F5F0E8" fillOpacity="0.85"
+                  />
+                );
+              }
+            }
+            return stars;
+          })()}
+        </g>
+      </svg>
+    </div>
+  );
+}
+
 function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onBack }) {
   const [home, setHome] = useState(null);
   const [events, setEvents] = useState([]);
@@ -2367,15 +2436,13 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
   // Public landing page (full screen).
   return (
     <div className="min-h-screen">
-      <div style={{ background: 'radial-gradient(1000px 540px at 50% -5%, rgba(204,28,46,0.40), transparent 65%), radial-gradient(600px 300px at 85% 30%, rgba(201,168,76,0.07), transparent 55%)' }}>
-        <header className="max-w-5xl mx-auto px-4 sm:px-6 pt-6 flex items-center justify-between gap-3">
+      <div className="relative overflow-hidden">
+        <FlagBackground />
+        <header className="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 pt-6 flex items-center justify-between gap-3">
           <Logo size="sidebar" />
           <Button variant="primary" onClick={onEnterPortal}>Board Portal Login →</Button>
         </header>
-        <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-12 pb-16 text-center relative overflow-hidden">
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none" aria-hidden="true">
-            <div className="font-display text-[280px] sm:text-[380px] leading-none opacity-[0.035] text-cream">★</div>
-          </div>
+        <section className="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 pt-12 pb-16 text-center">
           <div className="relative">
             <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3">Park City High School</p>
             <h1 className="font-display text-7xl sm:text-9xl text-cream leading-none">CLUB AMERICA</h1>
