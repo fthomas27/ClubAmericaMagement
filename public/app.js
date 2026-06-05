@@ -2068,17 +2068,14 @@ function ValuesSection() {
   return (
     <section className="grid sm:grid-cols-3 gap-4">
       <div className="bg-navy2 border border-gold/30 rounded-2xl p-6 text-center space-y-3">
-        <div className="text-3xl">✝</div>
         <h3 className="font-display text-2xl text-gold">Faith</h3>
         <p className="text-cream/60 text-sm leading-relaxed">Our rights come from God, not government — we stand on that truth every day.</p>
       </div>
       <div className="bg-navy2 border border-red/30 rounded-2xl p-6 text-center space-y-3">
-        <div className="text-3xl">🦅</div>
         <h3 className="font-display text-2xl text-red">Freedom</h3>
         <p className="text-cream/60 text-sm leading-relaxed">Free speech, individual liberty, and constitutional rights — defended loudly on campus.</p>
       </div>
       <div className="bg-navy2 border border-cream/15 rounded-2xl p-6 text-center space-y-3">
-        <div className="text-3xl">🤝</div>
         <h3 className="font-display text-2xl text-cream">Community</h3>
         <p className="text-cream/60 text-sm leading-relaxed">Real friendships built around a shared love for America and its founding ideals.</p>
       </div>
