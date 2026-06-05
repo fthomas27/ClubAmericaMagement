@@ -330,15 +330,12 @@ function Login({ onLogin, onBack }) {
           </Field>
           <Field label="Password">
             <input className={inputCls} type="password" value={password}
-              onChange={(e) => setPassword(e.target.value)} placeholder="Default = your username" />
+              onChange={(e) => setPassword(e.target.value)} placeholder="Password" />
           </Field>
           {error && <div className="text-red text-sm">{error}</div>}
           <Button type="submit" variant="gold" className="w-full" disabled={loading}>
             {loading ? 'Signing in…' : 'Sign In'}
           </Button>
-          <p className="text-center text-xs text-cream/40">
-            First time? Your password is your username. You'll set a new one.
-          </p>
           {onBack && (
             <button type="button" onClick={onBack} className="block mx-auto text-xs text-cream/50 hover:text-gold">
               ← Back to homepage
@@ -1650,7 +1647,7 @@ function AdminPanel({ users, reload }) {
         <Field label="Email (for notifications)"><input type="email" className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="optional" /></Field>
         <div className="sm:col-span-2 flex items-center gap-3">
           <Button type="submit" variant="gold" disabled={adding || !first.trim()}>{adding ? <span className="flex items-center gap-2"><Spinner /> Adding…</span> : 'Add Member'}</Button>
-          <span className="text-xs text-cream/40">Username & default password are generated as first-initial + last name.</span>
+          <span className="text-xs text-cream/40">Username is generated as first-initial + last name.</span>
         </div>
         {notice && <div className="sm:col-span-2 text-emerald-300 text-sm">{notice}</div>}
         {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
