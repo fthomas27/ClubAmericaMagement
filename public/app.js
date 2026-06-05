@@ -2379,11 +2379,6 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
             <div className="relative">
               <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3">Park City High School</p>
               <h1 className="font-display text-7xl sm:text-9xl text-cream leading-none">CLUB AMERICA</h1>
-              <div className="flex items-center justify-center gap-3 mt-4">
-                <div className="h-px w-16 bg-gradient-to-r from-transparent to-red/70" />
-                <div className="w-2 h-2 rounded-full bg-gold shrink-0" />
-                <div className="h-px w-16 bg-gradient-to-l from-transparent to-red/70" />
-              </div>
               <p className="text-cream/65 max-w-lg mx-auto mt-5 text-base sm:text-lg leading-relaxed">
                 Faith, freedom, and community — standing up for America's founding principles at Park City High School.
               </p>
@@ -2446,11 +2441,6 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
           <div className="relative">
             <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3">Park City High School</p>
             <h1 className="font-display text-7xl sm:text-9xl text-cream leading-none">CLUB AMERICA</h1>
-            <div className="flex items-center justify-center gap-3 mt-4">
-              <div className="h-px w-16 bg-gradient-to-r from-transparent to-red/70" />
-              <div className="w-2 h-2 rounded-full bg-gold shrink-0" />
-              <div className="h-px w-16 bg-gradient-to-l from-transparent to-red/70" />
-            </div>
             <p className="text-cream/65 max-w-lg mx-auto mt-5 text-base sm:text-lg leading-relaxed">
               Faith, freedom, and community — standing up for America's founding principles at Park City High School.
             </p>
