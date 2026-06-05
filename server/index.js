@@ -15,7 +15,7 @@ process.on('uncaughtException', (err) => {
 
 const { db, init, seed } = require('./db');
 const { fetchUpcoming, clearCache } = require('./calendar');
-const { notify } = require('./email');
+const { notify, escHtml } = require('./email');
 const { analyzeTeamHealth, chatWithAI, aiEnabled } = require('./ai');
 const {
   signToken,
@@ -29,9 +29,36 @@ init();
 const seeded = seed();
 
 const app = express();
+app.disable('x-powered-by');
 app.set('trust proxy', 1); // behind Railway's proxy
-app.use(cors());
-app.use(express.json({ limit: '6mb' })); // profile photos travel as data URLs
+
+// Security headers (no helmet dependency needed).
+app.use((req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.set('X-Download-Options', 'noopen');
+  res.set('X-Permitted-Cross-Domain-Policies', 'none');
+  next();
+});
+
+// Restrict CORS to the configured APP_URL, with a localhost fallback for dev.
+const CORS_ORIGINS = process.env.APP_URL
+  ? [process.env.APP_URL, 'http://localhost:3000']
+  : null;
+app.use(cors(CORS_ORIGINS ? {
+  origin: (origin, cb) => {
+    if (!origin || CORS_ORIGINS.includes(origin)) return cb(null, true);
+    cb(new Error('CORS: origin not allowed'));
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+} : undefined));
+// Keep the global body limit small (photo upload gets its own parser).
+app.use((req, res, next) => {
+  const limit = req.method === 'PUT' && req.path === '/api/me/profile' ? '6mb' : '50kb';
+  express.json({ limit })(req, res, next);
+});
 
 const STATUSES = ['Not Started', 'In Progress', 'Complete'];
 const ROLES = ['admin', 'manager', 'member'];
@@ -81,10 +108,10 @@ function logApproval(entityType, entityId, action, actor, detail = '') {
 // Check-ins are due every Friday. The "week" runs Saturday→Friday and is keyed
 // by that Friday's date, so everyone is expected to submit one each Friday.
 function currentCheckinWeek(d = new Date()) {
-  const day = d.getDay();           // 0 = Sun … 6 = Sat
-  const offset = (5 - day + 7) % 7; // days until this week's Friday (0 if Friday)
+  const day = d.getUTCDay();            // 0 = Sun … 6 = Sat (UTC)
+  const offset = (5 - day + 7) % 7;    // days until this week's Friday
   const friday = new Date(d);
-  friday.setDate(d.getDate() + offset);
+  friday.setUTCDate(d.getUTCDate() + offset);
   return friday.toISOString().slice(0, 10);
 }
 
@@ -92,7 +119,7 @@ function currentCheckinWeek(d = new Date()) {
 const rateBuckets = new Map();
 function rateLimit({ windowMs, max, name = '' }) {
   return (req, res, next) => {
-    const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown';
     const key = name + '|' + ip;
     const now = Date.now();
     let bucket = rateBuckets.get(key);
@@ -190,7 +217,7 @@ app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 40, name:
   res.json({ token: signToken(user), user: publicUser(user) });
 });
 
-app.post('/api/auth/change-password', authenticate, (req, res) => {
+app.post('/api/auth/change-password', authenticate, rateLimit({ windowMs: 15 * 60 * 1000, max: 10, name: 'change-password' }), (req, res) => {
   const { newPassword } = req.body || {};
   if (!newPassword || String(newPassword).length < 4) {
     return res.status(400).json({ error: 'New password must be at least 4 characters' });
@@ -200,7 +227,8 @@ app.post('/api/auth/change-password', authenticate, (req, res) => {
   }
   const hash = bcrypt.hashSync(String(newPassword), 10);
   db.prepare('UPDATE users SET passwordHash = ?, firstLogin = 0 WHERE id = ?').run(hash, req.user.id);
-  res.json({ ok: true, user: publicUser(getUser(req.user.id)) });
+  const updatedUser = getUser(req.user.id);
+  res.json({ ok: true, user: publicUser(updatedUser), token: signToken(updatedUser) });
 });
 
 app.get('/api/me', authenticate, (req, res) => {
@@ -231,10 +259,11 @@ app.get('/api/home', async (req, res) => {
 });
 
 // Public board roster for the "Meet the Board" page (no private info, no auth).
+// Filtered to bigBoard users so only actual board leaders appear publicly.
 // Returns hasPhoto (boolean) instead of the full base64 blob to keep the payload small.
 app.get('/api/board', (req, res) => {
   const members = db
-    .prepare("SELECT id, displayName, title, role, grade, managerId, bio, photo FROM users ORDER BY displayName")
+    .prepare("SELECT id, displayName, title, role, grade, managerId, bio, photo FROM users WHERE bigBoard = 1 ORDER BY displayName")
     .all()
     .map(({ photo, ...m }) => ({ ...m, hasPhoto: !!photo }));
   res.json({ members });
@@ -279,7 +308,7 @@ app.post('/api/submissions', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name
   for (const r of recipients) {
     notify(r.email, `New ${label}`,
       `New ${label}`,
-      `<b>${name}</b>${grade ? ' (grade ' + grade + ')' : ''} submitted a ${label}.<br/>Email: ${email}${message ? '<br/>Message: ' + message : ''}<br/><br/>See it in the Get Involved inbox.`);
+      `<b>${escHtml(name)}</b>${grade ? ' (grade ' + escHtml(grade) + ')' : ''} submitted a ${label}.<br/>Email: ${escHtml(email)}${message ? '<br/>Message: ' + escHtml(message) : ''}<br/><br/>See it in the Get Involved inbox.`);
     pushNotification(r.id, `New ${label} from ${name}${grade ? ' (grade ' + grade + ')' : ''}`, 'submissions', 'submission');
   }
 
@@ -433,7 +462,14 @@ function canPostAnnouncement(user) {
 }
 app.put('/api/home', (req, res) => {
   if (!canEditHome(req.user)) return res.status(403).json({ error: 'Only the Digital Presence Manager can edit the homepage' });
-  const { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, aboutText } = req.body || {};
+  let { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, aboutText } = req.body || {};
+  if (meetingDate   !== undefined) meetingDate    = String(meetingDate).trim().slice(0, 100);
+  if (meetingTime   !== undefined) meetingTime    = String(meetingTime).trim().slice(0, 100);
+  if (meetingLocation !== undefined) meetingLocation = String(meetingLocation).trim().slice(0, 300);
+  if (podcastUrl    !== undefined) podcastUrl     = String(podcastUrl).trim().slice(0, 500);
+  if (calendarUrl   !== undefined) calendarUrl    = String(calendarUrl).trim().slice(0, 500);
+  if (instagramUrl  !== undefined) instagramUrl   = String(instagramUrl).trim().slice(0, 300);
+  if (aboutText     !== undefined) aboutText      = String(aboutText).trim().slice(0, 8000);
   const podcastEnabledVal = podcastEnabled === undefined ? null : (podcastEnabled ? 1 : 0);
   db.prepare(`UPDATE site_settings SET
        meetingDate = COALESCE(?, meetingDate),
@@ -489,7 +525,7 @@ app.put('/api/home/announcement', (req, res) => {
 
 // ---- Directory / org --------------------------------------------------------
 app.get('/api/users', (req, res) => {
-  const users = db.prepare("SELECT * FROM users ORDER BY displayName").all().map(publicUser);
+  const users = db.prepare("SELECT * FROM users WHERE username != 'logistics' ORDER BY displayName").all().map(publicUser);
   res.json({ users });
 });
 
@@ -498,9 +534,9 @@ app.get('/api/users', (req, res) => {
 app.get('/api/reports', (req, res) => {
   let reports;
   if (req.user.role === 'admin') {
-    reports = db.prepare("SELECT * FROM users WHERE id != ? ORDER BY displayName").all(req.user.id);
+    reports = db.prepare("SELECT * FROM users WHERE id != ? AND username != 'logistics' ORDER BY displayName").all(req.user.id);
   } else {
-    reports = directReports(req.user.id);
+    reports = directReports(req.user.id).filter(u => u.username !== 'logistics');
   }
   res.json({ reports: reports.map(publicUser) });
 });
@@ -525,6 +561,9 @@ app.put('/api/users/:id/page-settings', (req, res) => {
   const { bannerEnabled, bannerTitle, bannerUrl,
           formEnabled, formTitle, formFields, announcementEnabled, announcementText,
           bioEnabled, bioText } = req.body || {};
+  if (bannerUrl !== undefined && bannerUrl && !/^https?:\/\//i.test(bannerUrl.trim())) {
+    return res.status(400).json({ error: 'Banner URL must start with http:// or https://' });
+  }
   db.prepare('INSERT OR IGNORE INTO user_page_settings (userId) VALUES (?)').run(targetId);
   db.prepare(`UPDATE user_page_settings SET
     bannerEnabled       = COALESCE(?, bannerEnabled),
@@ -563,7 +602,7 @@ app.get('/api/team-announcement', (req, res) => {
 
 app.put('/api/team-announcement', (req, res) => {
   if (req.user.role === 'member') return res.status(403).json({ error: 'Not allowed' });
-  const trimmed = String((req.body || {}).text || '').trim();
+  const trimmed = String((req.body || {}).text || '').trim().slice(0, 2000);
   if (!trimmed) return res.status(400).json({ error: 'Announcement text required' });
   db.prepare(`
     INSERT INTO team_announcements (authorId, text) VALUES (?, ?)
@@ -660,9 +699,11 @@ app.post('/api/roster', (req, res) => {
   }
   const info = db.prepare(`INSERT INTO roster_members (firstName,lastName,phone,email,grade,gender,roleDescription,status,notes)
     VALUES (?,?,?,?,?,?,?,?,?)`).run(
-    String(firstName).trim(), String(lastName||'').trim(), String(phone||'').trim(),
-    String(email||'').trim(), grade||null, String(gender||'').trim(),
-    String(roleDescription||'').trim(), status||'Prospect', String(notes||'').trim()
+    String(firstName).trim().slice(0, 100), String(lastName||'').trim().slice(0, 100),
+    String(phone||'').trim().slice(0, 30), String(email||'').trim().slice(0, 200),
+    grade||null, String(gender||'').trim().slice(0, 30),
+    String(roleDescription||'').trim().slice(0, 500), status||'Prospect',
+    String(notes||'').trim().slice(0, 2000)
   );
   res.status(201).json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(info.lastInsertRowid) });
 });
@@ -715,11 +756,14 @@ app.post('/api/roster/:id/contacted', (req, res) => {
 
 app.post('/api/roster/:id/convert', (req, res) => {
   if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const m = db.prepare('SELECT * FROM roster_members WHERE id=?').get(Number(req.params.id));
+  if (!m) return res.status(404).json({ error: 'Not found' });
+  if (m.status !== 'Contacted') return res.status(400).json({ error: 'Member must be Contacted before onboarding' });
   const { grade, roleDescription } = req.body || {};
   db.prepare(`UPDATE roster_members SET status='Onboarded', convertedAt=datetime('now'),
     grade=COALESCE(?,grade), roleDescription=COALESCE(?,roleDescription), updatedAt=datetime('now')
-    WHERE id=?`).run(grade||null, roleDescription||null, Number(req.params.id));
-  res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(Number(req.params.id)) });
+    WHERE id=?`).run(grade||null, roleDescription||null, m.id);
+  res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id) });
 });
 
 app.post('/api/roster/:id/decline', (req, res) => {
@@ -810,21 +854,23 @@ app.get('/api/funding', (req, res) => {
   res.json({ requests: rows });
 });
 
-app.post('/api/funding', (req, res) => {
+app.post('/api/funding', rateLimit({ windowMs: 60 * 60 * 1000, max: 20, name: 'funding' }), (req, res) => {
   const { title, description, amount } = req.body || {};
   if (!title || !String(title).trim()) return res.status(400).json({ error: 'Title required' });
   const amt = Number(amount) || 0;
   if (amt < 0) return res.status(400).json({ error: 'Amount cannot be negative' });
+  const safeTitle = String(title).trim().slice(0, 300);
+  const safeDesc = String(description || '').trim().slice(0, 4000);
   const info = db.prepare(`INSERT INTO funding_requests (submittedById,title,description,amount)
-    VALUES (?,?,?,?)`).run(req.user.id, String(title).trim(), String(description||'').trim(), amt);
+    VALUES (?,?,?,?)`).run(req.user.id, safeTitle, safeDesc, amt);
 
   // Notify the CFO + admins that a funding request is awaiting review.
   const reviewers = db.prepare("SELECT id, email FROM users WHERE role = 'admin' OR title = 'CFO'").all();
   for (const r of reviewers) {
     if (r.id === req.user.id) continue;
     notify(r.email, 'New funding request', 'Funding request awaiting review',
-      `<b>${req.user.displayName}</b> requested funding: <b>${String(title).trim()}</b> ($${amt}).`);
-    pushNotification(r.id, `${req.user.displayName} submitted a funding request: "${String(title).trim()}" ($${amt})`, 'funding', 'funding');
+      `<b>${req.user.displayName}</b> requested funding: <b>${safeTitle}</b> ($${amt}).`);
+    pushNotification(r.id, `${req.user.displayName} submitted a funding request: "${safeTitle}" ($${amt})`, 'funding', 'funding');
   }
   res.status(201).json({ request: db.prepare('SELECT * FROM funding_requests WHERE id=?').get(info.lastInsertRowid) });
 });
@@ -835,17 +881,29 @@ app.patch('/api/funding/:id', (req, res) => {
   if (!fr) return res.status(404).json({ error: 'Not found' });
   const { action, reviewNotes } = req.body || {};
   if (!isPrivileged) return res.status(403).json({ error: 'Not allowed' });
+  if ((action === 'approve' || action === 'deny') && fr.status !== 'pending') {
+    return res.status(400).json({ error: 'This request has already been reviewed' });
+  }
+  if (action === 'purchased' && fr.status !== 'approved') {
+    return res.status(400).json({ error: 'Only approved requests can be marked as purchased' });
+  }
   if (action === 'approve') {
-    db.prepare(`UPDATE funding_requests SET status='approved', reviewedById=?, reviewedAt=datetime('now'), reviewNotes=COALESCE(?,reviewNotes) WHERE id=?`).run(req.user.id, reviewNotes??null, fr.id);
-    logApproval('funding', fr.id, 'approved', req.user, reviewNotes || fr.title);
+    db.transaction(() => {
+      db.prepare(`UPDATE funding_requests SET status='approved', reviewedById=?, reviewedAt=datetime('now'), reviewNotes=COALESCE(?,reviewNotes) WHERE id=?`).run(req.user.id, reviewNotes??null, fr.id);
+      logApproval('funding', fr.id, 'approved', req.user, reviewNotes || fr.title);
+    })();
     pushNotification(fr.submittedById, `Your funding request "${fr.title}" was approved by ${req.user.displayName}`, 'funding', 'funding');
   } else if (action === 'deny') {
-    db.prepare(`UPDATE funding_requests SET status='denied', reviewedById=?, reviewedAt=datetime('now'), reviewNotes=COALESCE(?,reviewNotes) WHERE id=?`).run(req.user.id, reviewNotes??null, fr.id);
-    logApproval('funding', fr.id, 'denied', req.user, reviewNotes || fr.title);
+    db.transaction(() => {
+      db.prepare(`UPDATE funding_requests SET status='denied', reviewedById=?, reviewedAt=datetime('now'), reviewNotes=COALESCE(?,reviewNotes) WHERE id=?`).run(req.user.id, reviewNotes??null, fr.id);
+      logApproval('funding', fr.id, 'denied', req.user, reviewNotes || fr.title);
+    })();
     pushNotification(fr.submittedById, `Your funding request "${fr.title}" was denied by ${req.user.displayName}`, 'funding', 'funding');
   } else if (action === 'purchased') {
-    db.prepare(`UPDATE funding_requests SET status='purchased', purchasedById=?, purchasedAt=datetime('now') WHERE id=?`).run(req.user.id, fr.id);
-    logApproval('funding', fr.id, 'purchased', req.user, fr.title);
+    db.transaction(() => {
+      db.prepare(`UPDATE funding_requests SET status='purchased', purchasedById=?, purchasedAt=datetime('now') WHERE id=?`).run(req.user.id, fr.id);
+      logApproval('funding', fr.id, 'purchased', req.user, fr.title);
+    })();
     pushNotification(fr.submittedById, `Your funding request "${fr.title}" was marked purchased by ${req.user.displayName}`, 'funding', 'funding');
   }
   res.json({ request: db.prepare('SELECT * FROM funding_requests WHERE id=?').get(fr.id) });
@@ -867,11 +925,13 @@ app.get('/api/board-apps', (req, res) => {
   res.json({ applications: rows });
 });
 
-app.post('/api/board-apps', (req, res) => {
+app.post('/api/board-apps', rateLimit({ windowMs: 60 * 60 * 1000, max: 10, name: 'board-apps' }), (req, res) => {
   const { positionTitle, statement } = req.body || {};
   if (!positionTitle || !String(positionTitle).trim()) return res.status(400).json({ error: 'Position title required' });
+  const safePosition = String(positionTitle).trim().slice(0, 200);
+  const safeStatement = String(statement || '').trim().slice(0, 6000);
   const info = db.prepare(`INSERT INTO board_applications (userId,positionTitle,statement) VALUES (?,?,?)`).run(
-    req.user.id, String(positionTitle).trim(), String(statement||'').trim()
+    req.user.id, safePosition, safeStatement
   );
 
   // Notify admins that a leadership application is awaiting review.
@@ -879,8 +939,8 @@ app.post('/api/board-apps', (req, res) => {
   for (const a of admins) {
     if (a.id === req.user.id) continue;
     notify(a.email, 'New board application', 'Board application awaiting review',
-      `<b>${req.user.displayName}</b> applied for <b>${String(positionTitle).trim()}</b>.`);
-    pushNotification(a.id, `${req.user.displayName} applied for "${String(positionTitle).trim()}"`, 'board-apps', 'board-app');
+      `<b>${req.user.displayName}</b> applied for <b>${safePosition}</b>.`);
+    pushNotification(a.id, `${req.user.displayName} applied for "${safePosition}"`, 'board-apps', 'board-app');
   }
   res.status(201).json({ application: db.prepare('SELECT * FROM board_applications WHERE id=?').get(info.lastInsertRowid) });
 });
@@ -891,10 +951,15 @@ app.patch('/api/board-apps/:id', (req, res) => {
   if (!ba) return res.status(404).json({ error: 'Not found' });
   const { action } = req.body || {};
   if (action === 'accept' || action === 'decline') {
+    if (ba.status !== 'pending') return res.status(400).json({ error: 'This application has already been reviewed' });
     const status = action === 'accept' ? 'accepted' : 'declined';
-    db.prepare(`UPDATE board_applications SET status=?, reviewedById=?, reviewedAt=datetime('now') WHERE id=?`).run(status, req.user.id, ba.id);
-    logApproval('board-app', ba.id, status, req.user, ba.positionTitle);
+    db.transaction(() => {
+      db.prepare(`UPDATE board_applications SET status=?, reviewedById=?, reviewedAt=datetime('now') WHERE id=?`).run(status, req.user.id, ba.id);
+      logApproval('board-app', ba.id, status, req.user, ba.positionTitle);
+    })();
     pushNotification(ba.userId, `Your application for "${ba.positionTitle}" was ${status} by ${req.user.displayName}`, 'board-apps', 'board-app');
+  } else {
+    return res.status(400).json({ error: 'Invalid action — use "accept" or "decline"' });
   }
   res.json({ application: db.prepare('SELECT * FROM board_applications WHERE id=?').get(ba.id) });
 });
@@ -967,7 +1032,7 @@ app.get('/api/users/:id/tasks', (req, res) => {
 // Create a task. If targetUserId is omitted or equals self -> own task.
 // If sending to someone else -> pending their manager's approval,
 // unless the sender is an admin (President/VP), who can assign directly.
-app.post('/api/tasks', (req, res) => {
+app.post('/api/tasks', rateLimit({ windowMs: 60 * 60 * 1000, max: 60, name: 'tasks' }), (req, res) => {
   const { name, description, dueDate, targetUserId } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'Task name required' });
 
@@ -998,14 +1063,16 @@ app.post('/api/tasks', (req, res) => {
     }
   }
 
+  const safeName = String(name).trim().slice(0, 300);
+  const safeDesc = String(description || '').trim().slice(0, 5000);
   const info = db
     .prepare(`INSERT INTO tasks (userId, name, description, dueDate, status, assignedById, approvalStatus, approverId)
               VALUES (?, ?, ?, ?, 'Not Started', ?, ?, ?)`)
-    .run(ownerId, String(name).trim(), description || '', dueDate || null, req.user.id, approvalStatus, approverId);
+    .run(ownerId, safeName, safeDesc, dueDate || null, req.user.id, approvalStatus, approverId);
 
   // Notifications
   if (!isSelf) {
-    const taskName = String(name).trim();
+    const taskName = safeName;
     if (approvalStatus === 'approved') {
       // Assigned directly (by an admin, or auto-approved) — tell the assignee.
       notify(owner.email, 'New task assigned to you',
@@ -1038,6 +1105,15 @@ app.patch('/api/tasks/:id', (req, res) => {
   const body = req.body || {};
   const { status, name, description, dueDate } = body;
   if (status && !STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  if (name !== undefined && !String(name).trim()) return res.status(400).json({ error: 'Task name cannot be blank' });
+  // Only admins, managers, or the original assigner may edit task content (name/description/dueDate).
+  // The task owner (regular member) may only update status.
+  const isOwnSelfCreated = task.userId === req.user.id && task.assignedById === req.user.id;
+  const canEditContent = req.user.role === 'admin' || req.user.role === 'manager' ||
+    task.assignedById === req.user.id || isOwnSelfCreated;
+  if (!canEditContent && (name !== undefined || description !== undefined || dueDate !== undefined)) {
+    return res.status(403).json({ error: 'You can only update the status of assigned tasks' });
+  }
   const hasDueDate = 'dueDate' in body ? 1 : 0;
 
   db.prepare(`UPDATE tasks SET
@@ -1082,8 +1158,10 @@ app.post('/api/tasks/:id/approve', (req, res) => {
   if (!task) return res.status(404).json({ error: 'Task not found' });
   if (task.approvalStatus !== 'pending') return res.status(400).json({ error: 'Task is not pending' });
   if (!canApprove(req.user, task)) return res.status(403).json({ error: 'Not allowed to approve' });
-  db.prepare("UPDATE tasks SET approvalStatus = 'approved' WHERE id = ?").run(task.id);
-  logApproval('task', task.id, 'approved', req.user, task.name);
+  db.transaction(() => {
+    db.prepare("UPDATE tasks SET approvalStatus = 'approved' WHERE id = ?").run(task.id);
+    logApproval('task', task.id, 'approved', req.user, task.name);
+  })();
   // Now that it's approved, the assignee should know about their new task.
   const owner = getUser(task.userId);
   const assigner = task.assignedById ? getUser(task.assignedById) : null;
@@ -1103,8 +1181,10 @@ app.post('/api/tasks/:id/reject', (req, res) => {
   if (!task) return res.status(404).json({ error: 'Task not found' });
   if (task.approvalStatus !== 'pending') return res.status(400).json({ error: 'Task is not pending' });
   if (!canApprove(req.user, task)) return res.status(403).json({ error: 'Not allowed to reject' });
-  db.prepare("UPDATE tasks SET approvalStatus = 'rejected' WHERE id = ?").run(task.id);
-  logApproval('task', task.id, 'rejected', req.user, task.name);
+  db.transaction(() => {
+    db.prepare("UPDATE tasks SET approvalStatus = 'rejected' WHERE id = ?").run(task.id);
+    logApproval('task', task.id, 'rejected', req.user, task.name);
+  })();
   // Tell whoever proposed the assignment that it was turned down.
   if (task.assignedById && task.assignedById !== req.user.id) {
     pushNotification(task.assignedById, `${req.user.displayName} rejected the task "${task.name}" you proposed`, 'tasks', 'task');
@@ -1113,7 +1193,7 @@ app.post('/api/tasks/:id/reject', (req, res) => {
 });
 
 // ---- Admin Panel ------------------------------------------------------------
-app.post('/api/admin/users', requireAdmin, (req, res) => {
+app.post('/api/admin/users', requireAdmin, rateLimit({ windowMs: 60 * 60 * 1000, max: 30, name: 'admin-create-user' }), (req, res) => {
   let { firstName, lastName, role, title, managerId, grade, email } = req.body || {};
   firstName = (firstName || '').trim();
   lastName = (lastName || '').trim();
@@ -1121,6 +1201,7 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
   if (!firstName) return res.status(400).json({ error: 'First name required' });
   role = ROLES.includes(role) ? role : 'member';
   grade = String(grade || '').trim().slice(0, 40);
+  if (grade && !GRADES.includes(grade)) return res.status(400).json({ error: 'Grade must be 9, 10, 11, or 12' });
 
   const base = ((firstName[0] || '') + lastName).toLowerCase().replace(/[^a-z0-9]/g, '');
   let username = base || 'member';
@@ -1153,9 +1234,13 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     if (clash) return res.status(400).json({ error: 'That username is already taken' });
   }
 
+  if (role !== undefined && !ROLES.includes(role)) return res.status(400).json({ error: 'Invalid role' });
   const newRole = ROLES.includes(role) ? role : user.role;
   const newManagerId = managerId === undefined ? user.managerId : (managerId || null);
   if (newManagerId === user.id) return res.status(400).json({ error: 'A user cannot manage themselves' });
+  if (grade !== undefined && grade !== '' && !GRADES.includes(String(grade).trim())) {
+    return res.status(400).json({ error: 'Grade must be 9, 10, 11, or 12' });
+  }
 
   // Detect transitive cycles: walk up the proposed manager's chain; if we reach user.id, it's circular.
   if (newManagerId) {
@@ -1221,9 +1306,10 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
       .run(bcrypt.hashSync(newUsername, 10), user.id);
   }
 
-  // Recompute manager flags for affected supervisors.
+  // Recompute manager flags for affected supervisors and the edited user themselves.
   if (prevManager) refreshRole(prevManager);
   if (newManagerId) refreshRole(newManagerId);
+  if (newRole !== 'admin') refreshRole(user.id);
   res.json({ user: publicUser(getUser(user.id)) });
 });
 
@@ -1252,7 +1338,7 @@ app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
 });
 
 // Reset a user's password back to their username default (admin convenience).
-app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
+app.post('/api/admin/users/:id/reset-password', requireAdmin, rateLimit({ windowMs: 15 * 60 * 1000, max: 15, name: 'admin-reset-pw' }), (req, res) => {
   const target = getUser(Number(req.params.id));
   if (!target) return res.status(404).json({ error: 'User not found' });
   db.prepare('UPDATE users SET passwordHash = ?, firstLogin = 1 WHERE id = ?')
@@ -1296,7 +1382,7 @@ app.delete('/api/ai/notes/:id', requireAdmin, (req, res) => {
 });
 
 // POST /api/ai/chat — admin only chat; body: { message, sessionId? }
-app.post('/api/ai/chat', requireAdmin, async (req, res) => {
+app.post('/api/ai/chat', requireAdmin, rateLimit({ windowMs: 60 * 60 * 1000, max: 30, name: 'ai-chat' }), async (req, res) => {
   const { message, sessionId } = req.body || {};
   if (!message || typeof message !== 'string') return res.status(400).json({ error: 'Message required' });
   const sid = sessionId || `${req.user.id}-${Date.now()}`;
@@ -1338,7 +1424,7 @@ app.get('/api/ai/chat/history', requireAdmin, (req, res) => {
 });
 
 // POST /api/ai/analyze — admin only; manually trigger team health analysis
-app.post('/api/ai/analyze', requireAdmin, async (req, res) => {
+app.post('/api/ai/analyze', requireAdmin, rateLimit({ windowMs: 60 * 60 * 1000, max: 5, name: 'ai-analyze' }), async (req, res) => {
   if (!aiEnabled) return res.json({ ok: true, skipped: true, reason: 'AI not configured' });
   try {
     await runAIAnalysis();
