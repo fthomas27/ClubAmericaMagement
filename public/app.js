@@ -330,15 +330,12 @@ function Login({ onLogin, onBack }) {
           </Field>
           <Field label="Password">
             <input className={inputCls} type="password" value={password}
-              onChange={(e) => setPassword(e.target.value)} placeholder="Default = your username" />
+              onChange={(e) => setPassword(e.target.value)} placeholder="Password" />
           </Field>
           {error && <div className="text-red text-sm">{error}</div>}
           <Button type="submit" variant="gold" className="w-full" disabled={loading}>
             {loading ? 'Signing in…' : 'Sign In'}
           </Button>
-          <p className="text-center text-xs text-cream/40">
-            First time? Your password is your username. You'll set a new one.
-          </p>
           {onBack && (
             <button type="button" onClick={onBack} className="block mx-auto text-xs text-cream/50 hover:text-gold">
               ← Back to homepage
@@ -1650,7 +1647,7 @@ function AdminPanel({ users, reload }) {
         <Field label="Email (for notifications)"><input type="email" className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="optional" /></Field>
         <div className="sm:col-span-2 flex items-center gap-3">
           <Button type="submit" variant="gold" disabled={adding || !first.trim()}>{adding ? <span className="flex items-center gap-2"><Spinner /> Adding…</span> : 'Add Member'}</Button>
-          <span className="text-xs text-cream/40">Username & default password are generated as first-initial + last name.</span>
+          <span className="text-xs text-cream/40">Username is generated as first-initial + last name.</span>
         </div>
         {notice && <div className="sm:col-span-2 text-emerald-300 text-sm">{notice}</div>}
         {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
@@ -2071,17 +2068,14 @@ function ValuesSection() {
   return (
     <section className="grid sm:grid-cols-3 gap-4">
       <div className="bg-navy2 border border-gold/30 rounded-2xl p-6 text-center space-y-3">
-        <div className="text-3xl">✝</div>
         <h3 className="font-display text-2xl text-gold">Faith</h3>
         <p className="text-cream/60 text-sm leading-relaxed">Our rights come from God, not government — we stand on that truth every day.</p>
       </div>
       <div className="bg-navy2 border border-red/30 rounded-2xl p-6 text-center space-y-3">
-        <div className="text-3xl">🦅</div>
         <h3 className="font-display text-2xl text-red">Freedom</h3>
         <p className="text-cream/60 text-sm leading-relaxed">Free speech, individual liberty, and constitutional rights — defended loudly on campus.</p>
       </div>
       <div className="bg-navy2 border border-cream/15 rounded-2xl p-6 text-center space-y-3">
-        <div className="text-3xl">🤝</div>
         <h3 className="font-display text-2xl text-cream">Community</h3>
         <p className="text-cream/60 text-sm leading-relaxed">Real friendships built around a shared love for America and its founding ideals.</p>
       </div>
@@ -2379,11 +2373,6 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
             <div className="relative">
               <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3">Park City High School</p>
               <h1 className="font-display text-7xl sm:text-9xl text-cream leading-none">CLUB AMERICA</h1>
-              <div className="flex items-center justify-center gap-3 mt-4">
-                <div className="h-px w-16 bg-gradient-to-r from-transparent to-red/70" />
-                <div className="w-2 h-2 rounded-full bg-gold shrink-0" />
-                <div className="h-px w-16 bg-gradient-to-l from-transparent to-red/70" />
-              </div>
               <p className="text-cream/65 max-w-lg mx-auto mt-5 text-base sm:text-lg leading-relaxed">
                 Faith, freedom, and community — standing up for America's founding principles at Park City High School.
               </p>
@@ -2446,11 +2435,6 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
           <div className="relative">
             <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3">Park City High School</p>
             <h1 className="font-display text-7xl sm:text-9xl text-cream leading-none">CLUB AMERICA</h1>
-            <div className="flex items-center justify-center gap-3 mt-4">
-              <div className="h-px w-16 bg-gradient-to-r from-transparent to-red/70" />
-              <div className="w-2 h-2 rounded-full bg-gold shrink-0" />
-              <div className="h-px w-16 bg-gradient-to-l from-transparent to-red/70" />
-            </div>
             <p className="text-cream/65 max-w-lg mx-auto mt-5 text-base sm:text-lg leading-relaxed">
               Faith, freedom, and community — standing up for America's founding principles at Park City High School.
             </p>
