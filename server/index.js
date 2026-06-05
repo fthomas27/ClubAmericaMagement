@@ -42,18 +42,32 @@ app.use((req, res, next) => {
   next();
 });
 
-// Restrict CORS to the configured APP_URL, with a localhost fallback for dev.
-const CORS_ORIGINS = process.env.APP_URL
-  ? [process.env.APP_URL, 'http://localhost:3000']
-  : null;
-app.use(cors(CORS_ORIGINS ? {
-  origin: (origin, cb) => {
-    if (!origin || CORS_ORIGINS.includes(origin)) return cb(null, true);
-    cb(new Error('CORS: origin not allowed'));
-  },
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-} : undefined));
+// CORS: derive the allowed origin from the actual Host header so Railway's
+// dynamic URLs work without APP_URL needing to be exactly right.
+// Modern browsers send Origin even on same-origin fetch, so we need this.
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (!origin) return next(); // same-origin or server-to-server, no header needed
+
+  const proto = (req.headers['x-forwarded-proto'] || '').split(',')[0].trim() || (req.secure ? 'https' : 'http');
+  const selfOrigin = req.headers.host ? `${proto}://${req.headers.host}` : null;
+
+  const norm = (u) => (u || '').replace(/\/$/, '');
+  const allowed = new Set(['http://localhost:3000', 'http://localhost:8080']);
+  if (selfOrigin) allowed.add(norm(selfOrigin));
+  if (process.env.APP_URL) allowed.add(norm(process.env.APP_URL));
+
+  if (allowed.has(norm(origin))) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Vary', 'Origin');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+  } else {
+    console.warn(`[CORS] blocked origin: ${origin}`);
+  }
+  next();
+});
 // Keep the global body limit small (photo upload gets its own parser).
 app.use((req, res, next) => {
   const limit = req.method === 'PUT' && req.path === '/api/me/profile' ? '6mb' : '50kb';
