@@ -1046,8 +1046,22 @@ app.get('/api/users/:id/tasks', (req, res) => {
 // Create a task. If targetUserId is omitted or equals self -> own task.
 // If sending to someone else -> pending their manager's approval,
 // unless the sender is an admin (President/VP), who can assign directly.
+// Given a comma-separated list of day numbers (0=Sun…6=Sat), return the ISO
+// date string of the next calendar day that matches one of those days.
+function nextOccurrenceDate(recurringDays) {
+  const days = String(recurringDays || '').split(',').map(Number).filter((d) => !isNaN(d) && d >= 0 && d <= 6);
+  if (!days.length) return null;
+  const now = new Date();
+  for (let i = 1; i <= 7; i++) {
+    const d = new Date(now);
+    d.setDate(now.getDate() + i);
+    if (days.includes(d.getDay())) return d.toISOString().slice(0, 10);
+  }
+  return null;
+}
+
 app.post('/api/tasks', rateLimit({ windowMs: 60 * 60 * 1000, max: 60, name: 'tasks' }), (req, res) => {
-  const { name, description, dueDate, targetUserId } = req.body || {};
+  const { name, description, dueDate, targetUserId, docUrl, isRecurring, recurringDays } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'Task name required' });
 
   const ownerId = targetUserId ? Number(targetUserId) : req.user.id;
@@ -1079,10 +1093,14 @@ app.post('/api/tasks', rateLimit({ windowMs: 60 * 60 * 1000, max: 60, name: 'tas
 
   const safeName = String(name).trim().slice(0, 300);
   const safeDesc = String(description || '').trim().slice(0, 5000);
+  let safeDocUrl = String(docUrl || '').trim().slice(0, 500);
+  if (safeDocUrl && !/^https?:\/\//i.test(safeDocUrl)) safeDocUrl = '';
+  const recurringFlag = isRecurring ? 1 : 0;
+  const safeRecurDays = String(recurringDays || '').replace(/[^0-6,]/g, '').slice(0, 20);
   const info = db
-    .prepare(`INSERT INTO tasks (userId, name, description, dueDate, status, assignedById, approvalStatus, approverId)
-              VALUES (?, ?, ?, ?, 'Not Started', ?, ?, ?)`)
-    .run(ownerId, safeName, safeDesc, dueDate || null, req.user.id, approvalStatus, approverId);
+    .prepare(`INSERT INTO tasks (userId, name, description, dueDate, status, assignedById, approvalStatus, approverId, docUrl, isRecurring, recurringDays)
+              VALUES (?, ?, ?, ?, 'Not Started', ?, ?, ?, ?, ?, ?)`)
+    .run(ownerId, safeName, safeDesc, dueDate || null, req.user.id, approvalStatus, approverId, safeDocUrl, recurringFlag, safeRecurDays);
 
   // Notifications
   if (!isSelf) {
@@ -1117,28 +1135,42 @@ app.patch('/api/tasks/:id', (req, res) => {
   if (!canViewTasksOf(req.user, task.userId)) return res.status(403).json({ error: 'Not allowed' });
 
   const body = req.body || {};
-  const { status, name, description, dueDate } = body;
+  const { status, name, description, dueDate, docUrl } = body;
   if (status && !STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status' });
   if (name !== undefined && !String(name).trim()) return res.status(400).json({ error: 'Task name cannot be blank' });
-  // Only admins, managers, or the original assigner may edit task content (name/description/dueDate).
-  // The task owner (regular member) may only update status.
   const isOwnSelfCreated = task.userId === req.user.id && task.assignedById === req.user.id;
   const canEditContent = req.user.role === 'admin' || req.user.role === 'manager' ||
     task.assignedById === req.user.id || isOwnSelfCreated;
-  if (!canEditContent && (name !== undefined || description !== undefined || dueDate !== undefined)) {
+  if (!canEditContent && (name !== undefined || description !== undefined || dueDate !== undefined || docUrl !== undefined)) {
     return res.status(403).json({ error: 'You can only update the status of assigned tasks' });
   }
   const hasDueDate = 'dueDate' in body ? 1 : 0;
+  let safeDocUrl = null;
+  if (docUrl !== undefined) {
+    safeDocUrl = String(docUrl).trim().slice(0, 500);
+    if (safeDocUrl && !/^https?:\/\//i.test(safeDocUrl)) safeDocUrl = '';
+  }
 
   db.prepare(`UPDATE tasks SET
-       status = COALESCE(?, status),
-       name = COALESCE(?, name),
+       status      = COALESCE(?, status),
+       name        = COALESCE(?, name),
        description = COALESCE(?, description),
-       dueDate = CASE WHEN ? = 1 THEN ? ELSE dueDate END
+       dueDate     = CASE WHEN ? = 1 THEN ? ELSE dueDate END,
+       docUrl      = COALESCE(?, docUrl)
      WHERE id = ?`)
-    .run(status || null, name || null, description ?? null, hasDueDate, dueDate ?? null, task.id);
+    .run(status || null, name || null, description ?? null, hasDueDate, dueDate ?? null, safeDocUrl, task.id);
 
-  res.json({ task: taskWithNames(getTask(task.id)) });
+  // When a recurring task is marked complete, automatically spawn the next instance.
+  const updatedTask = getTask(task.id);
+  if (status === 'Complete' && updatedTask.isRecurring && updatedTask.recurringDays) {
+    const nextDate = nextOccurrenceDate(updatedTask.recurringDays);
+    db.prepare(`INSERT INTO tasks (userId, name, description, dueDate, status, assignedById, approvalStatus, approverId, docUrl, isRecurring, recurringDays)
+                VALUES (?, ?, ?, ?, 'Not Started', ?, 'approved', ?, ?, 1, ?)`)
+      .run(updatedTask.userId, updatedTask.name, updatedTask.description, nextDate,
+           updatedTask.assignedById, updatedTask.approverId, updatedTask.docUrl || '', updatedTask.recurringDays);
+  }
+
+  res.json({ task: taskWithNames(updatedTask) });
 });
 
 app.delete('/api/tasks/:id', (req, res) => {
@@ -1204,6 +1236,248 @@ app.post('/api/tasks/:id/reject', (req, res) => {
     pushNotification(task.assignedById, `${req.user.displayName} rejected the task "${task.name}" you proposed`, 'tasks', 'task');
   }
   res.json({ ok: true });
+});
+
+// ---- Task Comments ----------------------------------------------------------
+app.get('/api/tasks/:id/comments', (req, res) => {
+  const task = getTask(Number(req.params.id));
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (!canViewTasksOf(req.user, task.userId)) return res.status(403).json({ error: 'Not allowed' });
+  const comments = db.prepare(`
+    SELECT tc.*, u.displayName AS authorName
+    FROM task_comments tc JOIN users u ON u.id = tc.userId
+    WHERE tc.taskId = ? ORDER BY tc.createdAt ASC
+  `).all(task.id);
+  res.json({ comments });
+});
+
+app.post('/api/tasks/:id/comments', rateLimit({ windowMs: 60 * 60 * 1000, max: 120, name: 'task-comments' }), (req, res) => {
+  const task = getTask(Number(req.params.id));
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (!canViewTasksOf(req.user, task.userId)) return res.status(403).json({ error: 'Not allowed' });
+  const content = String((req.body || {}).content || '').trim().slice(0, 2000);
+  if (!content) return res.status(400).json({ error: 'Comment cannot be empty' });
+  const info = db.prepare('INSERT INTO task_comments (taskId, userId, content) VALUES (?, ?, ?)').run(task.id, req.user.id, content);
+  const comment = db.prepare(`SELECT tc.*, u.displayName AS authorName FROM task_comments tc JOIN users u ON u.id = tc.userId WHERE tc.id = ?`).get(info.lastInsertRowid);
+  const notifyIds = new Set([task.userId, task.assignedById].filter(Boolean));
+  notifyIds.delete(req.user.id);
+  for (const uid of notifyIds) {
+    pushNotification(uid, `${req.user.displayName} commented on "${task.name}"`, 'tasks', 'task');
+  }
+  res.status(201).json({ comment });
+});
+
+app.delete('/api/tasks/:id/comments/:commentId', (req, res) => {
+  const comment = db.prepare('SELECT * FROM task_comments WHERE id = ?').get(Number(req.params.commentId));
+  if (!comment) return res.status(404).json({ error: 'Comment not found' });
+  if (comment.userId !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'Not allowed' });
+  db.prepare('DELETE FROM task_comments WHERE id = ?').run(comment.id);
+  res.json({ ok: true });
+});
+
+// ---- Global Search ----------------------------------------------------------
+app.get('/api/search', (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return res.json({ results: { tasks: [], members: [], funding: [], announcements: [] } });
+  const like = `%${q}%`;
+
+  let tasks;
+  if (req.user.role === 'admin') {
+    tasks = db.prepare(`SELECT t.*, u.displayName AS ownerName FROM tasks t JOIN users u ON u.id = t.userId
+      WHERE (t.name LIKE ? OR t.description LIKE ?) AND t.approvalStatus != 'rejected' LIMIT 12`).all(like, like);
+  } else {
+    const myReports = directReports(req.user.id).map((r) => r.id);
+    const ids = [req.user.id, ...myReports];
+    const ph = ids.map(() => '?').join(',');
+    tasks = db.prepare(`SELECT t.*, u.displayName AS ownerName FROM tasks t JOIN users u ON u.id = t.userId
+      WHERE t.userId IN (${ph}) AND (t.name LIKE ? OR t.description LIKE ?) AND t.approvalStatus != 'rejected' LIMIT 12`).all(...ids, like, like);
+  }
+
+  const members = db.prepare(`SELECT id, displayName, title, role, username FROM users
+    WHERE (displayName LIKE ? OR username LIKE ? OR title LIKE ?) AND username != 'logistics' LIMIT 8`).all(like, like, like).map(publicUser);
+
+  let funding;
+  if (req.user.role === 'admin' || req.user.role === 'manager') {
+    funding = db.prepare(`SELECT fr.*, u.displayName AS submitterName FROM funding_requests fr JOIN users u ON u.id = fr.submittedById
+      WHERE fr.title LIKE ? OR fr.description LIKE ? LIMIT 8`).all(like, like);
+  } else {
+    funding = db.prepare(`SELECT fr.*, u.displayName AS submitterName FROM funding_requests fr JOIN users u ON u.id = fr.submittedById
+      WHERE fr.submittedById = ? AND (fr.title LIKE ? OR fr.description LIKE ?) LIMIT 8`).all(req.user.id, like, like);
+  }
+
+  const announcements = db.prepare(`SELECT ta.*, u.displayName AS authorName FROM team_announcements ta JOIN users u ON u.id = ta.authorId
+    WHERE ta.text LIKE ? LIMIT 5`).all(like);
+
+  res.json({ results: { tasks, members, funding, announcements } });
+});
+
+// ---- Attendance Tracker -----------------------------------------------------
+function canManageAttendance(user) {
+  return user.role === 'admin' || user.role === 'manager';
+}
+
+app.get('/api/attendance', (req, res) => {
+  if (!canManageAttendance(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const events = db.prepare(`SELECT ae.*, u.displayName AS createdByName,
+    (SELECT COUNT(*) FROM attendance_records ar WHERE ar.eventId = ae.id AND ar.status = 'present') AS presentCount,
+    (SELECT COUNT(*) FROM attendance_records ar WHERE ar.eventId = ae.id) AS markedCount
+    FROM attendance_events ae LEFT JOIN users u ON u.id = ae.createdById
+    ORDER BY ae.eventDate DESC`).all();
+  res.json({ events });
+});
+
+app.post('/api/attendance', (req, res) => {
+  if (!canManageAttendance(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const { title, eventDate, location, notes } = req.body || {};
+  if (!title || !String(title).trim()) return res.status(400).json({ error: 'Title required' });
+  if (!eventDate || !String(eventDate).match(/^\d{4}-\d{2}-\d{2}$/)) return res.status(400).json({ error: 'Valid event date required (YYYY-MM-DD)' });
+  const info = db.prepare(`INSERT INTO attendance_events (title, eventDate, location, notes, createdById) VALUES (?, ?, ?, ?, ?)`).run(
+    String(title).trim().slice(0, 200), eventDate,
+    String(location || '').trim().slice(0, 200), String(notes || '').trim().slice(0, 1000), req.user.id
+  );
+  res.status(201).json({ event: db.prepare('SELECT * FROM attendance_events WHERE id = ?').get(info.lastInsertRowid) });
+});
+
+app.get('/api/attendance/:id', (req, res) => {
+  if (!canManageAttendance(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const event = db.prepare('SELECT * FROM attendance_events WHERE id = ?').get(Number(req.params.id));
+  if (!event) return res.status(404).json({ error: 'Event not found' });
+  const allMembers = db.prepare("SELECT id, displayName, title, role FROM users WHERE username != 'logistics' ORDER BY displayName").all().map(publicUser);
+  const records = db.prepare(`SELECT ar.*, u.displayName AS memberName FROM attendance_records ar JOIN users u ON u.id = ar.userId WHERE ar.eventId = ?`).all(event.id);
+  const byUser = Object.fromEntries(records.map((r) => [r.userId, r]));
+  res.json({ event, members: allMembers, records: byUser });
+});
+
+app.post('/api/attendance/:id/mark', (req, res) => {
+  if (!canManageAttendance(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const event = db.prepare('SELECT * FROM attendance_events WHERE id = ?').get(Number(req.params.id));
+  if (!event) return res.status(404).json({ error: 'Event not found' });
+  const { userId, status } = req.body || {};
+  const ATTENDANCE_STATUSES = ['present', 'absent', 'excused'];
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+  const safeStatus = ATTENDANCE_STATUSES.includes(status) ? status : 'present';
+  db.prepare(`INSERT INTO attendance_records (eventId, userId, status, markedById) VALUES (?, ?, ?, ?)
+    ON CONFLICT(eventId, userId) DO UPDATE SET status = excluded.status, markedById = excluded.markedById, createdAt = datetime('now')`).run(event.id, Number(userId), safeStatus, req.user.id);
+  res.json({ ok: true, status: safeStatus });
+});
+
+app.delete('/api/attendance/:id', (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+  db.prepare('DELETE FROM attendance_events WHERE id = ?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+// ---- Budget Overview (privileged users) -------------------------------------
+app.get('/api/budget/overview', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const totals = db.prepare(`SELECT
+    COUNT(*) AS total,
+    COALESCE(SUM(amount), 0) AS totalAmount,
+    COALESCE(SUM(CASE WHEN status = 'pending'   THEN amount ELSE 0 END), 0) AS pendingAmount,
+    COALESCE(SUM(CASE WHEN status = 'approved'  THEN amount ELSE 0 END), 0) AS approvedAmount,
+    COALESCE(SUM(CASE WHEN status = 'denied'    THEN amount ELSE 0 END), 0) AS deniedAmount,
+    COALESCE(SUM(CASE WHEN status = 'purchased' THEN amount ELSE 0 END), 0) AS purchasedAmount,
+    COUNT(CASE WHEN status = 'pending'   THEN 1 END) AS pendingCount,
+    COUNT(CASE WHEN status = 'approved'  THEN 1 END) AS approvedCount,
+    COUNT(CASE WHEN status = 'denied'    THEN 1 END) AS deniedCount,
+    COUNT(CASE WHEN status = 'purchased' THEN 1 END) AS purchasedCount
+    FROM funding_requests`).get();
+  const bySubmitter = db.prepare(`SELECT u.displayName, u.title,
+    COUNT(*) AS requests,
+    COALESCE(SUM(fr.amount), 0) AS totalAmount,
+    COALESCE(SUM(CASE WHEN fr.status IN ('approved','purchased') THEN fr.amount ELSE 0 END), 0) AS approvedAmount
+    FROM funding_requests fr JOIN users u ON u.id = fr.submittedById
+    GROUP BY fr.submittedById ORDER BY totalAmount DESC LIMIT 10`).all();
+  const recent = db.prepare(`SELECT fr.*, u.displayName AS submitterName FROM funding_requests fr JOIN users u ON u.id = fr.submittedById
+    ORDER BY fr.createdAt DESC LIMIT 5`).all();
+  res.json({ totals, bySubmitter, recent });
+});
+
+// ---- Polls ------------------------------------------------------------------
+function canCreatePoll(user) {
+  return user.role === 'admin';
+}
+
+app.get('/api/polls', (req, res) => {
+  const polls = db.prepare(`SELECT p.*, u.displayName AS createdByName,
+    (SELECT COUNT(*) FROM poll_votes pv WHERE pv.pollId = p.id) AS voteCount,
+    (SELECT optionIndex FROM poll_votes pv WHERE pv.pollId = p.id AND pv.userId = ?) AS myVote
+    FROM polls p JOIN users u ON u.id = p.createdById
+    ORDER BY p.createdAt DESC`).all(req.user.id);
+  res.json({ polls: polls.map((p) => ({
+    ...p,
+    options: (() => { try { return JSON.parse(p.options); } catch (_) { return []; } })(),
+    myVote: p.myVote !== null && p.myVote !== undefined ? p.myVote : null,
+  })) });
+});
+
+app.get('/api/polls/:id/results', (req, res) => {
+  const poll = db.prepare('SELECT * FROM polls WHERE id = ?').get(Number(req.params.id));
+  if (!poll) return res.status(404).json({ error: 'Poll not found' });
+  const options = (() => { try { return JSON.parse(poll.options); } catch (_) { return []; } })();
+  const votes = db.prepare('SELECT optionIndex, COUNT(*) AS count FROM poll_votes WHERE pollId = ? GROUP BY optionIndex').all(poll.id);
+  const byOption = Object.fromEntries(votes.map((v) => [v.optionIndex, v.count]));
+  const results = options.map((opt, i) => ({ option: opt, count: byOption[i] || 0 }));
+  const total = results.reduce((s, r) => s + r.count, 0);
+  res.json({ results, total });
+});
+
+app.post('/api/polls', (req, res) => {
+  if (!canCreatePoll(req.user)) return res.status(403).json({ error: 'Only admins can create polls' });
+  const { question, options } = req.body || {};
+  if (!question || !String(question).trim()) return res.status(400).json({ error: 'Question required' });
+  if (!Array.isArray(options) || options.length < 2) return res.status(400).json({ error: 'At least 2 options required' });
+  const safeOptions = options.map((o) => String(o).trim().slice(0, 200)).filter(Boolean);
+  if (safeOptions.length < 2) return res.status(400).json({ error: 'At least 2 non-empty options required' });
+  const info = db.prepare('INSERT INTO polls (question, options, createdById) VALUES (?, ?, ?)').run(String(question).trim().slice(0, 500), JSON.stringify(safeOptions), req.user.id);
+  const allUsers = db.prepare("SELECT id FROM users WHERE username != 'logistics' AND id != ?").all(req.user.id);
+  for (const u of allUsers) {
+    pushNotification(u.id, `${req.user.displayName} posted a new poll: "${String(question).trim().slice(0, 60)}"`, 'polls', 'info');
+  }
+  res.status(201).json({ poll: db.prepare('SELECT * FROM polls WHERE id = ?').get(info.lastInsertRowid) });
+});
+
+app.post('/api/polls/:id/vote', (req, res) => {
+  const poll = db.prepare('SELECT * FROM polls WHERE id = ?').get(Number(req.params.id));
+  if (!poll) return res.status(404).json({ error: 'Poll not found' });
+  if (poll.status !== 'open') return res.status(400).json({ error: 'This poll is closed' });
+  const options = (() => { try { return JSON.parse(poll.options); } catch (_) { return []; } })();
+  const { optionIndex } = req.body || {};
+  const idx = Number(optionIndex);
+  if (isNaN(idx) || idx < 0 || idx >= options.length) return res.status(400).json({ error: 'Invalid option' });
+  const existing = db.prepare('SELECT id FROM poll_votes WHERE pollId = ? AND userId = ?').get(poll.id, req.user.id);
+  if (existing) return res.status(409).json({ error: 'You have already voted on this poll' });
+  db.prepare('INSERT INTO poll_votes (pollId, userId, optionIndex) VALUES (?, ?, ?)').run(poll.id, req.user.id, idx);
+  res.json({ ok: true });
+});
+
+app.post('/api/polls/:id/close', (req, res) => {
+  if (!canCreatePoll(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const poll = db.prepare('SELECT * FROM polls WHERE id = ?').get(Number(req.params.id));
+  if (!poll) return res.status(404).json({ error: 'Poll not found' });
+  db.prepare("UPDATE polls SET status = 'closed', closedAt = datetime('now') WHERE id = ?").run(poll.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/polls/:id', (req, res) => {
+  if (!canCreatePoll(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  db.prepare('DELETE FROM polls WHERE id = ?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+// ---- Role Descriptions ------------------------------------------------------
+app.get('/api/role-descriptions', (req, res) => {
+  const rows = db.prepare('SELECT * FROM role_descriptions ORDER BY positionTitle').all();
+  res.json({ descriptions: rows });
+});
+
+app.put('/api/role-descriptions/:title', requireAdmin, (req, res) => {
+  const positionTitle = decodeURIComponent(req.params.title).trim().slice(0, 200);
+  if (!positionTitle) return res.status(400).json({ error: 'Position title required' });
+  const description = String((req.body || {}).description || '').trim().slice(0, 5000);
+  db.prepare(`INSERT INTO role_descriptions (positionTitle, description, updatedById, updatedAt) VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(positionTitle) DO UPDATE SET description = excluded.description, updatedById = excluded.updatedById, updatedAt = datetime('now')`).run(positionTitle, description, req.user.id);
+  res.json({ ok: true, description: db.prepare('SELECT * FROM role_descriptions WHERE positionTitle = ?').get(positionTitle) });
 });
 
 // ---- Admin Panel ------------------------------------------------------------

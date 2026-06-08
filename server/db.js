@@ -245,6 +245,70 @@ function init() {
       ON page_events(loggedAt DESC);
     CREATE INDEX IF NOT EXISTS idx_page_events_event
       ON page_events(event, label);
+
+    -- Per-task comment threads.
+    CREATE TABLE IF NOT EXISTS task_comments (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      taskId    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      userId    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      content   TEXT NOT NULL,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_task_comments ON task_comments(taskId, createdAt);
+
+    -- Attendance: events (meetings, club nights, etc.)
+    CREATE TABLE IF NOT EXISTS attendance_events (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      title       TEXT NOT NULL,
+      eventDate   TEXT NOT NULL,
+      location    TEXT NOT NULL DEFAULT '',
+      notes       TEXT NOT NULL DEFAULT '',
+      createdById INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      createdAt   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Attendance: who attended each event.
+    CREATE TABLE IF NOT EXISTS attendance_records (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      eventId    INTEGER NOT NULL REFERENCES attendance_events(id) ON DELETE CASCADE,
+      userId     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status     TEXT NOT NULL DEFAULT 'present',
+      markedById INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      createdAt  TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(eventId, userId)
+    );
+    CREATE INDEX IF NOT EXISTS idx_attendance_records ON attendance_records(eventId);
+
+    -- Polls created by the President for all board members.
+    CREATE TABLE IF NOT EXISTS polls (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      question    TEXT NOT NULL,
+      options     TEXT NOT NULL DEFAULT '[]',
+      createdById INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status      TEXT NOT NULL DEFAULT 'open',
+      createdAt   TEXT NOT NULL DEFAULT (datetime('now')),
+      closedAt    TEXT
+    );
+
+    -- One vote per member per poll.
+    CREATE TABLE IF NOT EXISTS poll_votes (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      pollId      INTEGER NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+      userId      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      optionIndex INTEGER NOT NULL,
+      createdAt   TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(pollId, userId)
+    );
+    CREATE INDEX IF NOT EXISTS idx_poll_votes ON poll_votes(pollId);
+
+    -- Role / position descriptions editable by admins.
+    CREATE TABLE IF NOT EXISTS role_descriptions (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      positionTitle TEXT NOT NULL UNIQUE,
+      description   TEXT NOT NULL DEFAULT '',
+      updatedAt     TEXT NOT NULL DEFAULT (datetime('now')),
+      updatedById   INTEGER REFERENCES users(id) ON DELETE SET NULL
+    );
   `);
 
   // User column migrations.
@@ -269,6 +333,12 @@ function init() {
     db.prepare("UPDATE users SET bigBoard = 1 WHERE role = 'admin' OR role = 'manager' OR title = 'Secretary'").run();
   }
   if (!cols.includes('canViewLogistics')) db.exec("ALTER TABLE users ADD COLUMN canViewLogistics INTEGER NOT NULL DEFAULT 0");
+
+  // Task column migrations.
+  const taskCols = db.prepare("PRAGMA table_info(tasks)").all().map((c) => c.name);
+  if (!taskCols.includes('docUrl'))        db.exec("ALTER TABLE tasks ADD COLUMN docUrl TEXT NOT NULL DEFAULT ''");
+  if (!taskCols.includes('isRecurring'))   db.exec("ALTER TABLE tasks ADD COLUMN isRecurring INTEGER NOT NULL DEFAULT 0");
+  if (!taskCols.includes('recurringDays')) db.exec("ALTER TABLE tasks ADD COLUMN recurringDays TEXT NOT NULL DEFAULT ''");
 
   // Remove the old dedicated logistics observer account — the dashboard is now
   // accessible to admins directly and via the canViewLogistics permission.
