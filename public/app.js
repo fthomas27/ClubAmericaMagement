@@ -630,16 +630,32 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
 // ---------------------------------------------------------------------------
 // Task page (used for self and for managed reports)
 // ---------------------------------------------------------------------------
-function TaskCard({ task, canEdit, onChange, onDelete }) {
+const DAY_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+function TaskCard({ task, canEdit, onChange, onDelete, me }) {
   const [saving, setSaving] = useState(false);
+  const recurringDays = task.isRecurring && task.recurringDays
+    ? String(task.recurringDays).split(',').map(Number).filter((d) => d >= 0 && d <= 6).map((d) => DAY_LABELS[d]).join(', ')
+    : null;
+  const safeDocUrl = task.docUrl ? (task.docUrl.startsWith('http://') || task.docUrl.startsWith('https://') ? task.docUrl : 'https://' + task.docUrl) : '';
   return (
     <div className="bg-navy2 border border-cream/10 rounded-lg p-4 hover:border-cream/25 hover:-translate-y-0.5 hover:shadow-md hover:shadow-black/25 transition-all duration-200">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="font-medium text-cream truncate">{task.name}</div>
           {task.description && <div className="text-sm text-cream/60 mt-1 whitespace-pre-wrap">{task.description}</div>}
+          {safeDocUrl && (
+            <a href={safeDocUrl} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 mt-2 text-xs text-sky-300 hover:text-sky-200 transition-colors">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>
+              Open Document
+            </a>
+          )}
         </div>
-        <Badge tone={statusTone(task.status)}>{task.status}</Badge>
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <Badge tone={statusTone(task.status)}>{task.status}</Badge>
+          {recurringDays && <span className="text-[10px] text-gold/70">↻ {recurringDays}</span>}
+        </div>
       </div>
       <div className="flex items-center flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-cream/50">
         {task.dueDate && <span>Due {fmtShortDate(task.dueDate)}</span>}
@@ -672,6 +688,29 @@ function TaskCard({ task, canEdit, onChange, onDelete }) {
           )}
         </div>
       )}
+      {me && <TaskComments taskId={task.id} me={me} />}
+    </div>
+  );
+}
+
+function RecurringDaysPicker({ value, onChange }) {
+  const days = value || [];
+  function toggle(d) {
+    if (days.includes(d)) onChange(days.filter((x) => x !== d));
+    else onChange([...days, d].sort((a, b) => a - b));
+  }
+  return (
+    <div>
+      <span className="block text-xs uppercase tracking-wider text-cream/60 mb-1.5">Repeat on days</span>
+      <div className="flex gap-1.5 flex-wrap">
+        {DAY_LABELS.map((label, d) => (
+          <button key={d} type="button" onClick={() => toggle(d)}
+            className={`px-2.5 py-1 rounded text-xs font-medium transition-all duration-150 ${days.includes(d) ? 'bg-gold text-navy' : 'bg-navy border border-cream/20 text-cream/60 hover:border-gold/50 hover:text-gold'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {days.length > 0 && <div className="text-[11px] text-gold/60 mt-1">↻ Repeats {days.map((d) => DAY_LABELS[d]).join(', ')}</div>}
     </div>
   );
 }
@@ -681,6 +720,8 @@ function NewTaskForm({ targetUserId, onCreated }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState('');
+  const [docUrl, setDocUrl] = useState('');
+  const [recurringDays, setRecurringDays] = useState([]);
   const { loading, error, setError, run } = useAction();
 
   async function submit(e) {
@@ -688,8 +729,11 @@ function NewTaskForm({ targetUserId, onCreated }) {
     if (!name.trim()) { setError('Please enter a task name.'); return; }
     if (dueDate && dueDate < new Date().toISOString().slice(0, 10)) { setError("Due date can't be in the past."); return; }
     try {
-      await run(() => api('/tasks', { method: 'POST', body: { name: name.trim(), description: description.trim(), dueDate: dueDate || null, targetUserId } }));
-      setName(''); setDescription(''); setDueDate(''); setOpen(false);
+      await run(() => api('/tasks', { method: 'POST', body: {
+        name: name.trim(), description: description.trim(), dueDate: dueDate || null, targetUserId,
+        docUrl: docUrl.trim(), isRecurring: recurringDays.length > 0 ? 1 : 0, recurringDays: recurringDays.join(','),
+      }}));
+      setName(''); setDescription(''); setDueDate(''); setDocUrl(''); setRecurringDays([]); setOpen(false);
       onCreated();
     } catch (_) {}
   }
@@ -700,6 +744,8 @@ function NewTaskForm({ targetUserId, onCreated }) {
       <Field label="Task Name"><input className={inputCls} value={name} autoFocus onChange={(e) => setName(e.target.value)} /></Field>
       <Field label="Description"><textarea className={inputCls} rows="2" value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
       <Field label="Due Date"><input type="date" className={inputCls} value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field>
+      <Field label="Document URL (optional)"><input className={inputCls} value={docUrl} placeholder="https://docs.google.com/…" onChange={(e) => setDocUrl(e.target.value)} /></Field>
+      <RecurringDaysPicker value={recurringDays} onChange={setRecurringDays} />
       {error && <div className="text-red text-sm">{error}</div>}
       <div className="flex gap-2">
         <Button type="submit" variant="gold" disabled={loading || !name.trim()}>{loading ? <span className="flex items-center gap-2"><Spinner /> Creating…</span> : 'Create'}</Button>
@@ -715,6 +761,8 @@ function AssignTaskForm({ me, users, onCreated }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState('');
+  const [docUrl, setDocUrl] = useState('');
+  const [recurringDays, setRecurringDays] = useState([]);
   const [msg, setMsg] = useState('');
   const { loading, error, setError, run } = useAction();
 
@@ -727,8 +775,11 @@ function AssignTaskForm({ me, users, onCreated }) {
     if (!name.trim()) { setError('Please enter a task name.'); return; }
     if (dueDate && dueDate < new Date().toISOString().slice(0, 10)) { setError("Due date can't be in the past."); return; }
     try {
-      const data = await run(() => api('/tasks', { method: 'POST', body: { name: name.trim(), description: description.trim(), dueDate: dueDate || null, targetUserId: Number(targetUserId) } }));
-      setName(''); setDescription(''); setDueDate(''); setTargetUserId('');
+      const data = await run(() => api('/tasks', { method: 'POST', body: {
+        name: name.trim(), description: description.trim(), dueDate: dueDate || null, targetUserId: Number(targetUserId),
+        docUrl: docUrl.trim(), isRecurring: recurringDays.length > 0 ? 1 : 0, recurringDays: recurringDays.join(','),
+      }}));
+      setName(''); setDescription(''); setDueDate(''); setDocUrl(''); setRecurringDays([]); setTargetUserId('');
       setMsg(data.task.approvalStatus === 'pending'
         ? 'Sent — awaiting manager approval.'
         : 'Task assigned.');
@@ -749,6 +800,8 @@ function AssignTaskForm({ me, users, onCreated }) {
       <Field label="Task Name"><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} /></Field>
       <Field label="Description"><textarea className={inputCls} rows="2" value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
       <Field label="Due Date"><input type="date" className={inputCls} value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field>
+      <Field label="Document URL (optional)"><input className={inputCls} value={docUrl} placeholder="https://docs.google.com/…" onChange={(e) => setDocUrl(e.target.value)} /></Field>
+      <RecurringDaysPicker value={recurringDays} onChange={setRecurringDays} />
       {me.role !== 'admin' && <p className="text-xs text-cream/40">Tasks you send are held until the recipient's manager approves them.</p>}
       {error && <div className="text-red text-sm">{error}</div>}
       {msg && <div className="text-emerald-300 text-sm">{msg}</div>}
@@ -1218,7 +1271,7 @@ function TaskPage({ me, userId, users, refreshSignal }) {
             <div className="font-display text-xl text-gold mb-2">{col} <span className="text-cream/30 text-base">({grouped[col].length})</span></div>
             <div className="space-y-3">
               {grouped[col].map((t) => (
-                <TaskCard key={t.id} task={t} canEdit={true} onChange={changeTask} onDelete={deleteTask} />
+                <TaskCard key={t.id} task={t} canEdit={true} onChange={changeTask} onDelete={deleteTask} me={me} />
               ))}
             </div>
           </div>
@@ -1714,6 +1767,7 @@ function AdminPanel({ users, reload }) {
                   { key: 'canAnnounce', label: 'Announce' },
                   { key: 'canEditHome', label: 'Edit Site' },
                   { key: 'canViewLogistics', label: 'View Login Activity' },
+                  { key: 'canManageSocial', label: 'Social Media Manager' },
                 ].map(({ key, label }) => (
                   <label key={key} className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={!!u[key]}
@@ -1731,6 +1785,85 @@ function AdminPanel({ users, reload }) {
       {editTarget && (
         <EditMemberModal user={editTarget} onSaved={reload} onClose={() => setEditTarget(null)} />
       )}
+
+      <RoleDescriptionsAdmin />
+    </div>
+  );
+}
+
+function RoleDescriptionsAdmin() {
+  const [items, setItems] = useState([]);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDesc, setEditDesc] = useState('');
+  const [newTitle, setNewTitle] = useState('');
+  const [newDesc, setNewDesc] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    api('/role-descriptions').then((d) => setItems(d.descriptions || [])).catch(() => {});
+  }, []);
+
+  async function save(title, description) {
+    setSaving(true);
+    setNotice('');
+    try {
+      const d = await api(`/role-descriptions/${encodeURIComponent(title)}`, { method: 'PUT', body: { description } });
+      setItems((prev) => {
+        const exists = prev.find((x) => x.positionTitle === title);
+        if (exists) return prev.map((x) => x.positionTitle === title ? d.description : x);
+        return [...prev, d.description];
+      });
+      setNotice('Saved.');
+      setEditTitle(''); setEditDesc(''); setNewTitle(''); setNewDesc('');
+    } catch (err) { setNotice(err.message); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <div className="mt-10">
+      <div className="font-display text-2xl text-gold mb-4">Role Descriptions</div>
+      <div className="space-y-3 mb-6">
+        {items.map((item) => (
+          <div key={item.positionTitle} className="bg-navy2 border border-cream/10 rounded-xl p-4">
+            {editTitle === item.positionTitle ? (
+              <div className="space-y-2">
+                <div className="text-cream font-medium">{item.positionTitle}</div>
+                <textarea className={inputCls} rows="3" value={editDesc}
+                  onChange={(e) => setEditDesc(e.target.value)} autoFocus />
+                <div className="flex gap-2">
+                  <Button variant="gold" disabled={saving} onClick={() => save(item.positionTitle, editDesc)}>
+                    {saving ? <span className="flex items-center gap-1"><Spinner className="w-3 h-3" /> Saving…</span> : 'Save'}
+                  </Button>
+                  <Button variant="ghost" onClick={() => setEditTitle('')}>Cancel</Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-cream font-medium">{item.positionTitle}</div>
+                  {item.description ? (
+                    <div className="text-cream/60 text-sm mt-1 whitespace-pre-wrap">{item.description}</div>
+                  ) : (
+                    <div className="text-cream/30 text-sm mt-1 italic">No description yet.</div>
+                  )}
+                </div>
+                <button onClick={() => { setEditTitle(item.positionTitle); setEditDesc(item.description || ''); }}
+                  className="text-xs text-gold/70 hover:text-gold shrink-0">Edit</button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="bg-navy2 border border-gold/20 rounded-xl p-4 space-y-3">
+        <div className="text-cream/70 text-sm font-medium">Add a new role description</div>
+        <Field label="Position Title"><input className={inputCls} value={newTitle} placeholder="e.g. Vice President" onChange={(e) => setNewTitle(e.target.value)} /></Field>
+        <Field label="Description"><textarea className={inputCls} rows="3" value={newDesc} placeholder="Describe this role's responsibilities…" onChange={(e) => setNewDesc(e.target.value)} /></Field>
+        {notice && <div className="text-emerald-300 text-sm">{notice}</div>}
+        <Button variant="gold" disabled={saving || !newTitle.trim()} onClick={() => save(newTitle.trim(), newDesc.trim())}>
+          {saving ? <span className="flex items-center gap-1"><Spinner className="w-3 h-3" /> Saving…</span> : 'Add Role'}
+        </Button>
+      </div>
     </div>
   );
 }
@@ -2704,6 +2837,21 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
           <button onClick={() => onAction(member.id, 'delete')} className="text-xs text-red/60 hover:text-red">Delete</button>
         )}
       </div>
+      {(me.role === 'admin' || me.role === 'manager') && member.status === 'Onboarded' && (
+        <div className="mt-2 flex items-center gap-2">
+          <label className="flex items-center gap-2 cursor-pointer group">
+            <input type="checkbox" checked={!!member.parentFormCollected}
+              onChange={async (e) => {
+                try { await onAction(member.id, 'patch', { parentFormCollected: e.target.checked ? 1 : 0 }); }
+                catch (_) {}
+              }}
+              className="w-3.5 h-3.5 accent-gold" />
+            <span className={`text-xs ${member.parentFormCollected ? 'text-emerald-400/70' : 'text-cream/40'}`}>
+              {member.parentFormCollected ? '✓ Parent form collected' : 'Parent form missing'}
+            </span>
+          </label>
+        </div>
+      )}
     </div>
   );
 }
@@ -2954,6 +3102,8 @@ function RosterPage({ me }) {
       if (action === 'delete') {
         if (!(await confirm({ title: 'Remove from roster?', message: 'This member will be permanently deleted from the roster.', confirmLabel: 'Delete', danger: true }))) return;
         await api(`/roster/${memberId}`, { method: 'DELETE' });
+      } else if (action === 'patch') {
+        await api(`/roster/${memberId}`, { method: 'PATCH', body });
       } else {
         await api(`/roster/${memberId}/${action}`, { method: 'POST', body: body || undefined });
       }
@@ -4300,6 +4450,14 @@ function AppIcon({ name }) {
     case 'activity':  return <svg {...p}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>;
     case 'ai':        return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M9.5 15a4.5 4.5 0 0 0 5 0"/></svg>;
     case 'bell':      return <svg {...p}><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>;
+    case 'search':    return <svg {...p}><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>;
+    case 'attendance':return <svg {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>;
+    case 'poll':      return <svg {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 16v-4M12 16v-8M17 16v-2"/></svg>;
+    case 'budget':    return <svg {...p}><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>;
+    case 'meetings':  return <svg {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M8 11v2M12 11v2"/></svg>;
+    case 'grants':    return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5a2.5 2.5 0 0 1 5 0c0 1.5-1 2-2.5 2.5-1.5.5-2.5 1-2.5 2.5a2.5 2.5 0 0 0 5 0"/><path d="m16 5-1.5 1.5"/></svg>;
+    case 'speaker':   return <svg {...p}><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/><path d="M3 9l4 4"/></svg>;
+    case 'social':    return <svg {...p}><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>;
     default:          return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
   }
 }
@@ -4321,30 +4479,37 @@ function AppTile({ label, icon, badge, onClick, style }) {
   );
 }
 
-function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, aiNotesCount, onAiNotes, onNavigate, onLogout }) {
+function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, aiNotesCount, onAiNotes, onNavigate, onLogout, onSearch }) {
   const isManager = me.role === 'manager' || me.role === 'admin';
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
   const canSeeSubmissions = me.role === 'admin' || !!me.grade;
   const canRoster = isManager || !!me.canManageRoster;
 
   const tiles = [
-    { type: 'mytasks',  label: 'My Page',        icon: 'person'    },
-    { type: 'home',     label: 'Club Home',       icon: 'home'      },
-    ...(canEditSite       ? [{ type: 'website',     label: 'Edit Website',     icon: 'edit'      }] : []),
-    ...(isManager         ? [{ type: 'announce',    label: 'Announcement',     icon: 'megaphone' }] : []),
-    ...(isManager         ? [{ type: 'myteam',      label: 'My Team',          icon: 'team'      }] : []),
-    ...(isManager         ? [{ type: 'approvals',   label: 'Approvals',        icon: 'check',    badge: approvalsCount   }] : []),
-    ...(canSeeSubmissions ? [{ type: 'submissions', label: 'Get Involved',     icon: 'inbox',    badge: submissionsCount }] : []),
-    ...(canRoster         ? [{ type: 'roster',      label: 'Roster',           icon: 'roster'    }] : []),
+    { type: 'mytasks',    label: 'My Page',          icon: 'person'     },
+    { type: 'home',       label: 'Club Home',         icon: 'home'       },
+    ...(canEditSite       ? [{ type: 'website',     label: 'Edit Website',     icon: 'edit'       }] : []),
+    ...(isManager         ? [{ type: 'announce',    label: 'Announcement',     icon: 'megaphone'  }] : []),
+    ...(isManager         ? [{ type: 'myteam',      label: 'My Team',          icon: 'team'       }] : []),
+    ...(isManager         ? [{ type: 'approvals',   label: 'Approvals',        icon: 'check',     badge: approvalsCount   }] : []),
+    ...(canSeeSubmissions ? [{ type: 'submissions', label: 'Get Involved',     icon: 'inbox',     badge: submissionsCount }] : []),
+    ...(canRoster         ? [{ type: 'roster',      label: 'Roster',           icon: 'roster'     }] : []),
     ...((checkinEnabled || isManager) ? [{ type: 'checkin', label: checkinEnabled ? 'Check-In' : 'Check-In Settings', icon: 'calendar' }] : []),
-    { type: 'funding',  label: 'Funding',          icon: 'funding'   },
-    { type: 'apply',    label: 'Apply',             icon: 'apply'     },
-    ...(isManager         ? [{ type: 'dashboard',   label: 'Dashboard',        icon: 'dashboard' }] : []),
-    { type: 'org',      label: 'Org Chart',         icon: 'org'       },
-    ...(me.role === 'admin' ? [{ type: 'admin',     label: 'Admin Panel',      icon: 'admin'     }] : []),
+    { type: 'funding',    label: 'Funding',            icon: 'funding'    },
+    { type: 'apply',      label: 'Apply',               icon: 'apply'      },
+    ...(isManager         ? [{ type: 'dashboard',   label: 'Dashboard',        icon: 'dashboard'  }] : []),
+    { type: 'attendance',   label: 'Attendance',          icon: 'attendance' },
+    { type: 'polls',       label: 'Polls & Voting',      icon: 'poll'       },
+    { type: 'meetings',    label: 'Meetings',             icon: 'meetings'   },
+    ...(isManager ? [{ type: 'speaker',   label: 'Speaker Events',    icon: 'speaker'    }] : []),
+    ...(isManager ? [{ type: 'grants',    label: 'Grant Tracker',     icon: 'grants'     }] : []),
+    ...(isManager || !!me.canManageSocial ? [{ type: 'social', label: 'Social Media', icon: 'social' }] : []),
+    ...(isManager         ? [{ type: 'budget',      label: 'Budget Overview',  icon: 'budget'     }] : []),
+    { type: 'org',        label: 'Org Chart',           icon: 'org'        },
+    ...(me.role === 'admin' ? [{ type: 'admin',     label: 'Admin Panel',      icon: 'admin'      }] : []),
     ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }] : []),
-    ...(me.role === 'admin' ? [{ type: 'ai',        label: 'AI Assistant',     icon: 'ai'        }] : []),
-    { type: 'ainotes',  label: 'Agent Notes',      icon: 'bell',     badge: aiNotesCount || undefined, onClick: onAiNotes },
+    ...(me.role === 'admin' ? [{ type: 'ai',        label: 'AI Assistant',     icon: 'ai'         }] : []),
+    { type: 'ainotes',    label: 'Agent Notes',        icon: 'bell',      badge: aiNotesCount || undefined, onClick: onAiNotes },
   ];
 
   return (
@@ -4352,6 +4517,10 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
       <header className="px-6 py-5 flex items-center justify-between border-b border-cream/10">
         <Logo size="sidebar" />
         <div className="flex items-center gap-4">
+          <button onClick={onSearch} aria-label="Search"
+            className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-gold hover:bg-navy3 transition-colors">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>
+          </button>
           <NotificationBell onNavigate={onNavigate} />
           <div className="flex flex-col items-end gap-1">
             <span className="text-cream text-sm font-medium">{me.displayName}</span>
@@ -4492,6 +4661,7 @@ function App() {
   const [refreshSignal, setRefreshSignal] = useState(0);
   const [aiNotesCount, setAiNotesCount] = useState(0);
   const [aiNotesOpen, setAiNotesOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   const isSurveyPath = window.location.pathname === '/survey';
   const bump = () => setRefreshSignal((n) => n + 1);
@@ -4568,9 +4738,10 @@ function App() {
   if (view.type === 'apphome') return (
     <>
       {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={() => { setAiNotesOpen(false); bump(); }} />}
+      {searchOpen && <SearchModal me={me} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
       <AppHome me={me} reports={reports} approvalsCount={approvalsCount} submissionsCount={submissionsCount}
         checkinEnabled={checkinEnabled} aiNotesCount={aiNotesCount} onAiNotes={() => setAiNotesOpen(true)}
-        onNavigate={navigate} onLogout={logout} />
+        onNavigate={navigate} onLogout={logout} onSearch={() => setSearchOpen(true)} />
     </>
   );
 
@@ -4580,6 +4751,8 @@ function App() {
     myteam: 'My Team', announce: 'Team Announcement', approvals: 'Pending Approvals',
     submissions: 'Get Involved', roster: 'Roster', checkin: 'Weekly Check-In',
     funding: 'Funding Requests', apply: 'Apply for Position', dashboard: 'Dashboard',
+    attendance: 'Attendance', polls: 'Polls & Voting', budget: 'Budget Overview',
+    meetings: 'Meetings', speaker: 'Speaker Events', grants: 'Grant Tracker', social: 'Social Media',
     org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity',
     ai: 'AI Assistant', password: 'Change Password', profile: 'Edit Profile',
   };
@@ -4604,10 +4777,18 @@ function App() {
   else if (view.type === 'ai') content = me.role === 'admin' ? <AIChatPage me={me} /> : null;
   else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;
   else if (view.type === 'profile') content = <ProfileSetup me={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;
+  else if (view.type === 'attendance') content = <AttendancePage me={me} />;
+  else if (view.type === 'polls') content = <PollsPage me={me} />;
+  else if (view.type === 'budget') content = (me.role === 'admin' || me.role === 'manager') ? <BudgetDashboardPage me={me} /> : null;
+  else if (view.type === 'meetings') content = <MeetingsPage me={me} />;
+  else if (view.type === 'speaker') content = (me.role === 'admin' || me.role === 'manager') ? <SpeakerEventsPage me={me} /> : null;
+  else if (view.type === 'grants') content = (me.role === 'admin' || me.role === 'manager') ? <GrantsPage me={me} /> : null;
+  else if (view.type === 'social') content = (me.role === 'admin' || me.role === 'manager' || !!me.canManageSocial) ? <SocialTrackerPage me={me} /> : null;
 
   return (
     <>
       {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={() => { setAiNotesOpen(false); bump(); }} />}
+      {searchOpen && <SearchModal me={me} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
       <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
         <header className="sticky top-0 z-20 flex items-center gap-3 bg-navy2/95 backdrop-blur border-b border-cream/10 px-4 py-3">
           <button onClick={() => navigate({ type: 'apphome' })} aria-label="Back to home"
@@ -4617,6 +4798,10 @@ function App() {
             </svg>
           </button>
           <span className="text-cream font-semibold text-base flex-1">{PAGE_TITLES[view.type] || ''}</span>
+          <button onClick={() => setSearchOpen(true)} aria-label="Search"
+            className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-gold hover:bg-navy3 transition-colors">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>
+          </button>
           <NotificationBell onNavigate={navigate} refreshSignal={refreshSignal} />
           <button onClick={() => setAiNotesOpen(true)} className="relative flex items-center gap-1 text-cream/50 hover:text-gold transition-colors text-xs" aria-label="AI Notes">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -4630,6 +4815,1287 @@ function App() {
         </main>
       </div>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Meetings Page
+// ---------------------------------------------------------------------------
+function MeetingsPage({ me }) {
+  const [meetings, setMeetings] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [title, setTitle] = useState('');
+  const [meetingDate, setMeetingDate] = useState('');
+  const [agendaUrl, setAgendaUrl] = useState('');
+  const [minutesUrl, setMinutesUrl] = useState('');
+  const [notes, setNotes] = useState('');
+  const { loading, error, setError, run } = useAction();
+  const isManager = me.role === 'admin' || me.role === 'manager';
+
+  const load = useCallback(async () => {
+    try { const d = await api('/meetings'); setMeetings(d.meetings || []); }
+    catch (e) { setError(e.message); }
+    finally { setLoaded(true); }
+  }, [setError]);
+
+  useEffect(() => { load(); }, [load]);
+
+  function openCreate() { setEditId(null); setTitle(''); setMeetingDate(''); setAgendaUrl(''); setMinutesUrl(''); setNotes(''); setShowForm(true); }
+  function openEdit(m) { setEditId(m.id); setTitle(m.title); setMeetingDate(m.meetingDate); setAgendaUrl(m.agendaUrl||''); setMinutesUrl(m.minutesUrl||''); setNotes(m.notes||''); setShowForm(true); }
+
+  async function save(e) {
+    e.preventDefault();
+    if (!title.trim()) { setError('Title is required'); return; }
+    if (!meetingDate) { setError('Date is required'); return; }
+    try {
+      await run(() => editId
+        ? api(`/meetings/${editId}`, { method: 'PATCH', body: { title: title.trim(), meetingDate, agendaUrl, minutesUrl, notes } })
+        : api('/meetings', { method: 'POST', body: { title: title.trim(), meetingDate, agendaUrl, minutesUrl, notes } })
+      );
+      setShowForm(false); load();
+    } catch (_) {}
+  }
+
+  async function deleteMeeting(m) {
+    if (!window.confirm(`Delete "${m.title}"?`)) return;
+    try { await api(`/meetings/${m.id}`, { method: 'DELETE' }); load(); } catch (_) {}
+  }
+
+  const safeLink = (url) => url && (url.startsWith('http://') || url.startsWith('https://')) ? url : url ? 'https://' + url : '';
+
+  return (
+    <div className="max-w-3xl">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="font-display text-4xl sm:text-5xl text-cream">Meetings</h1>
+        {isManager && !showForm && <Button variant="gold" onClick={openCreate}>+ New Meeting</Button>}
+      </div>
+
+      {showForm && (
+        <form onSubmit={save} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
+          <div className="font-display text-xl text-gold">{editId ? 'Edit Meeting' : 'New Meeting'}</div>
+          <Field label="Title"><input className={inputCls} value={title} autoFocus onChange={(e) => setTitle(e.target.value)} /></Field>
+          <Field label="Date"><input type="date" className={inputCls} value={meetingDate} onChange={(e) => setMeetingDate(e.target.value)} /></Field>
+          <Field label="Agenda (Google Doc URL)"><input className={inputCls} value={agendaUrl} placeholder="https://docs.google.com/…" onChange={(e) => setAgendaUrl(e.target.value)} /></Field>
+          <Field label="Minutes (Google Doc URL)"><input className={inputCls} value={minutesUrl} placeholder="https://docs.google.com/…" onChange={(e) => setMinutesUrl(e.target.value)} /></Field>
+          <Field label="Notes"><textarea className={inputCls} rows="2" value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
+          {error && <div className="text-red text-sm">{error}</div>}
+          <div className="flex gap-2">
+            <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner />Saving…</span> : 'Save'}</Button>
+            <Button variant="ghost" onClick={() => setShowForm(false)} disabled={loading}>Cancel</Button>
+          </div>
+        </form>
+      )}
+
+      {!loaded && <Loading label="Loading meetings…" />}
+      {loaded && meetings.length === 0 && (
+        <EmptyState icon="📋" title="No meetings yet" hint={isManager ? 'Create the first meeting record above.' : 'Meeting records will appear here once added.'} />
+      )}
+      <div className="space-y-3">
+        {meetings.map((m) => (
+          <div key={m.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-medium text-cream">{m.title}</div>
+                <div className="text-xs text-cream/50 mt-0.5">{fmtShortDate(m.meetingDate)} · Added by {m.createdByName}</div>
+                {m.notes && <div className="text-sm text-cream/60 mt-1">{m.notes}</div>}
+                <div className="flex gap-3 mt-2 flex-wrap">
+                  {safeLink(m.agendaUrl) && (
+                    <a href={safeLink(m.agendaUrl)} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-gold/80 hover:text-gold transition-colors">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
+                      Agenda
+                    </a>
+                  )}
+                  {safeLink(m.minutesUrl) && (
+                    <a href={safeLink(m.minutesUrl)} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-emerald-400/80 hover:text-emerald-300 transition-colors">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>
+                      Minutes
+                    </a>
+                  )}
+                  {!safeLink(m.agendaUrl) && isManager && <span className="text-xs text-cream/25 italic">No agenda link yet</span>}
+                  {!safeLink(m.minutesUrl) && isManager && <span className="text-xs text-cream/25 italic">No minutes link yet</span>}
+                </div>
+              </div>
+              {isManager && (
+                <div className="flex gap-2 shrink-0">
+                  <button onClick={() => openEdit(m)} className="text-xs text-gold/60 hover:text-gold">Edit</button>
+                  {me.role === 'admin' && <button onClick={() => deleteMeeting(m)} className="text-xs text-red/60 hover:text-red">Delete</button>}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Grant Application Tracker
+// ---------------------------------------------------------------------------
+const GRANT_STATUSES = ['Draft','Submitted','Under Review','Approved','Denied'];
+const GRANT_STATUS_TONES = { Draft: 'slate', Submitted: 'blue', 'Under Review': 'gold', Approved: 'green', Denied: 'red' };
+
+function GrantsPage({ me }) {
+  const [grants, setGrants] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [title, setTitle] = useState('');
+  const [purpose, setPurpose] = useState('');
+  const [amountRequested, setAmountRequested] = useState('');
+  const [submissionDate, setSubmissionDate] = useState('');
+  const [notes, setNotes] = useState('');
+  const { loading, error, setError, run } = useAction();
+  const isManager = me.role === 'admin' || me.role === 'manager';
+
+  const load = useCallback(async () => {
+    try { const d = await api('/grants'); setGrants(d.grants || []); }
+    catch (e) { setError(e.message); }
+    finally { setLoaded(true); }
+  }, [setError]);
+
+  useEffect(() => { load(); }, [load]);
+
+  function openCreate() { setEditId(null); setTitle(''); setPurpose(''); setAmountRequested(''); setSubmissionDate(''); setNotes(''); setShowForm(true); }
+  function openEdit(g) { setEditId(g.id); setTitle(g.title); setPurpose(g.purpose||''); setAmountRequested(String(g.amountRequested||'')); setSubmissionDate(g.submissionDate||''); setNotes(g.notes||''); setShowForm(true); }
+
+  async function save(e) {
+    e.preventDefault();
+    if (!title.trim()) { setError('Title is required'); return; }
+    try {
+      await run(() => editId
+        ? api(`/grants/${editId}`, { method: 'PATCH', body: { title: title.trim(), purpose, amountRequested: Number(amountRequested)||0, submissionDate: submissionDate||null, notes } })
+        : api('/grants', { method: 'POST', body: { title: title.trim(), purpose, amountRequested: Number(amountRequested)||0, submissionDate: submissionDate||null, notes } })
+      );
+      setShowForm(false); load();
+    } catch (_) {}
+  }
+
+  async function updateStatus(g, status) {
+    try { await api(`/grants/${g.id}`, { method: 'PATCH', body: { status } }); load(); } catch (_) {}
+  }
+
+  async function updateAwarded(g, val) {
+    try { await api(`/grants/${g.id}`, { method: 'PATCH', body: { amountAwarded: Number(val) } }); load(); } catch (_) {}
+  }
+
+  async function deleteGrant(g) {
+    if (!window.confirm(`Delete "${g.title}"?`)) return;
+    try { await api(`/grants/${g.id}`, { method: 'DELETE' }); load(); } catch (_) {}
+  }
+
+  const total = { requested: grants.reduce((s, g) => s + (g.amountRequested || 0), 0), awarded: grants.filter(g => g.status === 'Approved').reduce((s, g) => s + (g.amountAwarded || 0), 0) };
+
+  return (
+    <div className="max-w-3xl">
+      <div className="flex items-center justify-between mb-2">
+        <h1 className="font-display text-4xl sm:text-5xl text-cream">Grant Applications</h1>
+        {isManager && !showForm && <Button variant="gold" onClick={openCreate}>+ New Application</Button>}
+      </div>
+      <p className="text-cream/50 text-sm mb-6">Track grant requests submitted to TPUSA national and other sources.</p>
+
+      {grants.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 mb-6">
+          <div className="bg-navy2 border border-cream/10 rounded-xl p-4">
+            <div className="text-cream/50 text-xs uppercase tracking-wider mb-1">Total Requested</div>
+            <div className="text-2xl font-display text-cream">${total.requested.toLocaleString()}</div>
+          </div>
+          <div className="bg-navy2 border border-emerald-500/20 rounded-xl p-4">
+            <div className="text-cream/50 text-xs uppercase tracking-wider mb-1">Total Awarded</div>
+            <div className="text-2xl font-display text-emerald-300">${total.awarded.toLocaleString()}</div>
+          </div>
+        </div>
+      )}
+
+      {showForm && (
+        <form onSubmit={save} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
+          <div className="font-display text-xl text-gold">{editId ? 'Edit Application' : 'New Grant Application'}</div>
+          <Field label="Grant Title / Purpose"><input className={inputCls} value={title} autoFocus onChange={(e) => setTitle(e.target.value)} placeholder="e.g. TPUSA Activism Grant — Spring Speaker Event" /></Field>
+          <Field label="Description"><textarea className={inputCls} rows="2" value={purpose} onChange={(e) => setPurpose(e.target.value)} /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Amount Requested ($)"><input type="number" min="0" className={inputCls} value={amountRequested} onChange={(e) => setAmountRequested(e.target.value)} /></Field>
+            <Field label="Submission Date"><input type="date" className={inputCls} value={submissionDate} onChange={(e) => setSubmissionDate(e.target.value)} /></Field>
+          </div>
+          <Field label="Notes"><textarea className={inputCls} rows="2" value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
+          {error && <div className="text-red text-sm">{error}</div>}
+          <div className="flex gap-2">
+            <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner />Saving…</span> : 'Save'}</Button>
+            <Button variant="ghost" onClick={() => setShowForm(false)} disabled={loading}>Cancel</Button>
+          </div>
+        </form>
+      )}
+
+      {!loaded && <Loading label="Loading grants…" />}
+      {loaded && grants.length === 0 && <EmptyState icon="💰" title="No grant applications yet" hint="Track grants submitted to TPUSA national or other funders." />}
+      <div className="space-y-3">
+        {grants.map((g) => (
+          <div key={g.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="min-w-0 flex-1">
+                <div className="font-medium text-cream">{g.title}</div>
+                {g.purpose && <div className="text-sm text-cream/60 mt-0.5">{g.purpose}</div>}
+                <div className="text-xs text-cream/40 mt-1">
+                  Requested: <span className="text-cream/70">${(g.amountRequested||0).toLocaleString()}</span>
+                  {g.submissionDate && <> · Submitted {fmtShortDate(g.submissionDate)}</>}
+                  {g.notes && <> · <span className="italic">{g.notes}</span></>}
+                </div>
+                {g.status === 'Approved' && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="text-xs text-emerald-300">Awarded: $</span>
+                    <input type="number" min="0" className="bg-navy border border-cream/20 rounded px-2 py-0.5 text-xs text-emerald-300 w-24"
+                      defaultValue={g.amountAwarded || ''}
+                      onBlur={(e) => updateAwarded(g, e.target.value)} />
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-col items-end gap-2 shrink-0">
+                <Badge tone={GRANT_STATUS_TONES[g.status] || 'slate'}>{g.status}</Badge>
+                {isManager && (
+                  <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs text-cream/70"
+                    value={g.status} onChange={(e) => updateStatus(g, e.target.value)}>
+                    {GRANT_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                )}
+              </div>
+            </div>
+            {isManager && (
+              <div className="flex gap-3 mt-2">
+                <button onClick={() => openEdit(g)} className="text-xs text-gold/60 hover:text-gold">Edit</button>
+                {me.role === 'admin' && <button onClick={() => deleteGrant(g)} className="text-xs text-red/60 hover:text-red">Delete</button>}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Speaker Event Workflow
+// ---------------------------------------------------------------------------
+const SPEAKER_STATUSES = ['Planning','Confirmed','Completed','Cancelled'];
+const SPEAKER_STATUS_TONES = { Planning: 'slate', Confirmed: 'blue', Completed: 'green', Cancelled: 'red' };
+
+function SpeakerEventsPage({ me }) {
+  const [events, setEvents] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+  const [form, setForm] = useState({ title:'', speakerName:'', speakerOrg:'', topic:'', eventDate:'', location:'', expectedAttendance:'', avNeeds:'', materialsRequested:'', budgetEstimate:'' });
+  const { loading, error, setError, run } = useAction();
+  const isManager = me.role === 'admin' || me.role === 'manager';
+
+  const load = useCallback(async () => {
+    try { const d = await api('/speaker-events'); setEvents(d.events || []); }
+    catch (e) { setError(e.message); }
+    finally { setLoaded(true); }
+  }, [setError]);
+
+  useEffect(() => { load(); }, [load]);
+
+  function setField(k, v) { setForm((f) => ({ ...f, [k]: v })); }
+
+  function openCreate() {
+    setEditId(null);
+    setForm({ title:'', speakerName:'', speakerOrg:'', topic:'', eventDate:'', location:'', expectedAttendance:'', avNeeds:'', materialsRequested:'', budgetEstimate:'' });
+    setShowForm(true);
+  }
+  function openEdit(ev) {
+    setEditId(ev.id);
+    setForm({ title: ev.title, speakerName: ev.speakerName||'', speakerOrg: ev.speakerOrg||'', topic: ev.topic||'', eventDate: ev.eventDate||'', location: ev.location||'', expectedAttendance: String(ev.expectedAttendance||''), avNeeds: ev.avNeeds||'', materialsRequested: ev.materialsRequested||'', budgetEstimate: String(ev.budgetEstimate||'') });
+    setShowForm(true);
+  }
+
+  async function save(e) {
+    e.preventDefault();
+    if (!form.title.trim()) { setError('Title is required'); return; }
+    const body = { ...form, expectedAttendance: Number(form.expectedAttendance)||0, budgetEstimate: Number(form.budgetEstimate)||0, eventDate: form.eventDate||null };
+    try {
+      await run(() => editId ? api(`/speaker-events/${editId}`, { method: 'PATCH', body }) : api('/speaker-events', { method: 'POST', body }));
+      setShowForm(false); load();
+    } catch (_) {}
+  }
+
+  async function toggleChecklist(ev, key, val) {
+    try { await api(`/speaker-events/${ev.id}`, { method: 'PATCH', body: { [key]: val ? 1 : 0 } }); load(); } catch (_) {}
+  }
+
+  async function updateStatus(ev, status) {
+    try { await api(`/speaker-events/${ev.id}`, { method: 'PATCH', body: { status } }); load(); } catch (_) {}
+  }
+
+  async function deleteEvent(ev) {
+    if (!window.confirm(`Delete "${ev.title}"?`)) return;
+    try { await api(`/speaker-events/${ev.id}`, { method: 'DELETE' }); load(); } catch (_) {}
+  }
+
+  const CHECKLIST = [
+    { key: 'roomConfirmed',  label: 'Room / venue confirmed' },
+    { key: 'promotionDone',  label: 'Promotion & social posts done' },
+    { key: 'logisticsSent',  label: 'Logistics email sent to speaker' },
+    { key: 'tpusaNotified',  label: 'TPUSA national notified' },
+  ];
+
+  return (
+    <div className="max-w-3xl">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="font-display text-4xl sm:text-5xl text-cream">Speaker Events</h1>
+        {isManager && !showForm && <Button variant="gold" onClick={openCreate}>+ New Event</Button>}
+      </div>
+
+      {showForm && (
+        <form onSubmit={save} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
+          <div className="font-display text-xl text-gold">{editId ? 'Edit Speaker Event' : 'New Speaker Event'}</div>
+          <Field label="Event Title"><input className={inputCls} value={form.title} autoFocus onChange={(e) => setField('title', e.target.value)} /></Field>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="Speaker Name"><input className={inputCls} value={form.speakerName} onChange={(e) => setField('speakerName', e.target.value)} /></Field>
+            <Field label="Speaker Organization"><input className={inputCls} value={form.speakerOrg} onChange={(e) => setField('speakerOrg', e.target.value)} /></Field>
+          </div>
+          <Field label="Topic / Title of Talk"><input className={inputCls} value={form.topic} onChange={(e) => setField('topic', e.target.value)} /></Field>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="Event Date"><input type="date" className={inputCls} value={form.eventDate} onChange={(e) => setField('eventDate', e.target.value)} /></Field>
+            <Field label="Location / Room"><input className={inputCls} value={form.location} onChange={(e) => setField('location', e.target.value)} /></Field>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="Expected Attendance"><input type="number" min="0" className={inputCls} value={form.expectedAttendance} onChange={(e) => setField('expectedAttendance', e.target.value)} /></Field>
+            <Field label="Budget Estimate ($)"><input type="number" min="0" className={inputCls} value={form.budgetEstimate} onChange={(e) => setField('budgetEstimate', e.target.value)} /></Field>
+          </div>
+          <Field label="AV / Tech Needs"><input className={inputCls} value={form.avNeeds} placeholder="e.g. Projector, lapel mic" onChange={(e) => setField('avNeeds', e.target.value)} /></Field>
+          <Field label="TPUSA Materials Requested"><input className={inputCls} value={form.materialsRequested} placeholder="e.g. 4×2 banner, flyers" onChange={(e) => setField('materialsRequested', e.target.value)} /></Field>
+          {error && <div className="text-red text-sm">{error}</div>}
+          <div className="flex gap-2">
+            <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner />Saving…</span> : 'Save'}</Button>
+            <Button variant="ghost" onClick={() => setShowForm(false)} disabled={loading}>Cancel</Button>
+          </div>
+        </form>
+      )}
+
+      {!loaded && <Loading label="Loading speaker events…" />}
+      {loaded && events.length === 0 && <EmptyState icon="🎤" title="No speaker events yet" hint={isManager ? 'Plan your first speaker event above.' : 'Speaker events will appear here once planned.'} />}
+      <div className="space-y-3">
+        {events.map((ev) => {
+          const done = CHECKLIST.filter((c) => ev[c.key]).length;
+          const isExpanded = expanded === ev.id;
+          return (
+            <div key={ev.id} className="bg-navy2 border border-cream/10 rounded-xl overflow-hidden hover:border-cream/20 transition-colors">
+              <div className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-cream">{ev.title}</div>
+                    <div className="text-sm text-cream/60 mt-0.5">
+                      {ev.speakerName && <span>{ev.speakerName}{ev.speakerOrg ? ` — ${ev.speakerOrg}` : ''}</span>}
+                    </div>
+                    <div className="text-xs text-cream/40 mt-1 flex flex-wrap gap-x-3">
+                      {ev.eventDate && <span>{fmtShortDate(ev.eventDate)}</span>}
+                      {ev.location && <span>📍 {ev.location}</span>}
+                      {ev.expectedAttendance > 0 && <span>~{ev.expectedAttendance} expected</span>}
+                      {ev.budgetEstimate > 0 && <span>${ev.budgetEstimate.toLocaleString()} budget</span>}
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <div className="flex-1 bg-navy rounded-full h-1.5">
+                        <div className="bg-gold h-1.5 rounded-full transition-all" style={{ width: `${(done/CHECKLIST.length)*100}%` }} />
+                      </div>
+                      <span className="text-xs text-cream/40">{done}/{CHECKLIST.length} checklist</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-2 shrink-0">
+                    <Badge tone={SPEAKER_STATUS_TONES[ev.status] || 'slate'}>{ev.status}</Badge>
+                    <button onClick={() => setExpanded(isExpanded ? null : ev.id)}
+                      className="text-xs text-cream/50 hover:text-cream flex items-center gap-1">
+                      {isExpanded ? 'Close' : 'Details'}
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        {isExpanded ? <path d="M18 15l-6-6-6 6"/> : <path d="M6 9l6 6 6-6"/>}
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {isExpanded && (
+                <div className="border-t border-cream/10 p-4 space-y-4 bg-navy/30">
+                  {ev.topic && <div className="text-sm"><span className="text-cream/40">Topic: </span><span className="text-cream/80">{ev.topic}</span></div>}
+                  {ev.avNeeds && <div className="text-sm"><span className="text-cream/40">AV Needs: </span><span className="text-cream/80">{ev.avNeeds}</span></div>}
+                  {ev.materialsRequested && <div className="text-sm"><span className="text-cream/40">Materials Requested: </span><span className="text-cream/80">{ev.materialsRequested}</span></div>}
+
+                  {isManager && (
+                    <>
+                      <div>
+                        <div className="text-xs uppercase tracking-wider text-cream/50 mb-2">Pre-Event Checklist</div>
+                        <div className="space-y-2">
+                          {CHECKLIST.map((item) => (
+                            <label key={item.key} className="flex items-center gap-2.5 cursor-pointer group">
+                              <input type="checkbox" checked={!!ev[item.key]} onChange={(e) => toggleChecklist(ev, item.key, e.target.checked)}
+                                className="w-4 h-4 accent-gold" />
+                              <span className={`text-sm ${ev[item.key] ? 'text-cream/50 line-through' : 'text-cream/80'}`}>{item.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <Field label="Status">
+                          <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-sm text-cream/70"
+                            value={ev.status} onChange={(e) => updateStatus(ev, e.target.value)}>
+                            {SPEAKER_STATUSES.map((s) => <option key={s}>{s}</option>)}
+                          </select>
+                        </Field>
+                      </div>
+                      <div className="flex gap-3">
+                        <button onClick={() => { openEdit(ev); setExpanded(null); }} className="text-xs text-gold/60 hover:text-gold">Edit Details</button>
+                        {me.role === 'admin' && <button onClick={() => deleteEvent(ev)} className="text-xs text-red/60 hover:text-red">Delete</button>}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Social Media Post Tracker
+// ---------------------------------------------------------------------------
+const SOCIAL_PLATFORMS = ['Instagram','Twitter/X','TikTok','Facebook','Other'];
+const PLATFORM_COLORS = { Instagram: 'text-pink-300', 'Twitter/X': 'text-sky-300', TikTok: 'text-red', Facebook: 'text-blue-400', Other: 'text-cream/70' };
+
+function SocialTrackerPage({ me }) {
+  const [posts, setPosts] = useState([]);
+  const [daysSince, setDaysSince] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [platform, setPlatform] = useState('Instagram');
+  const [captionDraft, setCaptionDraft] = useState('');
+  const [imageDescription, setImageDescription] = useState('');
+  const [scheduledDate, setScheduledDate] = useState('');
+  const [assignedToId, setAssignedToId] = useState('');
+  const { loading, error, setError, run } = useAction();
+  const canPost = me.role === 'admin' || me.role === 'manager' || !!me.canManageSocial;
+
+  const load = useCallback(async () => {
+    try {
+      const [d, u] = await Promise.all([api('/social-posts'), api('/users')]);
+      setPosts(d.posts || []);
+      setDaysSince(d.daysSinceLastPost);
+      setUsers(u.users || []);
+    } catch (e) { setError(e.message); }
+    finally { setLoaded(true); }
+  }, [setError]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function save(e) {
+    e.preventDefault();
+    try {
+      await run(() => api('/social-posts', { method: 'POST', body: {
+        platform, captionDraft, imageDescription, scheduledDate: scheduledDate||null,
+        assignedToId: assignedToId ? Number(assignedToId) : null,
+      }}));
+      setPlatform('Instagram'); setCaptionDraft(''); setImageDescription(''); setScheduledDate(''); setAssignedToId('');
+      setShowForm(false); load();
+    } catch (_) {}
+  }
+
+  async function markPosted(post) {
+    try { await api(`/social-posts/${post.id}`, { method: 'PATCH', body: { status: 'Posted' } }); load(); } catch (_) {}
+  }
+
+  async function markCancelled(post) {
+    try { await api(`/social-posts/${post.id}`, { method: 'PATCH', body: { status: 'Cancelled' } }); load(); } catch (_) {}
+  }
+
+  async function deletePost(post) {
+    if (!window.confirm('Delete this post?')) return;
+    try { await api(`/social-posts/${post.id}`, { method: 'DELETE' }); load(); } catch (_) {}
+  }
+
+  const planned = posts.filter((p) => p.status === 'Planned');
+  const posted  = posts.filter((p) => p.status === 'Posted');
+
+  return (
+    <div className="max-w-3xl">
+      <div className="flex items-center justify-between mb-2">
+        <h1 className="font-display text-4xl sm:text-5xl text-cream">Social Media</h1>
+        {canPost && !showForm && <Button variant="gold" onClick={() => setShowForm(true)}>+ Add Post</Button>}
+      </div>
+      <p className="text-cream/50 text-sm mb-4">Plan and track the chapter's social media content.</p>
+
+      {daysSince !== null && daysSince >= 3 && (
+        <div className="mb-4 bg-red/10 border border-red/30 rounded-xl px-4 py-3 flex items-start gap-3">
+          <span className="text-xl shrink-0">⚠️</span>
+          <div>
+            <div className="text-cream font-medium text-sm">No posts logged in {daysSince === 999 ? 'a while' : `${daysSince} day${daysSince === 1 ? '' : 's'}`}</div>
+            <div className="text-cream/60 text-xs mt-0.5">The socials manager should log or schedule a new post soon to keep the chapter visible.</div>
+          </div>
+        </div>
+      )}
+
+      {showForm && (
+        <form onSubmit={save} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
+          <div className="font-display text-xl text-gold">Plan a Post</div>
+          <Field label="Platform">
+            <div className="flex gap-2 flex-wrap">
+              {SOCIAL_PLATFORMS.map((p) => (
+                <button key={p} type="button" onClick={() => setPlatform(p)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${platform === p ? 'bg-gold text-navy' : 'bg-navy border border-cream/20 text-cream/60 hover:border-gold/50'}`}>
+                  {p}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Caption Draft"><textarea className={inputCls} rows="3" value={captionDraft} placeholder="Write the caption here…" onChange={(e) => setCaptionDraft(e.target.value)} /></Field>
+          <Field label="Image / Video Description"><input className={inputCls} value={imageDescription} placeholder="e.g. Photo of the tabling table with sign" onChange={(e) => setImageDescription(e.target.value)} /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Scheduled Date (optional)"><input type="date" className={inputCls} value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} /></Field>
+            <Field label="Assign To">
+              <select className={inputCls} value={assignedToId} onChange={(e) => setAssignedToId(e.target.value)}>
+                <option value="">— anyone —</option>
+                {users.map((u) => <option key={u.id} value={u.id}>{u.displayName}</option>)}
+              </select>
+            </Field>
+          </div>
+          {error && <div className="text-red text-sm">{error}</div>}
+          <div className="flex gap-2">
+            <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner />Saving…</span> : 'Add Post'}</Button>
+            <Button variant="ghost" onClick={() => setShowForm(false)} disabled={loading}>Cancel</Button>
+          </div>
+        </form>
+      )}
+
+      {!loaded && <Loading label="Loading posts…" />}
+
+      {loaded && posts.length === 0 && (
+        <EmptyState icon="📱" title="No posts tracked yet" hint={canPost ? 'Plan your first post with "+ Add Post" above.' : 'Planned posts will show up here.'} />
+      )}
+
+      {planned.length > 0 && (
+        <div className="mb-6">
+          <div className="font-display text-xl text-gold mb-3">Planned ({planned.length})</div>
+          <div className="space-y-3">
+            {planned.map((p) => (
+              <div key={p.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className={`text-xs font-bold uppercase tracking-wider mb-1 ${PLATFORM_COLORS[p.platform] || 'text-cream/60'}`}>{p.platform}</div>
+                    {p.captionDraft && <div className="text-sm text-cream/80 whitespace-pre-wrap">{p.captionDraft}</div>}
+                    {p.imageDescription && <div className="text-xs text-cream/40 mt-1 italic">Visual: {p.imageDescription}</div>}
+                    <div className="text-xs text-cream/40 mt-1 flex gap-3 flex-wrap">
+                      {p.scheduledDate && <span>📅 {fmtShortDate(p.scheduledDate)}</span>}
+                      {p.assignedToName && <span>👤 {p.assignedToName}</span>}
+                    </div>
+                  </div>
+                  {canPost && (
+                    <div className="flex flex-col gap-1.5 shrink-0">
+                      <Button variant="gold" className="text-xs px-3 py-1" onClick={() => markPosted(p)}>✓ Posted</Button>
+                      <button onClick={() => markCancelled(p)} className="text-xs text-cream/40 hover:text-cream/70 text-center">Cancel</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {posted.length > 0 && (
+        <div>
+          <div className="font-display text-xl text-emerald-300 mb-3">Posted ({posted.length})</div>
+          <div className="space-y-2">
+            {posted.slice(0, 10).map((p) => (
+              <div key={p.id} className="bg-navy2/60 border border-cream/5 rounded-xl p-3 flex items-center gap-3 opacity-75">
+                <div className={`text-xs font-bold uppercase tracking-wider shrink-0 ${PLATFORM_COLORS[p.platform] || 'text-cream/60'}`}>{p.platform}</div>
+                <div className="flex-1 min-w-0">
+                  {p.captionDraft && <div className="text-xs text-cream/50 truncate">{p.captionDraft}</div>}
+                </div>
+                {p.postedDate && <div className="text-xs text-cream/30 shrink-0">{fmtShortDate(p.postedDate)}</div>}
+                {me.role === 'admin' && <button onClick={() => deletePost(p)} className="text-xs text-red/40 hover:text-red shrink-0">✕</button>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Task Comments
+// ---------------------------------------------------------------------------
+function TaskComments({ taskId, me }) {
+  const [open, setOpen] = useState(false);
+  const [comments, setComments] = useState([]);
+  const [count, setCount] = useState(null);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const d = await api(`/tasks/${taskId}/comments`);
+      setComments(d.comments || []);
+      setCount(d.comments.length);
+    } catch (_) {}
+  }, [taskId]);
+
+  // Fetch count even when closed so the badge shows
+  useEffect(() => {
+    api(`/tasks/${taskId}/comments`).then((d) => setCount(d.comments.length)).catch(() => {});
+  }, [taskId]);
+
+  useEffect(() => { if (open) load(); }, [open, load]);
+
+  async function submit(e) {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text) return;
+    setBusy(true); setError('');
+    try {
+      await api(`/tasks/${taskId}/comments`, { method: 'POST', body: { content: text } });
+      setInput('');
+      load();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function del(commentId) {
+    await api(`/tasks/${taskId}/comments/${commentId}`, { method: 'DELETE' }).catch(() => {});
+    load();
+  }
+
+  return (
+    <div className="mt-3 border-t border-cream/10 pt-2">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="text-xs text-cream/50 hover:text-gold transition-colors flex items-center gap-1"
+      >
+        💬 {count !== null ? count : '…'} comment{count !== 1 ? 's' : ''} {open ? '▲' : '▼'}
+      </button>
+
+      {open && (
+        <div className="mt-2 space-y-2">
+          {comments.map((c) => (
+            <div key={c.id} className="bg-navy rounded-lg px-3 py-2 flex gap-2 items-start">
+              <div className="flex-1 min-w-0">
+                <span className="text-gold/80 text-xs font-medium">{c.authorName}</span>
+                <span className="text-cream/40 text-xs ml-2">{timeAgo(c.createdAt)}</span>
+                <div className="text-cream/80 text-sm mt-0.5 whitespace-pre-wrap">{c.content}</div>
+              </div>
+              {(c.userId === me.id || me.role === 'admin') && (
+                <button onClick={() => del(c.id)} className="text-red/50 hover:text-red text-xs shrink-0">✕</button>
+              )}
+            </div>
+          ))}
+          {comments.length === 0 && <div className="text-cream/30 text-xs">No comments yet.</div>}
+          <form onSubmit={submit} className="flex gap-2 mt-1">
+            <input
+              className={inputCls + ' text-sm flex-1 py-1.5'}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Add a comment…"
+              disabled={busy}
+            />
+            <button type="submit" disabled={busy || !input.trim()}
+              className="text-xs bg-gold/20 hover:bg-gold/30 text-gold px-3 py-1.5 rounded-md disabled:opacity-40">
+              Send
+            </button>
+          </form>
+          {error && <div className="text-red text-xs">{error}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Search Modal
+// ---------------------------------------------------------------------------
+function SearchModal({ me, onNavigate, onClose }) {
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const inputRef = useRef(null);
+
+  useEffect(() => { if (inputRef.current) inputRef.current.focus(); }, []);
+
+  useEffect(() => {
+    if (q.length < 2) { setResults(null); return; }
+    const t = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const d = await api(`/search?q=${encodeURIComponent(q)}`);
+        setResults(d.results);
+      } catch (_) {}
+      finally { setLoading(false); }
+    }, 280);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  const total = results ? (results.tasks.length + results.members.length + results.funding.length + results.announcements.length) : 0;
+
+  function go(view) { onClose(); onNavigate(view); }
+
+  return (
+    <div className="fixed inset-0 bg-black/75 z-50 flex items-start justify-center pt-16 px-4" onClick={onClose}>
+      <div className="bg-navy2 border border-cream/15 rounded-2xl w-full max-w-2xl shadow-2xl ca-scale-in" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-cream/10">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-cream/40 shrink-0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)}
+            className="flex-1 bg-transparent text-cream placeholder-cream/30 focus:outline-none text-base"
+            placeholder="Search tasks, members, funding…" />
+          {loading && <Spinner className="w-4 h-4 text-cream/40 shrink-0" />}
+          <button onClick={onClose} className="text-cream/40 hover:text-cream text-xl leading-none shrink-0">×</button>
+        </div>
+
+        {q.length >= 2 && results && (
+          <div className="max-h-[60vh] overflow-y-auto divide-y divide-cream/8">
+            {total === 0 && (
+              <div className="px-5 py-8 text-center text-cream/40 text-sm">No results for "{q}"</div>
+            )}
+
+            {results.tasks.length > 0 && (
+              <div className="py-2">
+                <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-cream/40 font-semibold">Tasks</div>
+                {results.tasks.map((t) => (
+                  <button key={t.id} onClick={() => go({ type: t.userId === me.id ? 'mytasks' : 'person', userId: t.userId })}
+                    className="w-full text-left px-4 py-2.5 hover:bg-navy3 transition-colors flex items-start gap-3">
+                    <span className="mt-0.5 text-cream/40 text-xs shrink-0">✓</span>
+                    <div className="min-w-0">
+                      <div className="text-cream text-sm font-medium truncate">{t.name}</div>
+                      <div className="text-cream/45 text-xs truncate">{t.ownerName} · {t.status}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {results.members.length > 0 && (
+              <div className="py-2">
+                <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-cream/40 font-semibold">Members</div>
+                {results.members.map((u) => (
+                  <button key={u.id} onClick={() => go({ type: u.id === me.id ? 'mytasks' : 'person', userId: u.id })}
+                    className="w-full text-left px-4 py-2.5 hover:bg-navy3 transition-colors flex items-center gap-3">
+                    <div className="w-7 h-7 rounded-full bg-navy border border-gold/30 flex items-center justify-center text-gold text-xs font-display shrink-0">
+                      {(u.displayName || '?').charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-cream text-sm font-medium">{u.displayName}</div>
+                      {u.title && <div className="text-cream/45 text-xs">{u.title}</div>}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {results.funding.length > 0 && (
+              <div className="py-2">
+                <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-cream/40 font-semibold">Funding Requests</div>
+                {results.funding.map((f) => (
+                  <button key={f.id} onClick={() => go({ type: 'funding' })}
+                    className="w-full text-left px-4 py-2.5 hover:bg-navy3 transition-colors flex items-start gap-3">
+                    <span className="mt-0.5 text-cream/40 text-xs shrink-0">$</span>
+                    <div className="min-w-0">
+                      <div className="text-cream text-sm font-medium truncate">{f.title}</div>
+                      <div className="text-cream/45 text-xs">{f.submitterName} · ${Number(f.amount).toFixed(2)} · {f.status}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {results.announcements.length > 0 && (
+              <div className="py-2">
+                <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-cream/40 font-semibold">Announcements</div>
+                {results.announcements.map((a) => (
+                  <div key={a.id} className="px-4 py-2.5 flex items-start gap-3">
+                    <span className="mt-0.5 text-gold/60 text-xs shrink-0">📢</span>
+                    <div className="min-w-0">
+                      <div className="text-cream/45 text-xs">{a.authorName}</div>
+                      <div className="text-cream text-sm truncate">{a.text}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {q.length < 2 && (
+          <div className="px-5 py-6 text-center text-cream/30 text-sm">Type at least 2 characters to search…</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Attendance Tracker
+// ---------------------------------------------------------------------------
+const ATTENDANCE_STATUSES = ['present', 'absent', 'excused'];
+const ATTENDANCE_COLORS = { present: 'green', absent: 'red', excused: 'blue' };
+const ATTENDANCE_LABELS = { present: 'Present', absent: 'Absent', excused: 'Excused' };
+
+function AttendancePage({ me }) {
+  const [events, setEvents] = useState(null);
+  const [activeEvent, setActiveEvent] = useState(null);
+  const [eventData, setEventData] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [form, setForm] = useState({ title: '', eventDate: '', location: '', notes: '' });
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [confirmEl, confirm] = useConfirm();
+
+  const setF = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const loadEvents = useCallback(async () => {
+    try { const d = await api('/attendance'); setEvents(d.events || []); } catch (err) { setError(err.message); }
+  }, []);
+
+  const loadEvent = useCallback(async (id) => {
+    try { const d = await api(`/attendance/${id}`); setEventData(d); } catch (err) { setError(err.message); }
+  }, []);
+
+  useEffect(() => { loadEvents(); }, [loadEvents]);
+  useEffect(() => { if (activeEvent) loadEvent(activeEvent); }, [activeEvent, loadEvent]);
+
+  async function createEvent(e) {
+    e.preventDefault();
+    if (!form.title.trim() || !form.eventDate) { setError('Title and date are required.'); return; }
+    setBusy(true); setError('');
+    try {
+      const d = await api('/attendance', { method: 'POST', body: form });
+      await loadEvents();
+      setCreating(false);
+      setForm({ title: '', eventDate: '', location: '', notes: '' });
+      setActiveEvent(d.event.id);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function markAttendance(userId, status) {
+    if (!activeEvent) return;
+    try {
+      await api(`/attendance/${activeEvent}/mark`, { method: 'POST', body: { userId, status } });
+      loadEvent(activeEvent);
+    } catch (err) { setError(err.message); }
+  }
+
+  async function deleteEvent(id) {
+    if (!(await confirm({ title: 'Delete event?', message: 'Attendance records will be permanently deleted.', confirmLabel: 'Delete', danger: true }))) return;
+    await api(`/attendance/${id}`, { method: 'DELETE' }).catch((err) => setError(err.message));
+    await loadEvents();
+    if (activeEvent === id) { setActiveEvent(null); setEventData(null); }
+  }
+
+  const presentCount = eventData ? Object.values(eventData.records).filter((r) => r.status === 'present').length : 0;
+  const markedCount = eventData ? Object.values(eventData.records).length : 0;
+  const totalMembers = eventData ? eventData.members.length : 0;
+
+  return (
+    <div className="max-w-5xl">
+      {confirmEl}
+      <div className="flex items-start justify-between gap-3 mb-6 flex-wrap">
+        <div>
+          <h1 className="font-display text-4xl sm:text-5xl text-cream">Attendance</h1>
+          <p className="text-cream/50 mt-1">Track who shows up to meetings and events.</p>
+        </div>
+        {me.role === 'admin' && (
+          <Button variant="ghost" onClick={() => setCreating(true)}>+ New Event</Button>
+        )}
+      </div>
+
+      {error && <div className="mb-4 text-red text-sm bg-red/10 border border-red/30 rounded-md px-3 py-2">{error}</div>}
+
+      {creating && (
+        <form onSubmit={createEvent} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
+          <div className="font-display text-xl text-gold">New Event</div>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="Title *"><input className={inputCls} value={form.title} onChange={setF('title')} required autoFocus /></Field>
+            <Field label="Date *"><input type="date" className={inputCls} value={form.eventDate} onChange={setF('eventDate')} required /></Field>
+            <Field label="Location"><input className={inputCls} value={form.location} onChange={setF('location')} /></Field>
+            <Field label="Notes"><input className={inputCls} value={form.notes} onChange={setF('notes')} /></Field>
+          </div>
+          <div className="flex gap-2">
+            <Button type="submit" variant="gold" disabled={busy}>{busy ? 'Creating…' : 'Create Event'}</Button>
+            <Button variant="ghost" onClick={() => setCreating(false)}>Cancel</Button>
+          </div>
+        </form>
+      )}
+
+      <div className="grid md:grid-cols-5 gap-4">
+        {/* Event list */}
+        <div className="md:col-span-2 space-y-2">
+          {events === null && <Loading label="Loading events…" />}
+          {events !== null && events.length === 0 && (
+            <EmptyState icon="📅" title="No events yet" hint="Create an event to start tracking attendance." />
+          )}
+          {(events || []).map((ev) => (
+            <button key={ev.id}
+              onClick={() => setActiveEvent(ev.id === activeEvent ? null : ev.id)}
+              className={`w-full text-left bg-navy2 border rounded-xl px-4 py-3 transition-all duration-150 hover:border-gold/40 ${activeEvent === ev.id ? 'border-gold/60 bg-navy3' : 'border-cream/10'}`}>
+              <div className="font-medium text-cream truncate">{ev.title}</div>
+              <div className="text-xs text-cream/50 mt-0.5">{new Date(ev.eventDate + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</div>
+              {ev.location && <div className="text-xs text-cream/40 truncate">{ev.location}</div>}
+              <div className="flex items-center gap-3 mt-1.5">
+                <Badge tone="green">{ev.presentCount} present</Badge>
+                <span className="text-xs text-cream/30">{ev.markedCount} marked</span>
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {/* Attendance sheet */}
+        <div className="md:col-span-3">
+          {!activeEvent && (
+            <div className="border border-dashed border-cream/15 rounded-xl p-8 text-center text-cream/40 text-sm">
+              Select an event to take attendance
+            </div>
+          )}
+          {activeEvent && !eventData && <Loading label="Loading attendance…" />}
+          {activeEvent && eventData && (
+            <div className="bg-navy2 border border-cream/10 rounded-xl overflow-hidden">
+              <div className="px-5 py-4 border-b border-cream/10 flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <div className="font-display text-xl text-cream">{eventData.event.title}</div>
+                  <div className="text-xs text-cream/50 mt-0.5">
+                    {new Date(eventData.event.eventDate + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                    {eventData.event.location && ` · ${eventData.event.location}`}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge tone="green">{presentCount}/{totalMembers}</Badge>
+                  {me.role === 'admin' && (
+                    <button onClick={() => deleteEvent(activeEvent)} className="text-xs text-red/60 hover:text-red">Delete</button>
+                  )}
+                </div>
+              </div>
+              {eventData.event.notes && (
+                <div className="px-5 py-2 text-xs text-cream/50 border-b border-cream/5">{eventData.event.notes}</div>
+              )}
+              <div className="divide-y divide-cream/5">
+                {eventData.members.map((member) => {
+                  const rec = eventData.records[member.id];
+                  const status = rec ? rec.status : null;
+                  return (
+                    <div key={member.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-cream text-sm font-medium">{member.displayName}</div>
+                        {member.title && <div className="text-cream/40 text-xs">{member.title}</div>}
+                      </div>
+                      <div className="flex gap-1.5 shrink-0">
+                        {ATTENDANCE_STATUSES.map((s) => (
+                          <button key={s} onClick={() => markAttendance(member.id, s)}
+                            className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all duration-150 ${
+                              status === s
+                                ? s === 'present' ? 'bg-emerald-500/80 text-white' : s === 'absent' ? 'bg-red/80 text-white' : 'bg-sky-500/80 text-white'
+                                : 'bg-navy border border-cream/15 text-cream/50 hover:border-cream/30'
+                            }`}>
+                            {ATTENDANCE_LABELS[s]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Budget Dashboard
+// ---------------------------------------------------------------------------
+function BudgetDashboardPage({ me }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api('/budget/overview').then(setData).catch((err) => setError(err.message));
+  }, []);
+
+  if (error) return <ErrorState message={error} />;
+  if (!data) return <Loading label="Loading budget overview…" />;
+
+  const { totals, bySubmitter, recent } = data;
+  const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
+  const spent = Number(totals.approvedAmount) + Number(totals.purchasedAmount);
+
+  const StatCard = ({ label, value, tone = 'slate' }) => {
+    const tones = { gold: 'border-gold/40 text-gold', green: 'border-emerald-500/40 text-emerald-300', red: 'border-red/40 text-red', slate: 'border-cream/15 text-cream' };
+    return (
+      <div className={`bg-navy2 border rounded-xl p-4 ${tones[tone]}`}>
+        <div className="text-2xl font-display">{value}</div>
+        <div className="text-cream/50 text-xs mt-1">{label}</div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="max-w-4xl">
+      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Budget Overview</h1>
+      <p className="text-cream/50 mb-6">Financial summary for all funding requests.</p>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+        <StatCard label="Total Requested" value={fmt(totals.totalAmount)} tone="gold" />
+        <StatCard label="Approved / Spent" value={fmt(spent)} tone="green" />
+        <StatCard label="Pending Review" value={fmt(totals.pendingAmount)} tone="slate" />
+        <StatCard label="Denied" value={fmt(totals.deniedAmount)} tone="red" />
+      </div>
+
+      <div className="grid sm:grid-cols-2 gap-3 mb-8">
+        {[
+          { label: 'Pending', count: totals.pendingCount, tone: 'slate' },
+          { label: 'Approved', count: totals.approvedCount, tone: 'green' },
+          { label: 'Purchased', count: totals.purchasedCount, tone: 'blue' },
+          { label: 'Denied', count: totals.deniedCount, tone: 'red' },
+        ].map(({ label, count, tone }) => (
+          <div key={label} className="flex items-center justify-between bg-navy2 border border-cream/10 rounded-xl px-4 py-3">
+            <span className="text-cream/70 text-sm">{label} Requests</span>
+            <Badge tone={tone}>{count}</Badge>
+          </div>
+        ))}
+      </div>
+
+      {bySubmitter.length > 0 && (
+        <div className="bg-navy2 border border-cream/10 rounded-xl p-5 mb-6">
+          <div className="font-display text-xl text-gold mb-4">By Submitter</div>
+          <div className="space-y-2">
+            {bySubmitter.map((row) => (
+              <div key={row.displayName} className="flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-cream text-sm">{row.displayName}{row.title ? <span className="text-cream/40 text-xs ml-1">· {row.title}</span> : ''}</span>
+                    <span className="text-cream/60 text-xs">{fmt(row.approvedAmount)} approved / {fmt(row.totalAmount)} requested</span>
+                  </div>
+                  <div className="h-2 bg-navy rounded-full overflow-hidden">
+                    <div className="h-full bg-gold/60 rounded-full transition-all"
+                      style={{ width: `${totals.totalAmount > 0 ? Math.min(100, (row.totalAmount / totals.totalAmount) * 100) : 0}%` }} />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {recent.length > 0 && (
+        <div className="bg-navy2 border border-cream/10 rounded-xl p-5">
+          <div className="font-display text-xl text-gold mb-4">Recent Requests</div>
+          <div className="space-y-2">
+            {recent.map((r) => (
+              <div key={r.id} className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-cream text-sm truncate">{r.title}</div>
+                  <div className="text-cream/40 text-xs">{r.submitterName} · {timeAgo(r.createdAt)}</div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-gold text-sm">{fmt(r.amount)}</span>
+                  <Badge tone={r.status === 'approved' || r.status === 'purchased' ? 'green' : r.status === 'denied' ? 'red' : 'slate'}>{r.status}</Badge>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Polls & Voting
+// ---------------------------------------------------------------------------
+function PollsPage({ me }) {
+  const [polls, setPolls] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [question, setQuestion] = useState('');
+  const [options, setOptions] = useState(['', '']);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [confirmEl, confirm] = useConfirm();
+  const canCreate = me.role === 'admin';
+
+  const load = useCallback(async () => {
+    try { const d = await api('/polls'); setPolls(d.polls || []); } catch (err) { setError(err.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function createPoll(e) {
+    e.preventDefault();
+    const opts = options.filter((o) => o.trim());
+    if (!question.trim() || opts.length < 2) { setError('Need a question and at least 2 options.'); return; }
+    setBusy(true); setError('');
+    try {
+      await api('/polls', { method: 'POST', body: { question: question.trim(), options: opts } });
+      setCreating(false); setQuestion(''); setOptions(['', '']);
+      load();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function vote(pollId, optionIndex) {
+    setBusy(true); setError('');
+    try {
+      await api(`/polls/${pollId}/vote`, { method: 'POST', body: { optionIndex } });
+      load();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function closePoll(id) {
+    if (!(await confirm({ title: 'Close poll?', message: 'No more votes can be cast once closed.', confirmLabel: 'Close' }))) return;
+    await api(`/polls/${id}/close`, { method: 'POST' }).catch((err) => setError(err.message));
+    load();
+  }
+
+  async function deletePoll(id) {
+    if (!(await confirm({ title: 'Delete poll?', message: 'All votes will be lost.', confirmLabel: 'Delete', danger: true }))) return;
+    await api(`/polls/${id}`, { method: 'DELETE' }).catch((err) => setError(err.message));
+    load();
+  }
+
+  function setOption(i, val) { setOptions((prev) => { const n = [...prev]; n[i] = val; return n; }); }
+
+  const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  return (
+    <div className="max-w-3xl">
+      {confirmEl}
+      <div className="flex items-start justify-between gap-3 mb-6 flex-wrap">
+        <div>
+          <h1 className="font-display text-4xl sm:text-5xl text-cream">Polls</h1>
+          <p className="text-cream/50 mt-1">Vote on questions from the President.</p>
+        </div>
+        {canCreate && <Button variant="ghost" onClick={() => setCreating(true)}>+ New Poll</Button>}
+      </div>
+
+      {error && <div className="mb-4 text-red text-sm">{error}</div>}
+
+      {creating && (
+        <form onSubmit={createPoll} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
+          <div className="font-display text-xl text-gold">Create Poll</div>
+          <Field label="Question">
+            <input className={inputCls} value={question} onChange={(e) => setQuestion(e.target.value)} required autoFocus placeholder="e.g. What theme should our next event be?" />
+          </Field>
+          <div>
+            <div className="text-xs uppercase tracking-wider text-cream/60 mb-2">Options</div>
+            {options.map((opt, i) => (
+              <div key={i} className="flex gap-2 mb-2">
+                <input className={inputCls} value={opt} onChange={(e) => setOption(i, e.target.value)} placeholder={`Option ${i + 1}`} />
+                {options.length > 2 && (
+                  <button type="button" onClick={() => setOptions((prev) => prev.filter((_, j) => j !== i))} className="text-red/60 hover:text-red text-xl leading-none px-2">×</button>
+                )}
+              </div>
+            ))}
+            {options.length < 6 && (
+              <button type="button" onClick={() => setOptions((prev) => [...prev, ''])} className="text-xs text-gold/60 hover:text-gold">+ Add option</button>
+            )}
+          </div>
+          {error && <div className="text-red text-sm">{error}</div>}
+          <div className="flex gap-2">
+            <Button type="submit" variant="gold" disabled={busy}>{busy ? 'Creating…' : 'Publish Poll'}</Button>
+            <Button variant="ghost" onClick={() => { setCreating(false); setQuestion(''); setOptions(['', '']); setError(''); }}>Cancel</Button>
+          </div>
+        </form>
+      )}
+
+      {polls === null && <Loading label="Loading polls…" />}
+      {polls !== null && polls.length === 0 && <EmptyState icon="🗳️" title="No polls yet" hint={canCreate ? 'Create a poll to get the board\'s opinion on something.' : 'No active polls from the President.'} />}
+
+      <div className="space-y-4">
+        {(polls || []).map((poll) => {
+          const totalVotes = poll.voteCount || 0;
+          const hasVoted = poll.myVote !== null;
+          const isClosed = poll.status === 'closed';
+          const showResults = hasVoted || isClosed || canCreate;
+          return (
+            <div key={poll.id} className={`bg-navy2 border rounded-xl p-5 ${isClosed ? 'border-cream/10' : 'border-gold/20 hover:border-gold/40'} transition-all duration-200`}>
+              <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
+                <div className="min-w-0">
+                  <div className="text-cream font-medium">{poll.question}</div>
+                  <div className="text-xs text-cream/40 mt-0.5">{poll.createdByName} · {timeAgo(poll.createdAt)} · {totalVotes} vote{totalVotes !== 1 ? 's' : ''}</div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {isClosed ? <Badge tone="slate">Closed</Badge> : <Badge tone="green">Open</Badge>}
+                  {canCreate && !isClosed && <button onClick={() => closePoll(poll.id)} className="text-xs text-cream/50 hover:text-cream">Close</button>}
+                  {canCreate && <button onClick={() => deletePoll(poll.id)} className="text-xs text-red/60 hover:text-red">Delete</button>}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {poll.options.map((opt, i) => {
+                  const count = showResults ? (totalVotes > 0 ? (/* we need real counts */ 0) : 0) : 0;
+                  const isMyVote = poll.myVote === i;
+                  return (
+                    <button key={i}
+                      disabled={hasVoted || isClosed || busy}
+                      onClick={() => vote(poll.id, i)}
+                      className={`w-full text-left rounded-lg px-4 py-2.5 border transition-all duration-150 ${
+                        isMyVote
+                          ? 'border-gold/60 bg-gold/10 text-cream'
+                          : hasVoted || isClosed
+                            ? 'border-cream/10 text-cream/60 cursor-default'
+                            : 'border-cream/15 text-cream hover:border-gold/40 hover:bg-navy3 active:scale-[0.99]'
+                      }`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm">{opt}</span>
+                        {isMyVote && <span className="text-gold text-xs shrink-0">✓ Your vote</span>}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {!hasVoted && !isClosed && (
+                <div className="mt-2 text-xs text-cream/40">Click an option to cast your vote · anonymous until closed</div>
+              )}
+              {(hasVoted || isClosed) && (
+                <PollResults pollId={poll.id} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function PollResults({ pollId }) {
+  const [results, setResults] = useState(null);
+  useEffect(() => {
+    api(`/polls/${pollId}/results`).then(setResults).catch(() => {});
+  }, [pollId]);
+  if (!results) return null;
+  const { results: opts, total } = results;
+  return (
+    <div className="mt-3 space-y-1.5 pt-3 border-t border-cream/10">
+      <div className="text-xs text-cream/40 mb-2">{total} vote{total !== 1 ? 's' : ''} total</div>
+      {opts.map((o, i) => {
+        const pct = total > 0 ? Math.round((o.count / total) * 100) : 0;
+        return (
+          <div key={i}>
+            <div className="flex justify-between text-xs mb-1">
+              <span className="text-cream/70">{o.option}</span>
+              <span className="text-cream/50">{pct}% ({o.count})</span>
+            </div>
+            <div className="h-1.5 bg-navy rounded-full overflow-hidden">
+              <div className="h-full bg-gold/70 rounded-full transition-all" style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
