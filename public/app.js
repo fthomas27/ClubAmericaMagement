@@ -4549,6 +4549,318 @@ function AIChatPage({ me }) {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Home Summary Card
+// ---------------------------------------------------------------------------
+function HomeSummaryCard({ me, onNavigate }) {
+  const [summary, setSummary] = useState(null);
+
+  useEffect(() => {
+    api('/me/summary').then(setSummary).catch(() => {});
+  }, []);
+
+  if (!summary) return null;
+
+  const { tasksDueSoon, checkinSubmitted, nextMeeting, openPolls } = summary;
+
+  const items = [
+    {
+      label: 'Tasks Due Soon',
+      value: tasksDueSoon > 0 ? tasksDueSoon + ' task' + (tasksDueSoon !== 1 ? 's' : '') : 'All clear',
+      tone: tasksDueSoon > 0 ? 'gold' : 'green',
+      view: { type: 'mytasks' },
+    },
+    ...(checkinSubmitted !== null ? [{
+      label: 'Check-In',
+      value: checkinSubmitted ? '✓ Submitted' : '⚠ Not yet',
+      tone: checkinSubmitted ? 'green' : 'red',
+      view: { type: 'checkin' },
+    }] : []),
+    {
+      label: 'Next Meeting',
+      value: nextMeeting ? nextMeeting.title + ' · ' + fmtShortDate(nextMeeting.meetingDate) : 'None scheduled',
+      tone: nextMeeting ? 'blue' : 'slate',
+      view: { type: 'meetings' },
+    },
+    {
+      label: 'Open Polls',
+      value: openPolls > 0 ? openPolls + ' need' + (openPolls === 1 ? 's' : '') + ' your vote' : 'None open',
+      tone: openPolls > 0 ? 'gold' : 'slate',
+      view: { type: 'polls' },
+    },
+  ];
+
+  const toneCls = {
+    gold: 'border-gold/30 bg-gold/5',
+    green: 'border-emerald-500/30 bg-emerald-500/5',
+    red: 'border-red/30 bg-red/5',
+    blue: 'border-sky-500/30 bg-sky-500/5',
+    slate: 'border-cream/10 bg-cream/5',
+  };
+  const valueCls = {
+    gold: 'text-gold', green: 'text-emerald-300', red: 'text-red', blue: 'text-sky-300', slate: 'text-cream/50',
+  };
+
+  return (
+    <div className="mb-6 grid grid-cols-2 sm:grid-cols-4 gap-2">
+      {items.map((item) => (
+        <button key={item.label} onClick={() => onNavigate(item.view)}
+          className={`border rounded-xl p-3 text-left hover:brightness-110 transition-all active:scale-95 ${toneCls[item.tone]}`}>
+          <div className="text-cream/50 text-[10px] uppercase tracking-wide mb-1">{item.label}</div>
+          <div className={`text-sm font-medium leading-snug ${valueCls[item.tone]}`}>{item.value}</div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shoutouts / Kudos Page
+// ---------------------------------------------------------------------------
+const SHOUTOUT_TAGS = ['', '🎉 Great Work', '💡 Creative', '🤝 Teamwork', '🏆 Above and Beyond'];
+
+function ShoutoutsPage({ me }) {
+  const [shoutouts, setShoutouts] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [toId, setToId] = useState('');
+  const [message, setMessage] = useState('');
+  const [tag, setTag] = useState('');
+  const [showForm, setShowForm] = useState(false);
+  const { loading, error, setError, run } = useAction();
+
+  const load = useCallback(async () => {
+    try {
+      const [d, u] = await Promise.all([api('/shoutouts'), api('/users')]);
+      setShoutouts(d.shoutouts || []);
+      setUsers((u.users || []).filter((u) => u.id !== me.id));
+    } catch (e) { setError(e.message); }
+    finally { setLoaded(true); }
+  }, [me.id, setError]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!toId || !message.trim()) { setError('Select a recipient and write a message'); return; }
+    await run(async () => {
+      await api('/shoutouts', { method: 'POST', body: { toId: Number(toId), message: message.trim(), tag } });
+      setMessage(''); setToId(''); setTag(''); setShowForm(false);
+      load();
+    });
+  }
+
+  async function del(id) {
+    if (!window.confirm('Delete this shoutout?')) return;
+    await api('/shoutouts/' + id, { method: 'DELETE' }).catch(() => {});
+    load();
+  }
+
+  return (
+    <div className="max-w-2xl">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="font-display text-4xl sm:text-5xl text-cream">Shoutouts</h1>
+          <p className="text-cream/50 mt-1">Recognize your teammates' work.</p>
+        </div>
+        {!showForm && <Button variant="gold" onClick={() => setShowForm(true)}>+ Give Kudos</Button>}
+      </div>
+
+      {showForm && (
+        <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
+          <div className="font-display text-xl text-gold">Give a Shoutout</div>
+          <Field label="To">
+            <select className={inputCls} value={toId} onChange={(e) => setToId(e.target.value)} required>
+              <option value="">Select teammate…</option>
+              {users.map((u) => <option key={u.id} value={u.id}>{u.displayName}</option>)}
+            </select>
+          </Field>
+          <Field label="Tag (optional)">
+            <select className={inputCls} value={tag} onChange={(e) => setTag(e.target.value)}>
+              {SHOUTOUT_TAGS.map((t) => <option key={t} value={t}>{t || '— None —'}</option>)}
+            </select>
+          </Field>
+          <Field label="Message">
+            <textarea className={inputCls} rows="3" value={message} maxLength={280}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder="Tell everyone what they did…" />
+            <div className="text-right text-xs text-cream/30 mt-1">{message.length}/280</div>
+          </Field>
+          {error && <div className="text-red text-sm">{error}</div>}
+          <div className="flex gap-2">
+            <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner />Sending…</span> : 'Send Shoutout'}</Button>
+            <Button variant="ghost" onClick={() => { setShowForm(false); setError(''); }}>Cancel</Button>
+          </div>
+        </form>
+      )}
+
+      {!loaded && <Loading label="Loading shoutouts…" />}
+      {loaded && shoutouts.length === 0 && (
+        <EmptyState icon="🎉" title="No shoutouts yet" hint="Be the first to recognize a teammate's work!" />
+      )}
+      <div className="space-y-3">
+        {shoutouts.map((s) => (
+          <div key={s.id} className="bg-navy2 border border-cream/10 rounded-xl p-4">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-cream text-sm">{s.fromName}</span>
+                  <span className="text-cream/40 text-xs">→</span>
+                  <span className="font-semibold text-gold text-sm">{s.toName}</span>
+                  {s.tag && <Badge tone="gold">{s.tag}</Badge>}
+                </div>
+                <div className="text-sm text-cream/75 mt-1.5 leading-relaxed">"{s.message}"</div>
+                <div className="text-xs text-cream/30 mt-1.5">{timeAgo(s.createdAt)}</div>
+              </div>
+              {(s.fromId === me.id || me.role === 'admin') && (
+                <button onClick={() => del(s.id)} className="text-xs text-red/50 hover:text-red shrink-0">✕</button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Resource Hub Page
+// ---------------------------------------------------------------------------
+const RESOURCE_CATEGORIES = ['Forms', 'Templates', 'Policies', 'Social', 'Finance', 'Other'];
+const RESOURCE_CATEGORY_TONES = { Forms: 'blue', Templates: 'gold', Policies: 'red', Social: 'green', Finance: 'green', Other: 'slate' };
+
+function ResourceHubPage({ me }) {
+  const [resources, setResources] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [search, setSearch] = useState('');
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [title, setTitle] = useState('');
+  const [url, setUrl] = useState('');
+  const [category, setCategory] = useState('Other');
+  const [description, setDescription] = useState('');
+  const { loading, error, setError, run } = useAction();
+  const isManager = me.role === 'admin' || me.role === 'manager';
+
+  const load = useCallback(async () => {
+    try { const d = await api('/resources'); setResources(d.resources || []); }
+    catch (e) { setError(e.message); }
+    finally { setLoaded(true); }
+  }, [setError]);
+
+  useEffect(() => { load(); }, [load]);
+
+  function openCreate() { setEditId(null); setTitle(''); setUrl(''); setCategory('Other'); setDescription(''); setShowForm(true); }
+  function openEdit(r) { setEditId(r.id); setTitle(r.title); setUrl(r.url); setCategory(r.category); setDescription(r.description || ''); setShowForm(true); }
+
+  async function save(e) {
+    e.preventDefault();
+    if (!title.trim() || !url.trim()) { setError('Title and URL are required'); return; }
+    await run(async () => {
+      if (editId) {
+        await api('/resources/' + editId, { method: 'PATCH', body: { title: title.trim(), url: url.trim(), category, description } });
+      } else {
+        await api('/resources', { method: 'POST', body: { title: title.trim(), url: url.trim(), category, description } });
+      }
+      setShowForm(false); load();
+    });
+  }
+
+  async function del(id, resourceTitle) {
+    if (!window.confirm('Delete "' + resourceTitle + '"?')) return;
+    await api('/resources/' + id, { method: 'DELETE' }).catch(() => {});
+    load();
+  }
+
+  const safeUrl = (u) => u && (u.startsWith('http://') || u.startsWith('https://')) ? u : 'https://' + u;
+
+  const filtered = resources.filter((r) =>
+    !search || r.title.toLowerCase().includes(search.toLowerCase()) || r.category.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const byCategory = RESOURCE_CATEGORIES.reduce((acc, cat) => {
+    const items = filtered.filter((r) => r.category === cat);
+    if (items.length) acc[cat] = items;
+    return acc;
+  }, {});
+
+  return (
+    <div className="max-w-3xl">
+      <div className="flex items-center justify-between mb-2">
+        <h1 className="font-display text-4xl sm:text-5xl text-cream">Resource Hub</h1>
+        {isManager && !showForm && <Button variant="gold" onClick={openCreate}>+ Add Resource</Button>}
+      </div>
+      <p className="text-cream/50 text-sm mb-5">Shared links, templates, and documents for the board.</p>
+
+      <div className="relative mb-5">
+        <input className={inputCls + ' pl-9'} placeholder="Search resources…" value={search}
+          onChange={(e) => setSearch(e.target.value)} />
+        <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-cream/30" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>
+      </div>
+
+      {showForm && (
+        <form onSubmit={save} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
+          <div className="font-display text-xl text-gold">{editId ? 'Edit Resource' : 'Add Resource'}</div>
+          <Field label="Title"><input className={inputCls} value={title} autoFocus onChange={(e) => setTitle(e.target.value)} placeholder="Budget Template 2025" /></Field>
+          <Field label="URL"><input className={inputCls} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://docs.google.com/…" /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Category">
+              <select className={inputCls} value={category} onChange={(e) => setCategory(e.target.value)}>
+                {RESOURCE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </Field>
+            <Field label="Description (optional)">
+              <input className={inputCls} value={description} onChange={(e) => setDescription(e.target.value)} />
+            </Field>
+          </div>
+          {error && <div className="text-red text-sm">{error}</div>}
+          <div className="flex gap-2">
+            <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner />Saving…</span> : 'Save'}</Button>
+            <Button variant="ghost" onClick={() => setShowForm(false)}>Cancel</Button>
+          </div>
+        </form>
+      )}
+
+      {!loaded && <Loading label="Loading resources…" />}
+      {loaded && filtered.length === 0 && (
+        <EmptyState icon="📚" title="No resources yet" hint={isManager ? 'Add links your team uses daily — templates, forms, policies.' : 'Resources shared by your managers will appear here.'} />
+      )}
+
+      <div className="space-y-5">
+        {Object.entries(byCategory).map(([cat, items]) => (
+          <div key={cat}>
+            <div className="flex items-center gap-2 mb-2">
+              <Badge tone={RESOURCE_CATEGORY_TONES[cat] || 'slate'}>{cat}</Badge>
+            </div>
+            <div className="space-y-2">
+              {items.map((r) => (
+                <div key={r.id} className="bg-navy2 border border-cream/10 rounded-xl px-4 py-3 flex items-center gap-3 hover:border-cream/20 transition-colors">
+                  <div className="flex-1 min-w-0">
+                    <a href={safeUrl(r.url)} target="_blank" rel="noopener noreferrer"
+                      className="font-medium text-cream hover:text-gold transition-colors text-sm">{r.title}</a>
+                    {r.description && <div className="text-xs text-cream/45 mt-0.5">{r.description}</div>}
+                    <div className="text-xs text-cream/30 mt-0.5">Added by {r.createdByName} · {timeAgo(r.createdAt)}</div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <a href={safeUrl(r.url)} target="_blank" rel="noopener noreferrer"
+                      className="text-xs text-gold/60 hover:text-gold border border-gold/30 hover:border-gold/60 rounded px-2 py-1 transition-colors">
+                      Open ↗
+                    </a>
+                    {isManager && <button onClick={() => openEdit(r)} className="text-xs text-cream/40 hover:text-cream">Edit</button>}
+                    {(me.role === 'admin' || r.createdById === me.id) && (
+                      <button onClick={() => del(r.id, r.title)} className="text-xs text-red/50 hover:text-red">✕</button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function AppIcon({ name }) {
   const p = { width: 24, height: 24, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', className: 'text-cream/60 group-hover:text-gold transition-colors duration-150' };
   switch (name) {
@@ -4580,6 +4892,8 @@ function AppIcon({ name }) {
     case 'grades':    return <svg {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M12 15v4M15 18H9"/></svg>;
     case 'reimbursements': return <svg {...p}><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><circle cx="12" cy="15" r="2"/><path d="M6 15h1M17 15h1"/></svg>;
     case 'directory': return <svg {...p}><path d="M4 4h16v16H4z" rx="2"/><path d="M8 10a3 3 0 1 0 6 0 3 3 0 0 0-6 0"/><path d="M6 20c.3-2.2 2.5-4 6-4s5.7 1.8 6 4"/><path d="M16 4v4M8 4v4"/></svg>;
+    case 'shoutouts': return <svg {...p}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01M12 10h.01M16 10h.01"/></svg>;
+    case 'resources': return <svg {...p}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M12 7v6M9 10h6"/></svg>;
     default:          return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
   }
 }
@@ -4629,6 +4943,8 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
     ...(isManager         ? [{ type: 'budget',      label: 'Budget Overview',  icon: 'budget'     }] : []),
     ...(isManager || !!me.managedGrade ? [{ type: 'grades', label: 'Grade Pipeline', icon: 'grades' }] : []),
     { type: 'reimbursements', label: 'Reimbursements', icon: 'reimbursements' },
+    { type: 'shoutouts',  label: 'Shoutouts',           icon: 'shoutouts'  },
+    { type: 'resources',  label: 'Resources',           icon: 'resources'  },
     { type: 'directory',  label: 'Directory',           icon: 'directory'  },
     { type: 'org',        label: 'Org Chart',           icon: 'org'        },
     ...(me.role === 'admin' ? [{ type: 'admin',     label: 'Admin Panel',      icon: 'admin'      }] : []),
@@ -4659,6 +4975,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
         </div>
       </header>
       <div className="flex-1 px-4 py-8">
+        <HomeSummaryCard me={me} onNavigate={onNavigate} />
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {tiles.map((t, i) => (
             <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge}
@@ -4879,6 +5196,7 @@ function App() {
     attendance: 'Attendance', polls: 'Polls & Voting', budget: 'Budget Overview',
     meetings: 'Meetings', speaker: 'Speaker Events', grants: 'Grant Tracker', social: 'Social Media',
     grades: 'Grade Pipeline', reimbursements: 'Reimbursements', directory: 'Board Directory',
+    shoutouts: 'Shoutouts', resources: 'Resource Hub',
     org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity',
     ai: 'AI Assistant', password: 'Change Password', profile: 'Edit Profile',
   };
@@ -4913,6 +5231,8 @@ function App() {
   else if (view.type === 'grades') content = (me.role === 'admin' || me.role === 'manager' || !!me.managedGrade) ? <GradePipelinePage me={me} /> : null;
   else if (view.type === 'reimbursements') content = <ReimbursementsPage me={me} />;
   else if (view.type === 'directory') content = <DirectoryPage me={me} />;
+  else if (view.type === 'shoutouts') content = <ShoutoutsPage me={me} />;
+  else if (view.type === 'resources') content = <ResourceHubPage me={me} />;
 
   return (
     <>
@@ -4948,6 +5268,109 @@ function App() {
 }
 
 // ---------------------------------------------------------------------------
+// Meeting Action Items sub-panel
+// ---------------------------------------------------------------------------
+function MeetingActionItems({ meetingId, me, allUsers }) {
+  const [items, setItems] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [newText, setNewText] = useState('');
+  const [newAssignee, setNewAssignee] = useState('');
+  const [newDue, setNewDue] = useState('');
+  const isManager = me.role === 'admin' || me.role === 'manager';
+
+  const load = useCallback(async () => {
+    try { const d = await api('/meetings/' + meetingId + '/action-items'); setItems(d.items || []); }
+    catch (_) {}
+    finally { setLoaded(true); }
+  }, [meetingId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function addItem(e) {
+    e.preventDefault();
+    if (!newText.trim()) return;
+    await api('/meetings/' + meetingId + '/action-items', {
+      method: 'POST',
+      body: { text: newText.trim(), assigneeId: newAssignee ? Number(newAssignee) : null, dueDate: newDue },
+    }).catch(() => {});
+    setNewText(''); setNewAssignee(''); setNewDue('');
+    load();
+  }
+
+  async function toggleDone(item) {
+    await api('/meetings/' + meetingId + '/action-items/' + item.id, {
+      method: 'PATCH', body: { done: !item.done },
+    }).catch(() => {});
+    load();
+  }
+
+  async function promote(item) {
+    if (!window.confirm('Promote "' + item.text + '" to a task?')) return;
+    await api('/meetings/' + meetingId + '/action-items/' + item.id + '/promote', { method: 'POST' }).catch(() => {});
+    load();
+  }
+
+  async function del(item) {
+    await api('/meetings/' + meetingId + '/action-items/' + item.id, { method: 'DELETE' }).catch(() => {});
+    load();
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const open = items.filter((i) => !i.done);
+  const done = items.filter((i) => i.done);
+
+  return (
+    <div className="mt-3 pt-3 border-t border-cream/10">
+      <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide mb-2">Action Items</div>
+      {!loaded && <div className="text-xs text-cream/30">Loading…</div>}
+      {loaded && items.length === 0 && <div className="text-xs text-cream/30 italic">No action items yet.</div>}
+      <div className="space-y-1.5">
+        {open.map((item) => {
+          const overdue = item.dueDate && item.dueDate < today;
+          const canEdit = isManager || item.assigneeId === me.id || item.createdById === me.id;
+          return (
+            <div key={item.id} className={`flex items-start gap-2 rounded-lg px-2 py-1.5 ${overdue ? 'bg-red/5 border border-red/15' : 'bg-cream/5'}`}>
+              <input type="checkbox" className="mt-0.5 accent-gold shrink-0"
+                checked={false} onChange={() => canEdit && toggleDone(item)} disabled={!canEdit} />
+              <div className="flex-1 min-w-0">
+                <div className={`text-sm ${overdue ? 'text-red/80' : 'text-cream/85'}`}>{item.text}</div>
+                <div className="flex items-center gap-2 text-xs text-cream/40 flex-wrap mt-0.5">
+                  {item.assigneeName && <span>→ {item.assigneeName}</span>}
+                  {item.dueDate && <span className={overdue ? 'text-red/60' : ''}>{overdue ? 'Overdue: ' : 'Due: '}{fmtShortDate(item.dueDate)}</span>}
+                  {item.taskId && <Badge tone="green">Task created</Badge>}
+                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                {isManager && !item.taskId && item.assigneeId && (
+                  <button onClick={() => promote(item)} className="text-[10px] text-gold/60 hover:text-gold border border-gold/20 rounded px-1.5 py-0.5">→ Task</button>
+                )}
+                {canEdit && (
+                  <button onClick={() => del(item)} className="text-[10px] text-red/40 hover:text-red">✕</button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        {done.length > 0 && (
+          <div className="text-xs text-cream/25 mt-1">{done.length} completed item{done.length !== 1 ? 's' : ''}</div>
+        )}
+      </div>
+      <form onSubmit={addItem} className="mt-2 flex gap-2 flex-wrap items-end">
+        <div className="flex-1 min-w-[140px]">
+          <input className={inputCls + ' text-xs py-1.5'} value={newText} onChange={(e) => setNewText(e.target.value)} placeholder="New action item…" />
+        </div>
+        <select className={inputCls + ' text-xs py-1.5 w-32'} value={newAssignee} onChange={(e) => setNewAssignee(e.target.value)}>
+          <option value="">Assign to…</option>
+          {allUsers.map((u) => <option key={u.id} value={u.id}>{u.displayName}</option>)}
+        </select>
+        <input type="date" className={inputCls + ' text-xs py-1.5 w-32'} value={newDue} onChange={(e) => setNewDue(e.target.value)} />
+        <button type="submit" className="text-xs bg-gold/20 hover:bg-gold/30 text-gold border border-gold/30 rounded px-3 py-1.5 transition-colors">Add</button>
+      </form>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Meetings Page
 // ---------------------------------------------------------------------------
 function MeetingsPage({ me }) {
@@ -4960,12 +5383,17 @@ function MeetingsPage({ me }) {
   const [agendaUrl, setAgendaUrl] = useState('');
   const [minutesUrl, setMinutesUrl] = useState('');
   const [notes, setNotes] = useState('');
+  const [expandedId, setExpandedId] = useState(null);
+  const [allUsers, setAllUsers] = useState([]);
   const { loading, error, setError, run } = useAction();
   const isManager = me.role === 'admin' || me.role === 'manager';
 
   const load = useCallback(async () => {
-    try { const d = await api('/meetings'); setMeetings(d.meetings || []); }
-    catch (e) { setError(e.message); }
+    try {
+      const [d, u] = await Promise.all([api('/meetings'), api('/users').catch(() => ({ users: [] }))]);
+      setMeetings(d.meetings || []);
+      setAllUsers(u.users || []);
+    } catch (e) { setError(e.message); }
     finally { setLoaded(true); }
   }, [setError]);
 
@@ -5055,6 +5483,17 @@ function MeetingsPage({ me }) {
                 </div>
               )}
             </div>
+            <button
+              onClick={() => setExpandedId(expandedId === m.id ? null : m.id)}
+              className="mt-2 text-xs text-cream/40 hover:text-gold transition-colors flex items-center gap-1">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                {expandedId === m.id ? <path d="M18 15l-6-6-6 6"/> : <path d="M6 9l6 6 6-6"/>}
+              </svg>
+              Action Items
+            </button>
+            {expandedId === m.id && (
+              <MeetingActionItems meetingId={m.id} me={me} allUsers={allUsers} />
+            )}
           </div>
         ))}
       </div>
@@ -6254,6 +6693,7 @@ function RollCallModal({ eventId, onClose, onDone }) {
 }
 
 function AttendancePage({ me }) {
+  const [activeTab, setActiveTab] = useState('attendance');
   const [events, setEvents] = useState(null);
   const [activeEvent, setActiveEvent] = useState(null);
   const [eventData, setEventData] = useState(null);
@@ -6263,6 +6703,9 @@ function AttendancePage({ me }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirmEl, confirm] = useConfirm();
+  const [upcomingEvents, setUpcomingEvents] = useState(null);
+  const [rsvpDetails, setRsvpDetails] = useState({});
+  const isManager = me.role === 'admin' || me.role === 'manager';
 
   const setF = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
@@ -6274,7 +6717,26 @@ function AttendancePage({ me }) {
     try { const d = await api(`/attendance/${id}`); setEventData(d); } catch (err) { setError(err.message); }
   }, []);
 
+  const loadUpcoming = useCallback(async () => {
+    try { const d = await api('/attendance/upcoming'); setUpcomingEvents(d.events || []); }
+    catch (err) { setError(err.message); }
+  }, []);
+
+  async function rsvp(eventId, response) {
+    await api('/attendance/' + eventId + '/rsvp', { method: 'POST', body: { response } }).catch(() => {});
+    loadUpcoming();
+  }
+
+  async function loadRsvpDetails(eventId) {
+    if (rsvpDetails[eventId]) { setRsvpDetails((p) => ({ ...p, [eventId]: null })); return; }
+    try {
+      const d = await api('/attendance/' + eventId + '/rsvps');
+      setRsvpDetails((p) => ({ ...p, [eventId]: d.rsvps || [] }));
+    } catch (_) {}
+  }
+
   useEffect(() => { loadEvents(); }, [loadEvents]);
+  useEffect(() => { if (activeTab === 'upcoming') loadUpcoming(); }, [activeTab, loadUpcoming]);
   useEffect(() => { if (activeEvent) loadEvent(activeEvent); }, [activeEvent, loadEvent]);
 
   async function createEvent(e) {
@@ -6320,19 +6782,93 @@ function AttendancePage({ me }) {
           onDone={() => { setRollCallEvent(null); loadEvents(); if (activeEvent === rollCallEvent) loadEvent(rollCallEvent); }}
         />
       )}
-      <div className="flex items-start justify-between gap-3 mb-6 flex-wrap">
+      <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
         <div>
           <h1 className="font-display text-4xl sm:text-5xl text-cream">Attendance</h1>
           <p className="text-cream/50 mt-1">Track who shows up to meetings and events.</p>
         </div>
-        {me.role === 'admin' && (
+        {me.role === 'admin' && activeTab === 'attendance' && (
           <Button variant="ghost" onClick={() => setCreating(true)}>+ New Event</Button>
         )}
       </div>
 
+      <div className="flex gap-1 mb-5 bg-navy2 rounded-lg p-1 w-fit">
+        {['upcoming', 'attendance'].map((tab) => (
+          <button key={tab} onClick={() => setActiveTab(tab)}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === tab ? 'bg-gold text-navy' : 'text-cream/60 hover:text-cream'}`}>
+            {tab === 'upcoming' ? 'Upcoming RSVPs' : 'Attendance Records'}
+          </button>
+        ))}
+      </div>
+
       {error && <div className="mb-4 text-red text-sm bg-red/10 border border-red/30 rounded-md px-3 py-2">{error}</div>}
 
-      {creating && (
+      {activeTab === 'upcoming' && (
+        <div className="max-w-2xl">
+          {upcomingEvents === null && <Loading label="Loading upcoming events…" />}
+          {upcomingEvents !== null && upcomingEvents.length === 0 && (
+            <EmptyState icon="📅" title="No upcoming events" hint="Upcoming events will appear here once scheduled." />
+          )}
+          <div className="space-y-3">
+            {(upcomingEvents || []).map((ev) => {
+              const dateStr = new Date(ev.eventDate + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+              return (
+                <div key={ev.id} className="bg-navy2 border border-cream/10 rounded-xl p-4">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div>
+                      <div className="font-medium text-cream">{ev.title}</div>
+                      <div className="text-xs text-cream/50 mt-0.5">{dateStr}{ev.location ? ' · ' + ev.location : ''}</div>
+                      <div className="flex gap-3 mt-2 text-xs text-cream/40">
+                        <span className="text-emerald-400">{ev.rsvpCounts.yes} going</span>
+                        <span className="text-gold">{ev.rsvpCounts.maybe} maybe</span>
+                        <span className="text-red/70">{ev.rsvpCounts.no} can't make it</span>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      {[['yes','✓ Going','emerald'], ['maybe','? Maybe','gold'], ['no','✗ Can\'t','red']].map(([val, label, color]) => (
+                        <button key={val} onClick={() => rsvp(ev.id, ev.myRsvp === val ? null : val)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                            ev.myRsvp === val
+                              ? color === 'emerald' ? 'bg-emerald-500/30 border-emerald-500/60 text-emerald-300'
+                                : color === 'gold' ? 'bg-gold/30 border-gold/60 text-gold'
+                                : 'bg-red/30 border-red/60 text-red'
+                              : 'border-cream/15 text-cream/50 hover:border-cream/30 bg-navy'
+                          }`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {isManager && (
+                    <button onClick={() => loadRsvpDetails(ev.id)}
+                      className="mt-2 text-xs text-cream/35 hover:text-gold transition-colors flex items-center gap-1">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        {rsvpDetails[ev.id] ? <path d="M18 15l-6-6-6 6"/> : <path d="M6 9l6 6 6-6"/>}
+                      </svg>
+                      {rsvpDetails[ev.id] ? 'Hide' : 'View'} RSVP list
+                    </button>
+                  )}
+                  {isManager && rsvpDetails[ev.id] && (
+                    <div className="mt-2 pt-2 border-t border-cream/10 space-y-0.5">
+                      {rsvpDetails[ev.id].length === 0 && <div className="text-xs text-cream/30 italic">No RSVPs yet.</div>}
+                      {rsvpDetails[ev.id].map((r) => (
+                        <div key={r.userId} className="flex items-center gap-2 text-xs">
+                          <span className={r.response === 'yes' ? 'text-emerald-400' : r.response === 'maybe' ? 'text-gold' : 'text-red/70'}>
+                            {r.response === 'yes' ? '✓' : r.response === 'maybe' ? '?' : '✗'}
+                          </span>
+                          <span className="text-cream/70">{r.displayName}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'attendance' && creating && (
         <form onSubmit={createEvent} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
           <div className="font-display text-xl text-gold">New Event</div>
           <div className="grid sm:grid-cols-2 gap-3">
@@ -6348,7 +6884,7 @@ function AttendancePage({ me }) {
         </form>
       )}
 
-      <div className="grid md:grid-cols-5 gap-4">
+      {activeTab === 'attendance' && <div className="grid md:grid-cols-5 gap-4">
         {/* Event list */}
         <div className="md:col-span-2 space-y-2">
           {events === null && <Loading label="Loading events…" />}
@@ -6437,7 +6973,7 @@ function AttendancePage({ me }) {
             </div>
           )}
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

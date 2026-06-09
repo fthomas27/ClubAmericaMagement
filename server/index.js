@@ -2167,6 +2167,306 @@ app.get('/api/directory', (req, res) => {
   res.json({ users });
 });
 
+// ---- Home summary card ------------------------------------------------------
+app.get('/api/me/summary', (req, res) => {
+  const userId = req.user.id;
+  const today = new Date().toISOString().slice(0, 10);
+  const in7 = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+
+  const tasksDueSoon = db.prepare(
+    "SELECT COUNT(*) AS n FROM tasks WHERE userId = ? AND status != 'Complete' AND approvalStatus = 'approved' AND dueDate IS NOT NULL AND dueDate <= ?"
+  ).get(userId, in7).n;
+
+  const settings = db.prepare('SELECT weeklyCheckinEnabled FROM site_settings WHERE id = 1').get();
+  let checkinSubmitted = null;
+  if (settings && settings.weeklyCheckinEnabled) {
+    const week = currentCheckinWeek();
+    const row = db.prepare('SELECT id FROM weekly_checkins WHERE userId = ? AND weekOf = ?').get(userId, week);
+    checkinSubmitted = !!row;
+  }
+
+  const nextMeeting = db.prepare(
+    "SELECT title, meetingDate FROM meetings WHERE meetingDate >= ? ORDER BY meetingDate ASC LIMIT 1"
+  ).get(today);
+
+  // Count polls the user hasn't voted on yet (open polls only)
+  const openPolls = db.prepare(
+    "SELECT COUNT(*) AS n FROM polls WHERE status = 'open' AND id NOT IN (SELECT pollId FROM poll_votes WHERE userId = ?)"
+  ).get(userId).n;
+
+  res.json({ tasksDueSoon, checkinSubmitted, nextMeeting: nextMeeting || null, openPolls });
+});
+
+// ---- Shoutouts / Kudos ------------------------------------------------------
+const SHOUTOUT_TAGS = ['', '🎉 Great Work', '💡 Creative', '🤝 Teamwork', '🏆 Above and Beyond'];
+
+app.get('/api/shoutouts', (req, res) => {
+  const rows = db.prepare(`
+    SELECT s.id, s.message, s.tag, s.createdAt,
+           f.displayName AS fromName, f.id AS fromId,
+           t.displayName AS toName,   t.id AS toId
+    FROM shoutouts s
+    JOIN users f ON f.id = s.fromId
+    JOIN users t ON t.id = s.toId
+    ORDER BY s.createdAt DESC
+    LIMIT 100
+  `).all();
+  res.json({ shoutouts: rows });
+});
+
+app.post('/api/shoutouts', (req, res) => {
+  const { toId, message, tag = '' } = req.body || {};
+  if (!toId || !message || !String(message).trim()) {
+    return res.status(400).json({ error: 'toId and message are required' });
+  }
+  if (!SHOUTOUT_TAGS.includes(tag)) {
+    return res.status(400).json({ error: 'Invalid tag' });
+  }
+  const recipient = db.prepare('SELECT id, displayName FROM users WHERE id = ?').get(Number(toId));
+  if (!recipient) return res.status(404).json({ error: 'Recipient not found' });
+
+  const result = db.prepare(
+    'INSERT INTO shoutouts (fromId, toId, message, tag) VALUES (?, ?, ?, ?)'
+  ).run(req.user.id, Number(toId), String(message).slice(0, 280), tag);
+
+  const tagPart = tag ? ' (' + tag + ')' : '';
+  pushNotification(
+    Number(toId),
+    req.user.displayName + ' gave you a shoutout' + tagPart + ': "' + String(message).slice(0, 100) + '"',
+    '',
+    'info'
+  );
+  res.json({ id: result.lastInsertRowid });
+});
+
+app.delete('/api/shoutouts/:id', (req, res) => {
+  const row = db.prepare('SELECT id, fromId FROM shoutouts WHERE id = ?').get(Number(req.params.id));
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  if (req.user.role !== 'admin' && row.fromId !== req.user.id) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  db.prepare('DELETE FROM shoutouts WHERE id = ?').run(row.id);
+  res.json({ ok: true });
+});
+
+// ---- Event RSVPs ------------------------------------------------------------
+app.get('/api/attendance/upcoming', (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const events = db.prepare(
+    "SELECT id, title, eventDate, location FROM attendance_events WHERE eventDate >= ? ORDER BY eventDate ASC LIMIT 20"
+  ).all(today);
+
+  const userId = req.user.id;
+  const result = events.map(ev => {
+    const counts = db.prepare(
+      "SELECT response, COUNT(*) AS n FROM event_rsvps WHERE eventId = ? GROUP BY response"
+    ).all(ev.id);
+    const rsvpCounts = { yes: 0, maybe: 0, no: 0 };
+    for (const c of counts) rsvpCounts[c.response] = c.n;
+    const myRsvp = db.prepare('SELECT response FROM event_rsvps WHERE eventId = ? AND userId = ?').get(ev.id, userId);
+    return { ...ev, rsvpCounts, myRsvp: myRsvp ? myRsvp.response : null };
+  });
+  res.json({ events: result });
+});
+
+app.post('/api/attendance/:id/rsvp', (req, res) => {
+  const eventId = Number(req.params.id);
+  const ev = db.prepare('SELECT id FROM attendance_events WHERE id = ?').get(eventId);
+  if (!ev) return res.status(404).json({ error: 'Event not found' });
+
+  const { response } = req.body || {};
+  if (response === null || response === undefined) {
+    db.prepare('DELETE FROM event_rsvps WHERE eventId = ? AND userId = ?').run(eventId, req.user.id);
+    return res.json({ ok: true, removed: true });
+  }
+  if (!['yes', 'maybe', 'no'].includes(response)) {
+    return res.status(400).json({ error: 'response must be yes, maybe, or no' });
+  }
+  db.prepare(
+    'INSERT INTO event_rsvps (eventId, userId, response) VALUES (?, ?, ?) ON CONFLICT(eventId, userId) DO UPDATE SET response = excluded.response'
+  ).run(eventId, req.user.id, response);
+  res.json({ ok: true });
+});
+
+app.get('/api/attendance/:id/rsvps', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const eventId = Number(req.params.id);
+  const rows = db.prepare(`
+    SELECT r.response, u.id AS userId, u.displayName
+    FROM event_rsvps r
+    JOIN users u ON u.id = r.userId
+    WHERE r.eventId = ?
+    ORDER BY r.response, u.displayName
+  `).all(eventId);
+  res.json({ rsvps: rows });
+});
+
+// ---- Resource Hub -----------------------------------------------------------
+const RESOURCE_CATEGORIES = ['Forms', 'Templates', 'Policies', 'Social', 'Finance', 'Other'];
+
+app.get('/api/resources', (req, res) => {
+  const rows = db.prepare(`
+    SELECT r.id, r.title, r.url, r.category, r.description, r.createdAt,
+           u.displayName AS createdByName
+    FROM resources r
+    LEFT JOIN users u ON u.id = r.createdById
+    ORDER BY r.category, r.title
+  `).all();
+  res.json({ resources: rows });
+});
+
+app.post('/api/resources', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const { title, url, category = 'Other', description = '' } = req.body || {};
+  if (!title || !url) return res.status(400).json({ error: 'title and url are required' });
+  if (!RESOURCE_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: 'Invalid category' });
+  }
+  const result = db.prepare(
+    'INSERT INTO resources (title, url, category, description, createdById) VALUES (?, ?, ?, ?, ?)'
+  ).run(String(title).slice(0, 200), String(url).slice(0, 500), category, String(description).slice(0, 500), req.user.id);
+  res.json({ id: result.lastInsertRowid });
+});
+
+app.patch('/api/resources/:id', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const row = db.prepare('SELECT id FROM resources WHERE id = ?').get(Number(req.params.id));
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  const { title, url, category, description } = req.body || {};
+  if (category && !RESOURCE_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: 'Invalid category' });
+  }
+  const fields = [];
+  const vals = [];
+  if (title !== undefined) { fields.push('title = ?'); vals.push(String(title).slice(0, 200)); }
+  if (url !== undefined) { fields.push('url = ?'); vals.push(String(url).slice(0, 500)); }
+  if (category !== undefined) { fields.push('category = ?'); vals.push(category); }
+  if (description !== undefined) { fields.push('description = ?'); vals.push(String(description).slice(0, 500)); }
+  if (!fields.length) return res.json({ ok: true });
+  vals.push(row.id);
+  db.prepare('UPDATE resources SET ' + fields.join(', ') + ' WHERE id = ?').run(...vals);
+  res.json({ ok: true });
+});
+
+app.delete('/api/resources/:id', (req, res) => {
+  const row = db.prepare('SELECT id, createdById FROM resources WHERE id = ?').get(Number(req.params.id));
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  if (req.user.role !== 'admin' && row.createdById !== req.user.id) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  db.prepare('DELETE FROM resources WHERE id = ?').run(row.id);
+  res.json({ ok: true });
+});
+
+// ---- Meeting Action Items ----------------------------------------------------
+app.get('/api/meetings/:id/action-items', (req, res) => {
+  const meetingId = Number(req.params.id);
+  const rows = db.prepare(`
+    SELECT a.id, a.text, a.dueDate, a.done, a.taskId, a.createdAt,
+           a.assigneeId, u.displayName AS assigneeName,
+           c.displayName AS createdByName, a.createdById
+    FROM meeting_action_items a
+    LEFT JOIN users u ON u.id = a.assigneeId
+    LEFT JOIN users c ON c.id = a.createdById
+    WHERE a.meetingId = ?
+    ORDER BY a.createdAt ASC
+  `).all(meetingId);
+  res.json({ items: rows });
+});
+
+app.post('/api/meetings/:id/action-items', (req, res) => {
+  const meetingId = Number(req.params.id);
+  const meeting = db.prepare('SELECT id FROM meetings WHERE id = ?').get(meetingId);
+  if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
+  const { text, assigneeId, dueDate = '' } = req.body || {};
+  if (!text || !String(text).trim()) return res.status(400).json({ error: 'text is required' });
+  const result = db.prepare(
+    'INSERT INTO meeting_action_items (meetingId, text, assigneeId, dueDate, createdById) VALUES (?, ?, ?, ?, ?)'
+  ).run(meetingId, String(text).slice(0, 500), assigneeId ? Number(assigneeId) : null, String(dueDate).slice(0, 10), req.user.id);
+  if (assigneeId && Number(assigneeId) !== req.user.id) {
+    const m = db.prepare('SELECT title FROM meetings WHERE id = ?').get(meetingId);
+    pushNotification(Number(assigneeId), 'You have a new action item from ' + (m ? m.title : 'a meeting') + ': "' + String(text).slice(0, 100) + '"', '', 'info');
+  }
+  res.json({ id: result.lastInsertRowid });
+});
+
+app.patch('/api/meetings/:id/action-items/:itemId', (req, res) => {
+  const itemId = Number(req.params.itemId);
+  const item = db.prepare('SELECT * FROM meeting_action_items WHERE id = ? AND meetingId = ?').get(itemId, Number(req.params.id));
+  if (!item) return res.status(404).json({ error: 'Not found' });
+  const isManager = req.user.role === 'admin' || req.user.role === 'manager';
+  const isAssignee = item.assigneeId === req.user.id;
+  const isCreator = item.createdById === req.user.id;
+  if (!isManager && !isAssignee && !isCreator) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const { text, done, assigneeId, dueDate } = req.body || {};
+  const fields = [];
+  const vals = [];
+  if (text !== undefined && isManager) { fields.push('text = ?'); vals.push(String(text).slice(0, 500)); }
+  if (done !== undefined) { fields.push('done = ?'); vals.push(done ? 1 : 0); }
+  if (assigneeId !== undefined && isManager) { fields.push('assigneeId = ?'); vals.push(assigneeId ? Number(assigneeId) : null); }
+  if (dueDate !== undefined && isManager) { fields.push('dueDate = ?'); vals.push(String(dueDate).slice(0, 10)); }
+  if (!fields.length) return res.json({ ok: true });
+  vals.push(itemId);
+  db.prepare('UPDATE meeting_action_items SET ' + fields.join(', ') + ' WHERE id = ?').run(...vals);
+  res.json({ ok: true });
+});
+
+app.delete('/api/meetings/:id/action-items/:itemId', (req, res) => {
+  const itemId = Number(req.params.itemId);
+  const item = db.prepare('SELECT id, createdById FROM meeting_action_items WHERE id = ? AND meetingId = ?').get(itemId, Number(req.params.id));
+  if (!item) return res.status(404).json({ error: 'Not found' });
+  if (req.user.role !== 'admin' && req.user.role !== 'manager' && item.createdById !== req.user.id) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  db.prepare('DELETE FROM meeting_action_items WHERE id = ?').run(itemId);
+  res.json({ ok: true });
+});
+
+app.post('/api/meetings/:id/action-items/:itemId/promote', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const itemId = Number(req.params.itemId);
+  const item = db.prepare('SELECT * FROM meeting_action_items WHERE id = ? AND meetingId = ?').get(itemId, Number(req.params.id));
+  if (!item) return res.status(404).json({ error: 'Not found' });
+  if (item.taskId) return res.status(400).json({ error: 'Already promoted to a task' });
+  if (!item.assigneeId) return res.status(400).json({ error: 'Assign to a user before promoting' });
+  const meeting = db.prepare('SELECT title FROM meetings WHERE id = ?').get(Number(req.params.id));
+  const taskResult = db.prepare(
+    'INSERT INTO tasks (userId, name, description, dueDate, status, assignedById) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(
+    item.assigneeId,
+    item.text,
+    meeting ? 'From meeting: ' + meeting.title : '',
+    item.dueDate || null,
+    'Not Started',
+    req.user.id
+  );
+  db.prepare('UPDATE meeting_action_items SET taskId = ? WHERE id = ?').run(taskResult.lastInsertRowid, itemId);
+  pushNotification(item.assigneeId, 'A meeting action item has been converted to a task: "' + item.text.slice(0, 100) + '"', '', 'info');
+  res.json({ taskId: taskResult.lastInsertRowid });
+});
+
+app.get('/api/me/action-items', (req, res) => {
+  const rows = db.prepare(`
+    SELECT a.id, a.text, a.dueDate, a.done, a.taskId, a.createdAt, a.meetingId,
+           m.title AS meetingTitle, m.meetingDate
+    FROM meeting_action_items a
+    JOIN meetings m ON m.id = a.meetingId
+    WHERE a.assigneeId = ? AND a.done = 0
+    ORDER BY a.dueDate ASC, a.createdAt ASC
+  `).all(req.user.id);
+  res.json({ items: rows });
+});
+
 // ---- Static frontend --------------------------------------------------------
 app.use(express.static(path.join(__dirname, '..', 'public')));
 

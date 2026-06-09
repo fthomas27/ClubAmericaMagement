@@ -397,6 +397,55 @@ function init() {
     );
     CREATE INDEX IF NOT EXISTS idx_reimbursements_submitter
       ON reimbursements(submittedById, status);
+
+    -- Shoutouts / kudos between board members.
+    CREATE TABLE IF NOT EXISTS shoutouts (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      fromId    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      toId      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      message   TEXT NOT NULL DEFAULT '',
+      tag       TEXT NOT NULL DEFAULT '',
+      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_shoutouts_created ON shoutouts(createdAt DESC);
+
+    -- RSVP responses for upcoming attendance events.
+    CREATE TABLE IF NOT EXISTS event_rsvps (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      eventId   INTEGER NOT NULL REFERENCES attendance_events(id) ON DELETE CASCADE,
+      userId    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      response  TEXT NOT NULL CHECK(response IN ('yes','maybe','no')),
+      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(eventId, userId)
+    );
+    CREATE INDEX IF NOT EXISTS idx_event_rsvps_event ON event_rsvps(eventId);
+
+    -- Shared resource library (links, templates, policies, etc.)
+    CREATE TABLE IF NOT EXISTS resources (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      title       TEXT NOT NULL DEFAULT '',
+      url         TEXT NOT NULL DEFAULT '',
+      category    TEXT NOT NULL DEFAULT 'Other',
+      description TEXT NOT NULL DEFAULT '',
+      createdById INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      createdAt   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_resources_category ON resources(category, title);
+
+    -- Action items captured during meetings.
+    CREATE TABLE IF NOT EXISTS meeting_action_items (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      meetingId   INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+      text        TEXT NOT NULL DEFAULT '',
+      assigneeId  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      dueDate     TEXT NOT NULL DEFAULT '',
+      done        INTEGER NOT NULL DEFAULT 0,
+      taskId      INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+      createdById INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      createdAt   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_meeting_action_items ON meeting_action_items(meetingId);
+    CREATE INDEX IF NOT EXISTS idx_action_items_assignee ON meeting_action_items(assigneeId, done);
   `);
 
   // User column migrations.
