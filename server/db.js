@@ -374,6 +374,56 @@ function init() {
       createdById      INTEGER REFERENCES users(id) ON DELETE SET NULL,
       createdAt        TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Per-grade recruitment goals set by admins.
+    CREATE TABLE IF NOT EXISTS grade_goals (
+      grade INTEGER PRIMARY KEY,
+      goal  INTEGER NOT NULL DEFAULT 0
+    );
+
+    -- Expense reimbursement requests submitted by any member.
+    CREATE TABLE IF NOT EXISTS reimbursements (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      submittedById INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      amount        REAL NOT NULL DEFAULT 0,
+      category      TEXT NOT NULL DEFAULT 'Other',
+      description   TEXT NOT NULL DEFAULT '',
+      purchaseDate  TEXT NOT NULL DEFAULT '',
+      status        TEXT NOT NULL DEFAULT 'pending',
+      reviewedById  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      reviewedAt    TEXT,
+      reviewNotes   TEXT NOT NULL DEFAULT '',
+      createdAt     TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_reimbursements_submitter
+      ON reimbursements(submittedById, status);
+
+    -- Shared resource library (links, templates, policies, etc.)
+    CREATE TABLE IF NOT EXISTS resources (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      title       TEXT NOT NULL DEFAULT '',
+      url         TEXT NOT NULL DEFAULT '',
+      category    TEXT NOT NULL DEFAULT 'Other',
+      description TEXT NOT NULL DEFAULT '',
+      createdById INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      createdAt   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_resources_category ON resources(category, title);
+
+    -- Action items captured during meetings.
+    CREATE TABLE IF NOT EXISTS meeting_action_items (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      meetingId   INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+      text        TEXT NOT NULL DEFAULT '',
+      assigneeId  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      dueDate     TEXT NOT NULL DEFAULT '',
+      done        INTEGER NOT NULL DEFAULT 0,
+      taskId      INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+      createdById INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      createdAt   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_meeting_action_items ON meeting_action_items(meetingId);
+    CREATE INDEX IF NOT EXISTS idx_action_items_assignee ON meeting_action_items(assigneeId, done);
   `);
 
   // User column migrations.
@@ -411,6 +461,7 @@ function init() {
 
   // Additional user column migrations.
   if (!cols.includes('canManageSocial')) db.exec("ALTER TABLE users ADD COLUMN canManageSocial INTEGER NOT NULL DEFAULT 0");
+  if (!cols.includes('phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
 
   // Remove the old dedicated logistics observer account — the dashboard is now
   // accessible to admins directly and via the canViewLogistics permission.

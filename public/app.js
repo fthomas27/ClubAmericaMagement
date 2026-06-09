@@ -530,12 +530,13 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
   const [rawSrc, setRawSrc] = useState(''); // original file src for re-cropping
   const [bio, setBio] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [cropping, setCropping] = useState(false);
 
   useEffect(() => {
-    api('/me/profile').then((d) => { setPhoto(d.photo || ''); setBio(d.bio || ''); setEmail(d.email || ''); }).catch(() => {});
+    api('/me/profile').then((d) => { setPhoto(d.photo || ''); setBio(d.bio || ''); setEmail(d.email || ''); setPhone(d.phone || ''); }).catch(() => {});
   }, []);
 
   function onFile(e) {
@@ -564,7 +565,7 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
     if (forced && !email.trim()) { setError('Please add an email so you get notified about tasks and approvals.'); return; }
     setLoading(true);
     try {
-      const d = await api('/me/profile', { method: 'PUT', body: { photo, bio, email } });
+      const d = await api('/me/profile', { method: 'PUT', body: { photo, bio, email, phone } });
       onDone(d.user);
     } catch (err) { setError(err.message); } finally { setLoading(false); }
   }
@@ -598,6 +599,11 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
       <Field label="Email (for task & approval notifications)">
         <input type="email" className={inputCls} value={email}
           onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
+      </Field>
+
+      <Field label="Phone (optional — shown in Board Directory)">
+        <input type="tel" className={inputCls} value={phone}
+          onChange={(e) => setPhone(e.target.value)} placeholder="(555) 000-0000" />
       </Field>
 
       <Field label="Introduce yourself (a paragraph or two)">
@@ -3591,6 +3597,10 @@ function AdminDashboardPage({ me }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [checkinEnabled, setCheckinEnabled] = useState(null);
+  const [pulse, setPulse] = useState(null);
+  const [teamTasks, setTeamTasks] = useState(null);
+  const [activeTab, setActiveTab] = useState('overview');
+  const [pulseOpen, setPulseOpen] = useState(true);
   const [confirmEl, confirm] = useConfirm();
 
   const load = useCallback(async () => {
@@ -3602,7 +3612,22 @@ function AdminDashboardPage({ me }) {
     } catch (err) { setError(err.message); }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  const loadPulse = useCallback(async () => {
+    try { const d = await api('/checkins/pulse'); setPulse(d); } catch (_) {}
+  }, []);
+
+  const loadTeamTasks = useCallback(async () => {
+    try { const d = await api('/team/tasks'); setTeamTasks(d.tasksByUser || []); } catch (_) {}
+  }, []);
+
+  useEffect(() => { load(); loadPulse(); }, [load, loadPulse]);
+
+  async function nudge(userId) {
+    setBusy(`nudge:${userId}`);
+    try { await api(`/checkins/nudge/${userId}`, { method: 'POST' }); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(''); }
+  }
 
   async function fundingAction(id, action) {
     if (action === 'deny' && !(await confirm({ title: 'Deny request?', message: 'The submitter will be notified.', confirmLabel: 'Deny', danger: true }))) return;
@@ -3673,6 +3698,58 @@ function AdminDashboardPage({ me }) {
 
       {error && <div className="text-red text-sm">{error}</div>}
 
+      {/* Tabs */}
+      <div className="flex gap-1 bg-navy2 border border-cream/10 rounded-lg p-1 w-fit">
+        {[['overview','Overview'],['teamtasks','Team Tasks']].map(([t,label]) => (
+          <button key={t} onClick={() => { setActiveTab(t); if (t === 'teamtasks' && !teamTasks) loadTeamTasks(); }}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-150 ${activeTab === t ? 'bg-gold text-navy' : 'text-cream/60 hover:text-cream'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'teamtasks' && (
+        <div className="space-y-6">
+          {teamTasks === null && <Loading label="Loading team tasks…" />}
+          {teamTasks !== null && teamTasks.length === 0 && (
+            <EmptyState icon="✅" title="No team tasks" hint="Your direct reports have no approved tasks yet." />
+          )}
+          {(teamTasks || []).map((group) => {
+            const today = new Date().toISOString().slice(0, 10);
+            return (
+              <div key={group.user.id}>
+                <div className="font-display text-xl text-gold mb-2">{group.user.displayName}
+                  {group.user.title && <span className="text-cream/50 text-sm font-sans ml-2">· {group.user.title}</span>}
+                </div>
+                <div className="space-y-2">
+                  {group.tasks.map((t) => {
+                    const overdue = t.status !== 'Complete' && t.dueDate && t.dueDate < today;
+                    return (
+                      <div key={t.id} className={`bg-navy2 border rounded-xl px-4 py-3 flex items-center justify-between gap-3 ${overdue ? 'border-red/40' : 'border-cream/10'}`}>
+                        <div className="min-w-0">
+                          <div className={`text-sm font-medium ${overdue ? 'text-red' : 'text-cream'}`}>{t.name}</div>
+                          {t.dueDate && <div className={`text-xs mt-0.5 ${overdue ? 'text-red/70' : 'text-cream/40'}`}>Due {t.dueDate}{overdue ? ' · OVERDUE' : ''}</div>}
+                        </div>
+                        <select value={t.status}
+                          onChange={async (e) => {
+                            try { await api(`/tasks/${t.id}`, { method: 'PATCH', body: { status: e.target.value } }); loadTeamTasks(); }
+                            catch (_) {}
+                          }}
+                          className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs text-cream focus:outline-none focus:border-gold/60 shrink-0">
+                          {['Not Started','In Progress','Complete'].map((s) => <option key={s}>{s}</option>)}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {activeTab === 'overview' && <>
+
       {/* Check-in toggle */}
       {checkinEnabled !== null && (
         <div className="bg-navy2 border border-cream/10 rounded-xl p-5 flex items-center justify-between gap-4">
@@ -3681,6 +3758,47 @@ function AdminDashboardPage({ me }) {
             <div className="text-cream/50 text-sm">{checkinEnabled ? 'Members can submit check-ins this week.' : 'Check-ins are currently disabled.'}</div>
           </div>
           <Toggle enabled={checkinEnabled} onChange={toggleCheckins} disabled={!!busy} />
+        </div>
+      )}
+
+      {/* Check-In Pulse card */}
+      {checkinEnabled && pulse && (
+        <div className="bg-navy2 border border-cream/10 rounded-xl overflow-hidden">
+          <button className="w-full px-5 py-4 flex items-center justify-between gap-3 hover:bg-navy3/30 transition-colors"
+            onClick={() => setPulseOpen((o) => !o)}>
+            <div>
+              <div className="text-cream font-medium">Check-In Pulse — Week of {pulse.weekOf}</div>
+              <div className="text-xs text-cream/50 mt-0.5">
+                {pulse.users.filter((u) => u.submitted).length} / {pulse.users.length} submitted
+              </div>
+            </div>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              className={`text-cream/40 transition-transform duration-200 ${pulseOpen ? 'rotate-180' : ''}`}>
+              <path d="m6 9 6 6 6-6"/>
+            </svg>
+          </button>
+          {pulseOpen && (
+            <div className="border-t border-cream/10 divide-y divide-cream/5">
+              {pulse.users.map((u) => (
+                <div key={u.id} className="px-5 py-2.5 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${u.submitted ? 'bg-emerald-400' : 'bg-red/70'}`} />
+                    <span className="text-cream text-sm">{u.displayName}</span>
+                    {u.title && <span className="text-cream/40 text-xs hidden sm:inline">· {u.title}</span>}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Badge tone={u.submitted ? 'green' : 'red'}>{u.submitted ? '✓ Submitted' : '✗ Missing'}</Badge>
+                    {!u.submitted && (
+                      <button onClick={() => nudge(u.id)} disabled={busy === `nudge:${u.id}`}
+                        className="text-xs text-gold/70 hover:text-gold border border-gold/30 hover:border-gold/60 rounded px-2 py-0.5 transition-colors disabled:opacity-40">
+                        {busy === `nudge:${u.id}` ? '…' : 'Nudge'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -3841,6 +3959,7 @@ function AdminDashboardPage({ me }) {
             </div>
           )}
       </div>
+      </>}
     </div>
   );
 }
@@ -4430,6 +4549,295 @@ function AIChatPage({ me }) {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Home Summary Card
+// ---------------------------------------------------------------------------
+function HomeSummaryCard({ me, onNavigate }) {
+  const [summary, setSummary] = useState(null);
+
+  useEffect(() => {
+    api('/me/summary').then(setSummary).catch(() => {});
+  }, []);
+
+  if (!summary) return null;
+
+  const { myTasks, checkinSubmitted, upcomingMeetings, openPolls, announcement, actionItems, tasksDueSoon } = summary;
+  const today = new Date().toISOString().slice(0, 10);
+
+  return (
+    <div className="mb-6 space-y-4">
+      {/* Status bar */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <button onClick={() => onNavigate({ type: 'mytasks' })}
+          className={`border rounded-xl p-3 text-left hover:brightness-110 transition-all active:scale-95 ${tasksDueSoon > 0 ? 'border-gold/30 bg-gold/5' : 'border-emerald-500/30 bg-emerald-500/5'}`}>
+          <div className="text-cream/50 text-[10px] uppercase tracking-wide mb-1">My Tasks</div>
+          <div className={`text-sm font-medium ${tasksDueSoon > 0 ? 'text-gold' : 'text-emerald-300'}`}>
+            {tasksDueSoon > 0 ? tasksDueSoon + ' due soon' : myTasks.length > 0 ? myTasks.length + ' active' : 'All done ✓'}
+          </div>
+        </button>
+        {checkinSubmitted !== null && (
+          <button onClick={() => onNavigate({ type: 'checkin' })}
+            className={`border rounded-xl p-3 text-left hover:brightness-110 transition-all active:scale-95 ${checkinSubmitted ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red/30 bg-red/5'}`}>
+            <div className="text-cream/50 text-[10px] uppercase tracking-wide mb-1">Check-In</div>
+            <div className={`text-sm font-medium ${checkinSubmitted ? 'text-emerald-300' : 'text-red'}`}>{checkinSubmitted ? '✓ Submitted' : '⚠ Not yet'}</div>
+          </button>
+        )}
+        <button onClick={() => onNavigate({ type: 'meetings' })}
+          className="border border-sky-500/30 bg-sky-500/5 rounded-xl p-3 text-left hover:brightness-110 transition-all active:scale-95">
+          <div className="text-cream/50 text-[10px] uppercase tracking-wide mb-1">Next Meeting</div>
+          <div className="text-sm font-medium text-sky-300 truncate">
+            {upcomingMeetings[0] ? upcomingMeetings[0].title : 'None scheduled'}
+          </div>
+          {upcomingMeetings[0] && <div className="text-xs text-cream/40 mt-0.5">{fmtShortDate(upcomingMeetings[0].meetingDate)}</div>}
+        </button>
+        <button onClick={() => onNavigate({ type: 'polls' })}
+          className={`border rounded-xl p-3 text-left hover:brightness-110 transition-all active:scale-95 ${openPolls.length > 0 ? 'border-gold/30 bg-gold/5' : 'border-cream/10 bg-cream/5'}`}>
+          <div className="text-cream/50 text-[10px] uppercase tracking-wide mb-1">Open Polls</div>
+          <div className={`text-sm font-medium ${openPolls.length > 0 ? 'text-gold' : 'text-cream/50'}`}>
+            {openPolls.length > 0 ? openPolls.length + ' need' + (openPolls.length === 1 ? 's' : '') + ' your vote' : 'None open'}
+          </div>
+        </button>
+      </div>
+
+      {/* Announcement banner */}
+      {announcement && announcement.text && (
+        <div className="bg-gold/10 border border-gold/30 rounded-xl px-4 py-3 flex items-start gap-3">
+          <span className="text-gold text-lg shrink-0">📢</span>
+          <div className="flex-1 min-w-0">
+            <div className="text-xs text-gold/70 uppercase tracking-wide mb-0.5">Team Announcement</div>
+            <div className="text-sm text-cream/85 leading-relaxed">{announcement.text}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Two-column content feed */}
+      <div className="grid sm:grid-cols-2 gap-4">
+        {/* My active tasks */}
+        {myTasks.length > 0 && (
+          <div className="bg-navy2 border border-cream/10 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide">My Tasks</div>
+              <button onClick={() => onNavigate({ type: 'mytasks' })} className="text-xs text-gold/60 hover:text-gold">View all</button>
+            </div>
+            <div className="space-y-2">
+              {myTasks.slice(0, 4).map((t) => {
+                const overdue = t.dueDate && t.dueDate < today;
+                return (
+                  <div key={t.id} className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${t.status === 'In Progress' ? 'bg-sky-400' : 'bg-cream/30'}`} />
+                      <span className={`text-sm truncate ${overdue ? 'text-red/80' : 'text-cream/80'}`}>{t.name}</span>
+                    </div>
+                    {t.dueDate && <span className={`text-xs shrink-0 ${overdue ? 'text-red/60' : 'text-cream/35'}`}>{overdue ? 'Overdue' : fmtShortDate(t.dueDate)}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Upcoming meetings */}
+        {upcomingMeetings.length > 0 && (
+          <div className="bg-navy2 border border-cream/10 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide">Upcoming Meetings</div>
+              <button onClick={() => onNavigate({ type: 'meetings' })} className="text-xs text-gold/60 hover:text-gold">View all</button>
+            </div>
+            <div className="space-y-2">
+              {upcomingMeetings.map((m) => (
+                <div key={m.id} className="flex items-center justify-between gap-2">
+                  <span className="text-sm text-cream/80 truncate">{m.title}</span>
+                  <span className="text-xs text-cream/35 shrink-0">{fmtShortDate(m.meetingDate)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Open polls */}
+        {openPolls.length > 0 && (
+          <div className="bg-navy2 border border-gold/20 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs font-semibold text-gold/60 uppercase tracking-wide">Polls Awaiting Your Vote</div>
+              <button onClick={() => onNavigate({ type: 'polls' })} className="text-xs text-gold/60 hover:text-gold">Vote</button>
+            </div>
+            <div className="space-y-2">
+              {openPolls.map((p) => (
+                <button key={p.id} onClick={() => onNavigate({ type: 'polls' })}
+                  className="w-full text-left text-sm text-cream/80 hover:text-gold transition-colors truncate">
+                  → {p.question}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* My action items from meetings */}
+        {actionItems.length > 0 && (
+          <div className="bg-navy2 border border-cream/10 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide">My Meeting Tasks</div>
+              <button onClick={() => onNavigate({ type: 'meetings' })} className="text-xs text-gold/60 hover:text-gold">View meetings</button>
+            </div>
+            <div className="space-y-2">
+              {actionItems.slice(0, 4).map((a) => {
+                const overdue = a.dueDate && a.dueDate < today;
+                return (
+                  <div key={a.id} className="flex items-start gap-2">
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${overdue ? 'bg-red/70' : 'bg-cream/30'}`} />
+                    <div className="min-w-0">
+                      <div className={`text-sm truncate ${overdue ? 'text-red/80' : 'text-cream/80'}`}>{a.text}</div>
+                      <div className="text-xs text-cream/35">{a.meetingTitle}{a.dueDate ? ' · ' + (overdue ? 'Overdue' : fmtShortDate(a.dueDate)) : ''}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Resource Hub Page
+// ---------------------------------------------------------------------------
+const RESOURCE_CATEGORIES = ['Forms', 'Templates', 'Policies', 'Social', 'Finance', 'Other'];
+const RESOURCE_CATEGORY_TONES = { Forms: 'blue', Templates: 'gold', Policies: 'red', Social: 'green', Finance: 'green', Other: 'slate' };
+
+function ResourceHubPage({ me }) {
+  const [resources, setResources] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [search, setSearch] = useState('');
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [title, setTitle] = useState('');
+  const [url, setUrl] = useState('');
+  const [category, setCategory] = useState('Other');
+  const [description, setDescription] = useState('');
+  const { loading, error, setError, run } = useAction();
+  const isManager = me.role === 'admin' || me.role === 'manager';
+
+  const load = useCallback(async () => {
+    try { const d = await api('/resources'); setResources(d.resources || []); }
+    catch (e) { setError(e.message); }
+    finally { setLoaded(true); }
+  }, [setError]);
+
+  useEffect(() => { load(); }, [load]);
+
+  function openCreate() { setEditId(null); setTitle(''); setUrl(''); setCategory('Other'); setDescription(''); setShowForm(true); }
+  function openEdit(r) { setEditId(r.id); setTitle(r.title); setUrl(r.url); setCategory(r.category); setDescription(r.description || ''); setShowForm(true); }
+
+  async function save(e) {
+    e.preventDefault();
+    if (!title.trim() || !url.trim()) { setError('Title and URL are required'); return; }
+    await run(async () => {
+      if (editId) {
+        await api('/resources/' + editId, { method: 'PATCH', body: { title: title.trim(), url: url.trim(), category, description } });
+      } else {
+        await api('/resources', { method: 'POST', body: { title: title.trim(), url: url.trim(), category, description } });
+      }
+      setShowForm(false); load();
+    });
+  }
+
+  async function del(id, resourceTitle) {
+    if (!window.confirm('Delete "' + resourceTitle + '"?')) return;
+    await api('/resources/' + id, { method: 'DELETE' }).catch(() => {});
+    load();
+  }
+
+  const safeUrl = (u) => u && (u.startsWith('http://') || u.startsWith('https://')) ? u : 'https://' + u;
+
+  const filtered = resources.filter((r) =>
+    !search || r.title.toLowerCase().includes(search.toLowerCase()) || r.category.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const byCategory = RESOURCE_CATEGORIES.reduce((acc, cat) => {
+    const items = filtered.filter((r) => r.category === cat);
+    if (items.length) acc[cat] = items;
+    return acc;
+  }, {});
+
+  return (
+    <div className="max-w-3xl">
+      <div className="flex items-center justify-between mb-2">
+        <h1 className="font-display text-4xl sm:text-5xl text-cream">Resource Hub</h1>
+        {isManager && !showForm && <Button variant="gold" onClick={openCreate}>+ Add Resource</Button>}
+      </div>
+      <p className="text-cream/50 text-sm mb-5">Shared links, templates, and documents for the board.</p>
+
+      <div className="relative mb-5">
+        <input className={inputCls + ' pl-9'} placeholder="Search resources…" value={search}
+          onChange={(e) => setSearch(e.target.value)} />
+        <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-cream/30" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>
+      </div>
+
+      {showForm && (
+        <form onSubmit={save} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
+          <div className="font-display text-xl text-gold">{editId ? 'Edit Resource' : 'Add Resource'}</div>
+          <Field label="Title"><input className={inputCls} value={title} autoFocus onChange={(e) => setTitle(e.target.value)} placeholder="Budget Template 2025" /></Field>
+          <Field label="URL"><input className={inputCls} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://docs.google.com/…" /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Category">
+              <select className={inputCls} value={category} onChange={(e) => setCategory(e.target.value)}>
+                {RESOURCE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </Field>
+            <Field label="Description (optional)">
+              <input className={inputCls} value={description} onChange={(e) => setDescription(e.target.value)} />
+            </Field>
+          </div>
+          {error && <div className="text-red text-sm">{error}</div>}
+          <div className="flex gap-2">
+            <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner />Saving…</span> : 'Save'}</Button>
+            <Button variant="ghost" onClick={() => setShowForm(false)}>Cancel</Button>
+          </div>
+        </form>
+      )}
+
+      {!loaded && <Loading label="Loading resources…" />}
+      {loaded && filtered.length === 0 && (
+        <EmptyState icon="📚" title="No resources yet" hint={isManager ? 'Add links your team uses daily — templates, forms, policies.' : 'Resources shared by your managers will appear here.'} />
+      )}
+
+      <div className="space-y-5">
+        {Object.entries(byCategory).map(([cat, items]) => (
+          <div key={cat}>
+            <div className="flex items-center gap-2 mb-2">
+              <Badge tone={RESOURCE_CATEGORY_TONES[cat] || 'slate'}>{cat}</Badge>
+            </div>
+            <div className="space-y-2">
+              {items.map((r) => (
+                <div key={r.id} className="bg-navy2 border border-cream/10 rounded-xl px-4 py-3 flex items-center gap-3 hover:border-cream/20 transition-colors">
+                  <div className="flex-1 min-w-0">
+                    <a href={safeUrl(r.url)} target="_blank" rel="noopener noreferrer"
+                      className="font-medium text-cream hover:text-gold transition-colors text-sm">{r.title}</a>
+                    {r.description && <div className="text-xs text-cream/45 mt-0.5">{r.description}</div>}
+                    <div className="text-xs text-cream/30 mt-0.5">Added by {r.createdByName} · {timeAgo(r.createdAt)}</div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <a href={safeUrl(r.url)} target="_blank" rel="noopener noreferrer"
+                      className="text-xs text-gold/60 hover:text-gold border border-gold/30 hover:border-gold/60 rounded px-2 py-1 transition-colors">
+                      Open ↗
+                    </a>
+                    {isManager && <button onClick={() => openEdit(r)} className="text-xs text-cream/40 hover:text-cream">Edit</button>}
+                    {(me.role === 'admin' || r.createdById === me.id) && (
+                      <button onClick={() => del(r.id, r.title)} className="text-xs text-red/50 hover:text-red">✕</button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function AppIcon({ name }) {
   const p = { width: 24, height: 24, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', className: 'text-cream/60 group-hover:text-gold transition-colors duration-150' };
   switch (name) {
@@ -4458,6 +4866,10 @@ function AppIcon({ name }) {
     case 'grants':    return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5a2.5 2.5 0 0 1 5 0c0 1.5-1 2-2.5 2.5-1.5.5-2.5 1-2.5 2.5a2.5 2.5 0 0 0 5 0"/><path d="m16 5-1.5 1.5"/></svg>;
     case 'speaker':   return <svg {...p}><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/><path d="M3 9l4 4"/></svg>;
     case 'social':    return <svg {...p}><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>;
+    case 'grades':    return <svg {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M12 15v4M15 18H9"/></svg>;
+    case 'reimbursements': return <svg {...p}><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><circle cx="12" cy="15" r="2"/><path d="M6 15h1M17 15h1"/></svg>;
+    case 'directory': return <svg {...p}><path d="M4 4h16v16H4z" rx="2"/><path d="M8 10a3 3 0 1 0 6 0 3 3 0 0 0-6 0"/><path d="M6 20c.3-2.2 2.5-4 6-4s5.7 1.8 6 4"/><path d="M16 4v4M8 4v4"/></svg>;
+    case 'resources': return <svg {...p}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M12 7v6M9 10h6"/></svg>;
     default:          return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
   }
 }
@@ -4505,6 +4917,10 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
     ...(isManager ? [{ type: 'grants',    label: 'Grant Tracker',     icon: 'grants'     }] : []),
     ...(isManager || !!me.canManageSocial ? [{ type: 'social', label: 'Social Media', icon: 'social' }] : []),
     ...(isManager         ? [{ type: 'budget',      label: 'Budget Overview',  icon: 'budget'     }] : []),
+    ...(isManager || !!me.managedGrade ? [{ type: 'grades', label: 'Grade Pipeline', icon: 'grades' }] : []),
+    { type: 'reimbursements', label: 'Reimbursements', icon: 'reimbursements' },
+    { type: 'resources',  label: 'Resources',           icon: 'resources'  },
+    { type: 'directory',  label: 'Directory',           icon: 'directory'  },
     { type: 'org',        label: 'Org Chart',           icon: 'org'        },
     ...(me.role === 'admin' ? [{ type: 'admin',     label: 'Admin Panel',      icon: 'admin'      }] : []),
     ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }] : []),
@@ -4534,6 +4950,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
         </div>
       </header>
       <div className="flex-1 px-4 py-8">
+        <HomeSummaryCard me={me} onNavigate={onNavigate} />
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {tiles.map((t, i) => (
             <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge}
@@ -4753,6 +5170,8 @@ function App() {
     funding: 'Funding Requests', apply: 'Apply for Position', dashboard: 'Dashboard',
     attendance: 'Attendance', polls: 'Polls & Voting', budget: 'Budget Overview',
     meetings: 'Meetings', speaker: 'Speaker Events', grants: 'Grant Tracker', social: 'Social Media',
+    grades: 'Grade Pipeline', reimbursements: 'Reimbursements', directory: 'Board Directory',
+    resources: 'Resource Hub',
     org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity',
     ai: 'AI Assistant', password: 'Change Password', profile: 'Edit Profile',
   };
@@ -4784,6 +5203,10 @@ function App() {
   else if (view.type === 'speaker') content = (me.role === 'admin' || me.role === 'manager') ? <SpeakerEventsPage me={me} /> : null;
   else if (view.type === 'grants') content = (me.role === 'admin' || me.role === 'manager') ? <GrantsPage me={me} /> : null;
   else if (view.type === 'social') content = (me.role === 'admin' || me.role === 'manager' || !!me.canManageSocial) ? <SocialTrackerPage me={me} /> : null;
+  else if (view.type === 'grades') content = (me.role === 'admin' || me.role === 'manager' || !!me.managedGrade) ? <GradePipelinePage me={me} /> : null;
+  else if (view.type === 'reimbursements') content = <ReimbursementsPage me={me} />;
+  else if (view.type === 'directory') content = <DirectoryPage me={me} />;
+  else if (view.type === 'resources') content = <ResourceHubPage me={me} />;
 
   return (
     <>
@@ -4819,6 +5242,102 @@ function App() {
 }
 
 // ---------------------------------------------------------------------------
+// Meeting Action Items sub-panel
+// ---------------------------------------------------------------------------
+function MeetingActionItems({ meetingId, me, allUsers }) {
+  const [items, setItems] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [newText, setNewText] = useState('');
+  const [newAssignee, setNewAssignee] = useState('');
+  const [newDue, setNewDue] = useState('');
+  const isManager = me.role === 'admin' || me.role === 'manager';
+
+  const load = useCallback(async () => {
+    try { const d = await api('/meetings/' + meetingId + '/action-items'); setItems(d.items || []); }
+    catch (_) {}
+    finally { setLoaded(true); }
+  }, [meetingId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function addItem(e) {
+    e.preventDefault();
+    if (!newText.trim()) return;
+    await api('/meetings/' + meetingId + '/action-items', {
+      method: 'POST',
+      body: { text: newText.trim(), assigneeId: newAssignee ? Number(newAssignee) : null, dueDate: newDue },
+    }).catch(() => {});
+    setNewText(''); setNewAssignee(''); setNewDue('');
+    load();
+  }
+
+  async function toggleDone(item) {
+    await api('/meetings/' + meetingId + '/action-items/' + item.id, {
+      method: 'PATCH', body: { done: !item.done },
+    }).catch(() => {});
+    load();
+  }
+
+  async function del(item) {
+    await api('/meetings/' + meetingId + '/action-items/' + item.id, { method: 'DELETE' }).catch(() => {});
+    load();
+  }
+
+  const TASK_STATUS_TONE = { 'Not Started': 'slate', 'In Progress': 'blue', 'Complete': 'green' };
+
+  const today = new Date().toISOString().slice(0, 10);
+  const open = items.filter((i) => !i.done);
+  const done = items.filter((i) => i.done);
+
+  return (
+    <div className="mt-3 pt-3 border-t border-cream/10">
+      <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide mb-2">Action Items</div>
+      {!loaded && <div className="text-xs text-cream/30">Loading…</div>}
+      {loaded && items.length === 0 && <div className="text-xs text-cream/30 italic">No action items yet.</div>}
+      <div className="space-y-1.5">
+        {open.map((item) => {
+          const overdue = item.dueDate && item.dueDate < today;
+          const canEdit = isManager || item.assigneeId === me.id || item.createdById === me.id;
+          return (
+            <div key={item.id} className={`flex items-start gap-2 rounded-lg px-2 py-1.5 ${overdue ? 'bg-red/5 border border-red/15' : 'bg-cream/5'}`}>
+              <input type="checkbox" className="mt-0.5 accent-gold shrink-0"
+                checked={false} onChange={() => canEdit && toggleDone(item)} disabled={!canEdit} />
+              <div className="flex-1 min-w-0">
+                <div className={`text-sm ${overdue ? 'text-red/80' : 'text-cream/85'}`}>{item.text}</div>
+                <div className="flex items-center gap-2 text-xs text-cream/40 flex-wrap mt-0.5">
+                  {item.assigneeName && <span>→ {item.assigneeName}</span>}
+                  {item.dueDate && <span className={overdue ? 'text-red/60' : ''}>{overdue ? 'Overdue: ' : 'Due: '}{fmtShortDate(item.dueDate)}</span>}
+                  {item.taskStatus && <Badge tone={TASK_STATUS_TONE[item.taskStatus] || 'slate'}>{item.taskStatus}</Badge>}
+                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                {canEdit && (
+                  <button onClick={() => del(item)} className="text-[10px] text-red/40 hover:text-red">✕</button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        {done.length > 0 && (
+          <div className="text-xs text-cream/25 mt-1">{done.length} completed item{done.length !== 1 ? 's' : ''}</div>
+        )}
+      </div>
+      <form onSubmit={addItem} className="mt-2 flex gap-2 flex-wrap items-end">
+        <div className="flex-1 min-w-[140px]">
+          <input className={inputCls + ' text-xs py-1.5'} value={newText} onChange={(e) => setNewText(e.target.value)} placeholder="New action item…" />
+        </div>
+        <select className={inputCls + ' text-xs py-1.5 w-32'} value={newAssignee} onChange={(e) => setNewAssignee(e.target.value)}>
+          <option value="">Assign to…</option>
+          {allUsers.map((u) => <option key={u.id} value={u.id}>{u.displayName}</option>)}
+        </select>
+        <input type="date" className={inputCls + ' text-xs py-1.5 w-32'} value={newDue} onChange={(e) => setNewDue(e.target.value)} />
+        <button type="submit" className="text-xs bg-gold/20 hover:bg-gold/30 text-gold border border-gold/30 rounded px-3 py-1.5 transition-colors">Add</button>
+      </form>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Meetings Page
 // ---------------------------------------------------------------------------
 function MeetingsPage({ me }) {
@@ -4831,12 +5350,17 @@ function MeetingsPage({ me }) {
   const [agendaUrl, setAgendaUrl] = useState('');
   const [minutesUrl, setMinutesUrl] = useState('');
   const [notes, setNotes] = useState('');
+  const [expandedId, setExpandedId] = useState(null);
+  const [allUsers, setAllUsers] = useState([]);
   const { loading, error, setError, run } = useAction();
   const isManager = me.role === 'admin' || me.role === 'manager';
 
   const load = useCallback(async () => {
-    try { const d = await api('/meetings'); setMeetings(d.meetings || []); }
-    catch (e) { setError(e.message); }
+    try {
+      const [d, u] = await Promise.all([api('/meetings'), api('/users').catch(() => ({ users: [] }))]);
+      setMeetings(d.meetings || []);
+      setAllUsers(u.users || []);
+    } catch (e) { setError(e.message); }
     finally { setLoaded(true); }
   }, [setError]);
 
@@ -4926,6 +5450,17 @@ function MeetingsPage({ me }) {
                 </div>
               )}
             </div>
+            <button
+              onClick={() => setExpandedId(expandedId === m.id ? null : m.id)}
+              className="mt-2 text-xs text-cream/40 hover:text-gold transition-colors flex items-center gap-1">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                {expandedId === m.id ? <path d="M18 15l-6-6-6 6"/> : <path d="M6 9l6 6 6-6"/>}
+              </svg>
+              Action Items
+            </button>
+            {expandedId === m.id && (
+              <MeetingActionItems meetingId={m.id} me={me} allUsers={allUsers} />
+            )}
           </div>
         ))}
       </div>
@@ -5637,17 +6172,499 @@ function SearchModal({ me, onNavigate, onClose }) {
 }
 
 // ---------------------------------------------------------------------------
+// Grade Rep Pipeline Dashboard
+// ---------------------------------------------------------------------------
+function GradePipelinePage({ me }) {
+  const [data, setData] = useState(null);
+  const [goals, setGoals] = useState({});
+  const [editingGoal, setEditingGoal] = useState(null);
+  const [goalInput, setGoalInput] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState('');
+  const isManager = me.role === 'admin' || me.role === 'manager';
+  const grade = me.managedGrade || (isManager ? (data && data.grade) : null);
+
+  const load = useCallback(async () => {
+    setError('');
+    try {
+      const params = isManager && !me.managedGrade ? '' : `?grade=${me.managedGrade || ''}`;
+      const [d, g] = await Promise.all([
+        api(`/roster/grade-pipeline${params}`),
+        isManager ? api('/grade-goals') : Promise.resolve({ goals: [] }),
+      ]);
+      setData(d);
+      const gmap = {};
+      (g.goals || []).forEach((r) => { gmap[r.grade] = r.goal; });
+      setGoals(gmap);
+    } catch (e) { setError(e.message); }
+  }, [isManager, me.managedGrade]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function doAction(memberId, action) {
+    setBusy(`${memberId}:${action}`);
+    try {
+      await api(`/roster/${memberId}/${action}`, { method: 'POST' });
+      load();
+    } catch (e) { setError(e.message); }
+    finally { setBusy(''); }
+  }
+
+  async function saveGoal(g) {
+    try {
+      await api(`/grade-goals/${g}`, { method: 'PUT', body: { goal: Number(goalInput) } });
+      setGoals((prev) => ({ ...prev, [g]: Number(goalInput) }));
+      setEditingGoal(null);
+    } catch (e) { setError(e.message); }
+  }
+
+  function daysSince(iso) {
+    const d = new Date(iso);
+    return Math.floor((Date.now() - d.getTime()) / 86400000);
+  }
+
+  if (error && !data) return <ErrorState message={error} onRetry={load} />;
+  if (!data) return <Loading label="Loading pipeline…" />;
+
+  const { counts, prospects } = data;
+  const currentGrade = data.grade;
+  const goalForGrade = goals[currentGrade] || data.goal || 0;
+  const pct = goalForGrade > 0 ? Math.min(100, Math.round((counts.onboarded / goalForGrade) * 100)) : 0;
+
+  return (
+    <div className="max-w-3xl space-y-6">
+      <div>
+        <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Grade {currentGrade} Pipeline</h1>
+        <p className="text-cream/50 mt-1">Recruitment funnel and prospect status.</p>
+      </div>
+      {error && <div className="text-red text-sm">{error}</div>}
+
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { label: 'Prospects', count: counts.prospects, tone: 'slate' },
+          { label: 'Contacted', count: counts.contacted, tone: 'blue' },
+          { label: 'Onboarded', count: counts.onboarded, tone: 'green' },
+        ].map(({ label, count, tone }) => (
+          <div key={label} className="bg-navy2 border border-cream/10 rounded-xl p-4 text-center">
+            <div className="font-display text-3xl text-cream">{count}</div>
+            <div className="mt-1"><Badge tone={tone}>{label}</Badge></div>
+          </div>
+        ))}
+      </div>
+
+      {goalForGrade > 0 && (
+        <div className="bg-navy2 border border-cream/10 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-cream/70 text-sm">Onboarding Goal</span>
+            <span className="text-cream text-sm font-medium">{counts.onboarded} / {goalForGrade}</span>
+          </div>
+          <div className="h-2.5 bg-navy rounded-full overflow-hidden">
+            <div className="h-full bg-gold rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
+          </div>
+          <div className="text-xs text-cream/40 mt-1">{pct}% of goal reached</div>
+        </div>
+      )}
+
+      {me.role === 'admin' && (
+        <div className="bg-navy2 border border-cream/10 rounded-xl p-4">
+          <div className="text-cream/70 text-sm font-medium mb-3">Grade Goals (Admin)</div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {[9, 10, 11, 12].map((g) => (
+              <div key={g} className="bg-navy border border-cream/10 rounded-lg p-3">
+                <div className="text-cream/60 text-xs mb-1">Grade {g}</div>
+                {editingGoal === g ? (
+                  <div className="flex gap-1">
+                    <input type="number" min="0" className="w-full bg-navy2 border border-cream/20 rounded px-2 py-1 text-cream text-xs"
+                      value={goalInput} onChange={(e) => setGoalInput(e.target.value)} autoFocus />
+                    <button onClick={() => saveGoal(g)} className="text-gold text-xs hover:text-gold/80">✓</button>
+                    <button onClick={() => setEditingGoal(null)} className="text-cream/40 text-xs hover:text-cream/60">✕</button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="text-cream text-sm font-medium">{goals[g] || 0}</span>
+                    <button onClick={() => { setEditingGoal(g); setGoalInput(String(goals[g] || 0)); }}
+                      className="text-xs text-gold/60 hover:text-gold">Edit</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div>
+        <div className="font-display text-2xl text-gold mb-3">Active Prospects & Contacted ({prospects.length})</div>
+        {prospects.length === 0
+          ? <EmptyState icon="🎯" title="No active prospects" hint="Add prospects to the roster to start tracking." />
+          : (
+            <div className="space-y-2">
+              {prospects.map((p) => {
+                const days = daysSince(p.createdAt);
+                const stale = days > 14;
+                return (
+                  <div key={p.id} className={`bg-navy2 border rounded-xl p-4 transition-all duration-150 ${stale ? 'border-red/30' : 'border-cream/10'}`}>
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div>
+                        <div className="font-medium text-cream">{p.firstName} {p.lastName}</div>
+                        <div className="text-xs text-cream/50 mt-0.5 flex items-center gap-2 flex-wrap">
+                          {p.email && <span>{p.email}</span>}
+                          {p.phone && <span>{p.phone}</span>}
+                          <Badge tone={p.status === 'Contacted' ? 'blue' : 'slate'}>{p.status}</Badge>
+                          <span className={stale ? 'text-red font-medium' : 'text-cream/40'}>{days} day{days !== 1 ? 's' : ''} in pipeline{stale ? ' ⚠' : ''}</span>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        {p.status === 'Prospect' && (
+                          <Button variant="ghost" className="text-xs px-3 py-1"
+                            disabled={!!busy} onClick={() => doAction(p.id, 'contacted')}>
+                            {busy === `${p.id}:contacted` ? 'Saving…' : 'Mark Contacted'}
+                          </Button>
+                        )}
+                        <Button variant="danger" className="text-xs px-3 py-1"
+                          disabled={!!busy} onClick={() => doAction(p.id, 'decline')}>
+                          {busy === `${p.id}:decline` ? 'Saving…' : 'Declined'}
+                        </Button>
+                      </div>
+                    </div>
+                    {p.notes && <div className="text-xs text-cream/40 mt-2 line-clamp-2">{p.notes}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Expense Reimbursements
+// ---------------------------------------------------------------------------
+const REIMBURSEMENT_CATEGORIES = ['Supplies', 'Food', 'Printing', 'Travel', 'Other'];
+const REIMBURSEMENT_CATEGORY_ICONS = { Supplies: '📦', Food: '🍕', Printing: '🖨', Travel: '🚗', Other: '📎' };
+
+function ReimbursementsPage({ me }) {
+  const [items, setItems] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ amount: '', category: 'Supplies', description: '', purchaseDate: '' });
+  const [reviewNotes, setReviewNotes] = useState({});
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState('');
+  const isManager = me.role === 'admin' || me.role === 'manager';
+
+  const load = useCallback(async () => {
+    try { const d = await api('/reimbursements'); setItems(d.reimbursements || []); }
+    catch (e) { setError(e.message); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const setF = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!form.amount || Number(form.amount) <= 0) { setError('Amount must be positive'); return; }
+    if (!form.purchaseDate) { setError('Purchase date required'); return; }
+    setBusy('submit'); setError('');
+    try {
+      await api('/reimbursements', { method: 'POST', body: { ...form, amount: Number(form.amount) } });
+      setShowForm(false);
+      setForm({ amount: '', category: 'Supplies', description: '', purchaseDate: '' });
+      load();
+    } catch (e) { setError(e.message); }
+    finally { setBusy(''); }
+  }
+
+  async function review(id, action) {
+    setBusy(`${id}:${action}`); setError('');
+    try {
+      await api(`/reimbursements/${id}`, { method: 'PATCH', body: { action, reviewNotes: reviewNotes[id] || '' } });
+      load();
+    } catch (e) { setError(e.message); }
+    finally { setBusy(''); }
+  }
+
+  const pending = (items || []).filter((r) => r.status === 'pending');
+  const mine = (items || []).filter((r) => r.submittedById === me.id);
+  const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
+
+  function statusToneR(s) {
+    if (s === 'approved') return 'green';
+    if (s === 'denied') return 'red';
+    return 'slate';
+  }
+
+  return (
+    <div className="max-w-3xl space-y-6">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Reimbursements</h1>
+          <p className="text-cream/50 mt-1">Submit receipts for club purchases you've already made.</p>
+        </div>
+        <Button variant="ghost" onClick={() => setShowForm(true)}>+ New Request</Button>
+      </div>
+      {error && <div className="text-red text-sm bg-red/10 border border-red/30 rounded-md px-3 py-2">{error}</div>}
+
+      {showForm && (
+        <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3 ca-slide-up">
+          <div className="font-display text-xl text-gold">New Reimbursement Request</div>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="Amount ($) *">
+              <input type="number" step="0.01" min="0.01" className={inputCls} value={form.amount} onChange={setF('amount')} required placeholder="0.00" />
+            </Field>
+            <Field label="Purchase Date *">
+              <input type="date" className={inputCls} value={form.purchaseDate} onChange={setF('purchaseDate')} required />
+            </Field>
+            <Field label="Category">
+              <select className={inputCls} value={form.category} onChange={setF('category')}>
+                {REIMBURSEMENT_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+              </select>
+            </Field>
+            <Field label="Description">
+              <input className={inputCls} value={form.description} onChange={setF('description')} placeholder="What did you buy?" />
+            </Field>
+          </div>
+          <div className="flex gap-2">
+            <Button type="submit" variant="gold" disabled={busy === 'submit'}>{busy === 'submit' ? 'Submitting…' : 'Submit Request'}</Button>
+            <Button variant="ghost" onClick={() => setShowForm(false)}>Cancel</Button>
+          </div>
+        </form>
+      )}
+
+      {isManager && pending.length > 0 && (
+        <div>
+          <div className="font-display text-2xl text-gold mb-3">Pending Review ({pending.length})</div>
+          <div className="space-y-3">
+            {pending.map((r) => (
+              <div key={r.id} className="bg-navy2 border border-gold/20 rounded-xl p-4">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <div className="font-medium text-cream">{fmt(r.amount)} · {REIMBURSEMENT_CATEGORY_ICONS[r.category] || ''} {r.category}</div>
+                    {r.description && <div className="text-sm text-cream/60 mt-0.5">{r.description}</div>}
+                    <div className="text-xs text-cream/40 mt-1">By {r.submitterName}{r.submitterTitle ? ` · ${r.submitterTitle}` : ''} · purchased {r.purchaseDate}</div>
+                  </div>
+                  <Badge tone="slate">pending</Badge>
+                </div>
+                <div className="mt-3 space-y-2">
+                  <Field label="Review note (optional)">
+                    <input className={inputCls + ' text-sm'} placeholder="Add a note…"
+                      value={reviewNotes[r.id] || ''} onChange={(e) => setReviewNotes((prev) => ({ ...prev, [r.id]: e.target.value }))} />
+                  </Field>
+                  <div className="flex gap-2">
+                    <Button variant="gold" className="text-xs px-3 py-1" disabled={!!busy} onClick={() => review(r.id, 'approve')}>
+                      {busy === `${r.id}:approve` ? 'Approving…' : 'Approve'}
+                    </Button>
+                    <Button variant="danger" className="text-xs px-3 py-1" disabled={!!busy} onClick={() => review(r.id, 'deny')}>
+                      {busy === `${r.id}:deny` ? 'Denying…' : 'Deny'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div>
+        <div className="font-display text-2xl text-gold mb-3">{isManager ? 'All Requests' : 'My Requests'}</div>
+        {items === null && <Loading label="Loading…" />}
+        {items !== null && (isManager ? items : mine).length === 0
+          ? <EmptyState icon="💳" title="No reimbursements yet" hint="Submit a request when you make a purchase for the club." />
+          : (
+            <div className="space-y-2">
+              {(isManager ? items : mine).map((r) => (
+                <div key={r.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <div className="text-cream text-sm font-medium">{fmt(r.amount)} · {REIMBURSEMENT_CATEGORY_ICONS[r.category] || ''} {r.category}</div>
+                    {r.description && <div className="text-xs text-cream/50 truncate">{r.description}</div>}
+                    <div className="text-xs text-cream/40 mt-0.5">
+                      {isManager && r.submitterName ? `${r.submitterName} · ` : ''}purchased {r.purchaseDate}
+                      {r.reviewNotes ? ` · Note: ${r.reviewNotes}` : ''}
+                    </div>
+                  </div>
+                  <Badge tone={statusToneR(r.status)}>{r.status}</Badge>
+                </div>
+              ))}
+            </div>
+          )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Board Contact Directory
+// ---------------------------------------------------------------------------
+function DirectoryPage({ me }) {
+  const [users, setUsers] = useState(null);
+  const [query, setQuery] = useState('');
+  const [copied, setCopied] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api('/directory').then((d) => setUsers(d.users || [])).catch((e) => setError(e.message));
+  }, []);
+
+  function copyEmail(email) {
+    if (!email) return;
+    navigator.clipboard.writeText(email).then(() => {
+      setCopied(email);
+      setTimeout(() => setCopied(''), 2000);
+    }).catch(() => {});
+  }
+
+  const filtered = (users || []).filter((u) => {
+    if (!query) return true;
+    const q = query.toLowerCase();
+    return (u.displayName || '').toLowerCase().includes(q) || (u.title || '').toLowerCase().includes(q);
+  });
+
+  return (
+    <div className="max-w-4xl">
+      <div className="mb-6">
+        <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Board Directory</h1>
+        <p className="text-cream/50 mt-1">Contact information for all board members.</p>
+      </div>
+      {error && <div className="text-red text-sm mb-4">{error}</div>}
+
+      <div className="mb-4">
+        <input className={inputCls + ' max-w-sm'} placeholder="Search by name or title…"
+          value={query} onChange={(e) => setQuery(e.target.value)} />
+      </div>
+
+      {users === null && <Loading label="Loading directory…" />}
+      {users !== null && filtered.length === 0 && (
+        <EmptyState icon="👥" title="No members found" hint="Try a different search term." />
+      )}
+
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {filtered.map((u) => {
+          const initials = (u.displayName || '?').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+          return (
+            <div key={u.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 flex items-start gap-3 hover:border-cream/20 transition-colors">
+              <div className="w-12 h-12 rounded-full bg-navy3 border border-gold/20 overflow-hidden flex items-center justify-center shrink-0">
+                {u.photo
+                  ? <img src={u.photo} alt={u.displayName} className="w-full h-full object-cover" />
+                  : <span className="text-gold font-display text-lg">{initials}</span>}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-cream font-medium text-sm truncate">{u.displayName}</div>
+                {u.title && <div className="text-cream/50 text-xs">{u.title}</div>}
+                {u.email && (
+                  <div className="flex items-center gap-1.5 mt-1.5">
+                    <span className="text-cream/60 text-xs truncate">{u.email}</span>
+                    <button onClick={() => copyEmail(u.email)} className="shrink-0 text-cream/40 hover:text-gold transition-colors" title="Copy email">
+                      {copied === u.email
+                        ? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-400"><path d="M20 6L9 17l-5-5"/></svg>
+                        : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>}
+                    </button>
+                  </div>
+                )}
+                {u.phone && <div className="text-cream/50 text-xs mt-0.5">{u.phone}</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Attendance Tracker
 // ---------------------------------------------------------------------------
 const ATTENDANCE_STATUSES = ['present', 'absent', 'excused'];
 const ATTENDANCE_COLORS = { present: 'green', absent: 'red', excused: 'blue' };
 const ATTENDANCE_LABELS = { present: 'Present', absent: 'Absent', excused: 'Excused' };
 
+function RollCallModal({ eventId, onClose, onDone }) {
+  const [allUsers, setAllUsers] = useState([]);
+  const [statuses, setStatuses] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api('/users').then((d) => {
+      const sorted = [...(d.users || [])].sort((a, b) => (a.displayName || '').localeCompare(b.displayName));
+      setAllUsers(sorted);
+    }).catch(() => {});
+  }, []);
+
+  function toggle(userId, status) {
+    setStatuses((prev) => ({ ...prev, [userId]: prev[userId] === status ? undefined : status }));
+  }
+
+  async function submit() {
+    const records = allUsers
+      .filter((u) => statuses[u.id])
+      .map((u) => ({ userId: u.id, status: statuses[u.id] }));
+    if (records.length === 0) { setError('Mark at least one member before submitting.'); return; }
+    setBusy(true); setError('');
+    try {
+      await api(`/attendance/${eventId}/roll-call`, { method: 'POST', body: { records } });
+      onDone();
+    } catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  }
+
+  const presentCount  = allUsers.filter((u) => statuses[u.id] === 'present').length;
+  const absentCount   = allUsers.filter((u) => statuses[u.id] === 'absent').length;
+  const excusedCount  = allUsers.filter((u) => statuses[u.id] === 'excused').length;
+  const unmarkedCount = allUsers.filter((u) => !statuses[u.id]).length;
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-navy" style={{ background: '#0d1b2e' }}>
+      <div className="sticky top-0 bg-navy2/95 backdrop-blur border-b border-cream/10 px-4 py-3 flex items-center justify-between gap-3">
+        <div className="font-display text-xl text-cream">Roll Call</div>
+        <div className="flex items-center gap-3 text-xs">
+          <span className="text-emerald-400">P: {presentCount}</span>
+          <span className="text-red">A: {absentCount}</span>
+          <span className="text-sky-300">E: {excusedCount}</span>
+          <span className="text-cream/40">–: {unmarkedCount}</span>
+        </div>
+        <button onClick={onClose} className="text-cream/50 hover:text-cream transition-colors text-lg">✕</button>
+      </div>
+      {error && <div className="mx-4 mt-3 text-red text-sm bg-red/10 border border-red/30 rounded px-3 py-2">{error}</div>}
+      <div className="flex-1 overflow-y-auto divide-y divide-cream/5">
+        {allUsers.map((u) => {
+          const s = statuses[u.id];
+          return (
+            <div key={u.id} className="px-4 py-3 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-cream text-sm font-medium">{u.displayName}</div>
+                {u.title && <div className="text-cream/40 text-xs">{u.title}</div>}
+              </div>
+              <div className="flex gap-2 shrink-0">
+                {[['present','P','bg-emerald-500/80'],['absent','A','bg-red/80'],['excused','E','bg-sky-500/80']].map(([val, label, activeClass]) => (
+                  <button key={val} onClick={() => toggle(u.id, val)}
+                    className={`w-9 h-9 rounded-lg text-sm font-bold transition-all duration-150 ${
+                      s === val ? `${activeClass} text-white` : 'bg-navy border border-cream/15 text-cream/50 hover:border-cream/30'
+                    }`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="sticky bottom-0 bg-navy2/95 backdrop-blur border-t border-cream/10 px-4 py-3 flex items-center justify-between gap-3">
+        <span className="text-cream/50 text-sm">{allUsers.length - unmarkedCount} of {allUsers.length} marked</span>
+        <div className="flex gap-2">
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="gold" onClick={submit} disabled={busy}>{busy ? 'Submitting…' : 'Submit Roll Call'}</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AttendancePage({ me }) {
   const [events, setEvents] = useState(null);
   const [activeEvent, setActiveEvent] = useState(null);
   const [eventData, setEventData] = useState(null);
   const [creating, setCreating] = useState(false);
+  const [rollCallEvent, setRollCallEvent] = useState(null);
   const [form, setForm] = useState({ title: '', eventDate: '', location: '', notes: '' });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -5702,6 +6719,13 @@ function AttendancePage({ me }) {
   return (
     <div className="max-w-5xl">
       {confirmEl}
+      {rollCallEvent && (
+        <RollCallModal
+          eventId={rollCallEvent}
+          onClose={() => setRollCallEvent(null)}
+          onDone={() => { setRollCallEvent(null); loadEvents(); if (activeEvent === rollCallEvent) loadEvent(rollCallEvent); }}
+        />
+      )}
       <div className="flex items-start justify-between gap-3 mb-6 flex-wrap">
         <div>
           <h1 className="font-display text-4xl sm:text-5xl text-cream">Attendance</h1>
@@ -5738,17 +6762,27 @@ function AttendancePage({ me }) {
             <EmptyState icon="📅" title="No events yet" hint="Create an event to start tracking attendance." />
           )}
           {(events || []).map((ev) => (
-            <button key={ev.id}
-              onClick={() => setActiveEvent(ev.id === activeEvent ? null : ev.id)}
-              className={`w-full text-left bg-navy2 border rounded-xl px-4 py-3 transition-all duration-150 hover:border-gold/40 ${activeEvent === ev.id ? 'border-gold/60 bg-navy3' : 'border-cream/10'}`}>
-              <div className="font-medium text-cream truncate">{ev.title}</div>
-              <div className="text-xs text-cream/50 mt-0.5">{new Date(ev.eventDate + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</div>
-              {ev.location && <div className="text-xs text-cream/40 truncate">{ev.location}</div>}
-              <div className="flex items-center gap-3 mt-1.5">
-                <Badge tone="green">{ev.presentCount} present</Badge>
-                <span className="text-xs text-cream/30">{ev.markedCount} marked</span>
-              </div>
-            </button>
+            <div key={ev.id} className={`bg-navy2 border rounded-xl transition-all duration-150 ${activeEvent === ev.id ? 'border-gold/60 bg-navy3' : 'border-cream/10'}`}>
+              <button
+                onClick={() => setActiveEvent(ev.id === activeEvent ? null : ev.id)}
+                className="w-full text-left px-4 py-3 hover:bg-navy3/50 transition-colors rounded-t-xl">
+                <div className="font-medium text-cream truncate">{ev.title}</div>
+                <div className="text-xs text-cream/50 mt-0.5">{new Date(ev.eventDate + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</div>
+                {ev.location && <div className="text-xs text-cream/40 truncate">{ev.location}</div>}
+                <div className="flex items-center gap-3 mt-1.5">
+                  <Badge tone="green">{ev.presentCount} present</Badge>
+                  <span className="text-xs text-cream/30">{ev.markedCount} marked</span>
+                </div>
+              </button>
+              {(me.role === 'admin' || me.role === 'manager') && (
+                <div className="px-4 pb-3">
+                  <button onClick={() => setRollCallEvent(ev.id)}
+                    className="text-xs text-gold/70 hover:text-gold border border-gold/30 hover:border-gold/60 rounded px-2.5 py-1 transition-colors">
+                    📋 Roll Call
+                  </button>
+                </div>
+              )}
+            </div>
           ))}
         </div>
 
@@ -5828,7 +6862,7 @@ function BudgetDashboardPage({ me }) {
   if (error) return <ErrorState message={error} />;
   if (!data) return <Loading label="Loading budget overview…" />;
 
-  const { totals, bySubmitter, recent } = data;
+  const { totals, bySubmitter, recent, reimbursedTotal = 0 } = data;
   const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
   const spent = Number(totals.approvedAmount) + Number(totals.purchasedAmount);
 
@@ -5850,8 +6884,8 @@ function BudgetDashboardPage({ me }) {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
         <StatCard label="Total Requested" value={fmt(totals.totalAmount)} tone="gold" />
         <StatCard label="Approved / Spent" value={fmt(spent)} tone="green" />
+        <StatCard label="Reimbursed" value={fmt(reimbursedTotal)} tone="blue" />
         <StatCard label="Pending Review" value={fmt(totals.pendingAmount)} tone="slate" />
-        <StatCard label="Denied" value={fmt(totals.deniedAmount)} tone="red" />
       </div>
 
       <div className="grid sm:grid-cols-2 gap-3 mb-8">
