@@ -1767,6 +1767,7 @@ function AdminPanel({ users, reload }) {
                   { key: 'canAnnounce', label: 'Announce' },
                   { key: 'canEditHome', label: 'Edit Site' },
                   { key: 'canViewLogistics', label: 'View Login Activity' },
+                  { key: 'canManageSocial', label: 'Social Media Manager' },
                 ].map(({ key, label }) => (
                   <label key={key} className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={!!u[key]}
@@ -2836,6 +2837,21 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
           <button onClick={() => onAction(member.id, 'delete')} className="text-xs text-red/60 hover:text-red">Delete</button>
         )}
       </div>
+      {(me.role === 'admin' || me.role === 'manager') && member.status === 'Onboarded' && (
+        <div className="mt-2 flex items-center gap-2">
+          <label className="flex items-center gap-2 cursor-pointer group">
+            <input type="checkbox" checked={!!member.parentFormCollected}
+              onChange={async (e) => {
+                try { await onAction(member.id, 'patch', { parentFormCollected: e.target.checked ? 1 : 0 }); }
+                catch (_) {}
+              }}
+              className="w-3.5 h-3.5 accent-gold" />
+            <span className={`text-xs ${member.parentFormCollected ? 'text-emerald-400/70' : 'text-cream/40'}`}>
+              {member.parentFormCollected ? '✓ Parent form collected' : 'Parent form missing'}
+            </span>
+          </label>
+        </div>
+      )}
     </div>
   );
 }
@@ -3086,6 +3102,8 @@ function RosterPage({ me }) {
       if (action === 'delete') {
         if (!(await confirm({ title: 'Remove from roster?', message: 'This member will be permanently deleted from the roster.', confirmLabel: 'Delete', danger: true }))) return;
         await api(`/roster/${memberId}`, { method: 'DELETE' });
+      } else if (action === 'patch') {
+        await api(`/roster/${memberId}`, { method: 'PATCH', body });
       } else {
         await api(`/roster/${memberId}/${action}`, { method: 'POST', body: body || undefined });
       }
@@ -4436,6 +4454,10 @@ function AppIcon({ name }) {
     case 'attendance':return <svg {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>;
     case 'poll':      return <svg {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 16v-4M12 16v-8M17 16v-2"/></svg>;
     case 'budget':    return <svg {...p}><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>;
+    case 'meetings':  return <svg {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M8 11v2M12 11v2"/></svg>;
+    case 'grants':    return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5a2.5 2.5 0 0 1 5 0c0 1.5-1 2-2.5 2.5-1.5.5-2.5 1-2.5 2.5a2.5 2.5 0 0 0 5 0"/><path d="m16 5-1.5 1.5"/></svg>;
+    case 'speaker':   return <svg {...p}><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/><path d="M3 9l4 4"/></svg>;
+    case 'social':    return <svg {...p}><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>;
     default:          return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
   }
 }
@@ -4476,8 +4498,12 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
     { type: 'funding',    label: 'Funding',            icon: 'funding'    },
     { type: 'apply',      label: 'Apply',               icon: 'apply'      },
     ...(isManager         ? [{ type: 'dashboard',   label: 'Dashboard',        icon: 'dashboard'  }] : []),
-    { type: 'attendance', label: 'Attendance',          icon: 'attendance' },
-    { type: 'polls',      label: 'Polls & Voting',      icon: 'poll'       },
+    { type: 'attendance',   label: 'Attendance',          icon: 'attendance' },
+    { type: 'polls',       label: 'Polls & Voting',      icon: 'poll'       },
+    { type: 'meetings',    label: 'Meetings',             icon: 'meetings'   },
+    ...(isManager ? [{ type: 'speaker',   label: 'Speaker Events',    icon: 'speaker'    }] : []),
+    ...(isManager ? [{ type: 'grants',    label: 'Grant Tracker',     icon: 'grants'     }] : []),
+    ...(isManager || !!me.canManageSocial ? [{ type: 'social', label: 'Social Media', icon: 'social' }] : []),
     ...(isManager         ? [{ type: 'budget',      label: 'Budget Overview',  icon: 'budget'     }] : []),
     { type: 'org',        label: 'Org Chart',           icon: 'org'        },
     ...(me.role === 'admin' ? [{ type: 'admin',     label: 'Admin Panel',      icon: 'admin'      }] : []),
@@ -4726,6 +4752,7 @@ function App() {
     submissions: 'Get Involved', roster: 'Roster', checkin: 'Weekly Check-In',
     funding: 'Funding Requests', apply: 'Apply for Position', dashboard: 'Dashboard',
     attendance: 'Attendance', polls: 'Polls & Voting', budget: 'Budget Overview',
+    meetings: 'Meetings', speaker: 'Speaker Events', grants: 'Grant Tracker', social: 'Social Media',
     org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity',
     ai: 'AI Assistant', password: 'Change Password', profile: 'Edit Profile',
   };
@@ -4753,6 +4780,10 @@ function App() {
   else if (view.type === 'attendance') content = <AttendancePage me={me} />;
   else if (view.type === 'polls') content = <PollsPage me={me} />;
   else if (view.type === 'budget') content = (me.role === 'admin' || me.role === 'manager') ? <BudgetDashboardPage me={me} /> : null;
+  else if (view.type === 'meetings') content = <MeetingsPage me={me} />;
+  else if (view.type === 'speaker') content = (me.role === 'admin' || me.role === 'manager') ? <SpeakerEventsPage me={me} /> : null;
+  else if (view.type === 'grants') content = (me.role === 'admin' || me.role === 'manager') ? <GrantsPage me={me} /> : null;
+  else if (view.type === 'social') content = (me.role === 'admin' || me.role === 'manager' || !!me.canManageSocial) ? <SocialTrackerPage me={me} /> : null;
 
   return (
     <>
@@ -4784,6 +4815,615 @@ function App() {
         </main>
       </div>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Meetings Page
+// ---------------------------------------------------------------------------
+function MeetingsPage({ me }) {
+  const [meetings, setMeetings] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [title, setTitle] = useState('');
+  const [meetingDate, setMeetingDate] = useState('');
+  const [agendaUrl, setAgendaUrl] = useState('');
+  const [minutesUrl, setMinutesUrl] = useState('');
+  const [notes, setNotes] = useState('');
+  const { loading, error, setError, run } = useAction();
+  const isManager = me.role === 'admin' || me.role === 'manager';
+
+  const load = useCallback(async () => {
+    try { const d = await api('/meetings'); setMeetings(d.meetings || []); }
+    catch (e) { setError(e.message); }
+    finally { setLoaded(true); }
+  }, [setError]);
+
+  useEffect(() => { load(); }, [load]);
+
+  function openCreate() { setEditId(null); setTitle(''); setMeetingDate(''); setAgendaUrl(''); setMinutesUrl(''); setNotes(''); setShowForm(true); }
+  function openEdit(m) { setEditId(m.id); setTitle(m.title); setMeetingDate(m.meetingDate); setAgendaUrl(m.agendaUrl||''); setMinutesUrl(m.minutesUrl||''); setNotes(m.notes||''); setShowForm(true); }
+
+  async function save(e) {
+    e.preventDefault();
+    if (!title.trim()) { setError('Title is required'); return; }
+    if (!meetingDate) { setError('Date is required'); return; }
+    try {
+      await run(() => editId
+        ? api(`/meetings/${editId}`, { method: 'PATCH', body: { title: title.trim(), meetingDate, agendaUrl, minutesUrl, notes } })
+        : api('/meetings', { method: 'POST', body: { title: title.trim(), meetingDate, agendaUrl, minutesUrl, notes } })
+      );
+      setShowForm(false); load();
+    } catch (_) {}
+  }
+
+  async function deleteMeeting(m) {
+    if (!window.confirm(`Delete "${m.title}"?`)) return;
+    try { await api(`/meetings/${m.id}`, { method: 'DELETE' }); load(); } catch (_) {}
+  }
+
+  const safeLink = (url) => url && (url.startsWith('http://') || url.startsWith('https://')) ? url : url ? 'https://' + url : '';
+
+  return (
+    <div className="max-w-3xl">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="font-display text-4xl sm:text-5xl text-cream">Meetings</h1>
+        {isManager && !showForm && <Button variant="gold" onClick={openCreate}>+ New Meeting</Button>}
+      </div>
+
+      {showForm && (
+        <form onSubmit={save} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
+          <div className="font-display text-xl text-gold">{editId ? 'Edit Meeting' : 'New Meeting'}</div>
+          <Field label="Title"><input className={inputCls} value={title} autoFocus onChange={(e) => setTitle(e.target.value)} /></Field>
+          <Field label="Date"><input type="date" className={inputCls} value={meetingDate} onChange={(e) => setMeetingDate(e.target.value)} /></Field>
+          <Field label="Agenda (Google Doc URL)"><input className={inputCls} value={agendaUrl} placeholder="https://docs.google.com/…" onChange={(e) => setAgendaUrl(e.target.value)} /></Field>
+          <Field label="Minutes (Google Doc URL)"><input className={inputCls} value={minutesUrl} placeholder="https://docs.google.com/…" onChange={(e) => setMinutesUrl(e.target.value)} /></Field>
+          <Field label="Notes"><textarea className={inputCls} rows="2" value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
+          {error && <div className="text-red text-sm">{error}</div>}
+          <div className="flex gap-2">
+            <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner />Saving…</span> : 'Save'}</Button>
+            <Button variant="ghost" onClick={() => setShowForm(false)} disabled={loading}>Cancel</Button>
+          </div>
+        </form>
+      )}
+
+      {!loaded && <Loading label="Loading meetings…" />}
+      {loaded && meetings.length === 0 && (
+        <EmptyState icon="📋" title="No meetings yet" hint={isManager ? 'Create the first meeting record above.' : 'Meeting records will appear here once added.'} />
+      )}
+      <div className="space-y-3">
+        {meetings.map((m) => (
+          <div key={m.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-medium text-cream">{m.title}</div>
+                <div className="text-xs text-cream/50 mt-0.5">{fmtShortDate(m.meetingDate)} · Added by {m.createdByName}</div>
+                {m.notes && <div className="text-sm text-cream/60 mt-1">{m.notes}</div>}
+                <div className="flex gap-3 mt-2 flex-wrap">
+                  {safeLink(m.agendaUrl) && (
+                    <a href={safeLink(m.agendaUrl)} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-gold/80 hover:text-gold transition-colors">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
+                      Agenda
+                    </a>
+                  )}
+                  {safeLink(m.minutesUrl) && (
+                    <a href={safeLink(m.minutesUrl)} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-emerald-400/80 hover:text-emerald-300 transition-colors">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>
+                      Minutes
+                    </a>
+                  )}
+                  {!safeLink(m.agendaUrl) && isManager && <span className="text-xs text-cream/25 italic">No agenda link yet</span>}
+                  {!safeLink(m.minutesUrl) && isManager && <span className="text-xs text-cream/25 italic">No minutes link yet</span>}
+                </div>
+              </div>
+              {isManager && (
+                <div className="flex gap-2 shrink-0">
+                  <button onClick={() => openEdit(m)} className="text-xs text-gold/60 hover:text-gold">Edit</button>
+                  {me.role === 'admin' && <button onClick={() => deleteMeeting(m)} className="text-xs text-red/60 hover:text-red">Delete</button>}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Grant Application Tracker
+// ---------------------------------------------------------------------------
+const GRANT_STATUSES = ['Draft','Submitted','Under Review','Approved','Denied'];
+const GRANT_STATUS_TONES = { Draft: 'slate', Submitted: 'blue', 'Under Review': 'gold', Approved: 'green', Denied: 'red' };
+
+function GrantsPage({ me }) {
+  const [grants, setGrants] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [title, setTitle] = useState('');
+  const [purpose, setPurpose] = useState('');
+  const [amountRequested, setAmountRequested] = useState('');
+  const [submissionDate, setSubmissionDate] = useState('');
+  const [notes, setNotes] = useState('');
+  const { loading, error, setError, run } = useAction();
+  const isManager = me.role === 'admin' || me.role === 'manager';
+
+  const load = useCallback(async () => {
+    try { const d = await api('/grants'); setGrants(d.grants || []); }
+    catch (e) { setError(e.message); }
+    finally { setLoaded(true); }
+  }, [setError]);
+
+  useEffect(() => { load(); }, [load]);
+
+  function openCreate() { setEditId(null); setTitle(''); setPurpose(''); setAmountRequested(''); setSubmissionDate(''); setNotes(''); setShowForm(true); }
+  function openEdit(g) { setEditId(g.id); setTitle(g.title); setPurpose(g.purpose||''); setAmountRequested(String(g.amountRequested||'')); setSubmissionDate(g.submissionDate||''); setNotes(g.notes||''); setShowForm(true); }
+
+  async function save(e) {
+    e.preventDefault();
+    if (!title.trim()) { setError('Title is required'); return; }
+    try {
+      await run(() => editId
+        ? api(`/grants/${editId}`, { method: 'PATCH', body: { title: title.trim(), purpose, amountRequested: Number(amountRequested)||0, submissionDate: submissionDate||null, notes } })
+        : api('/grants', { method: 'POST', body: { title: title.trim(), purpose, amountRequested: Number(amountRequested)||0, submissionDate: submissionDate||null, notes } })
+      );
+      setShowForm(false); load();
+    } catch (_) {}
+  }
+
+  async function updateStatus(g, status) {
+    try { await api(`/grants/${g.id}`, { method: 'PATCH', body: { status } }); load(); } catch (_) {}
+  }
+
+  async function updateAwarded(g, val) {
+    try { await api(`/grants/${g.id}`, { method: 'PATCH', body: { amountAwarded: Number(val) } }); load(); } catch (_) {}
+  }
+
+  async function deleteGrant(g) {
+    if (!window.confirm(`Delete "${g.title}"?`)) return;
+    try { await api(`/grants/${g.id}`, { method: 'DELETE' }); load(); } catch (_) {}
+  }
+
+  const total = { requested: grants.reduce((s, g) => s + (g.amountRequested || 0), 0), awarded: grants.filter(g => g.status === 'Approved').reduce((s, g) => s + (g.amountAwarded || 0), 0) };
+
+  return (
+    <div className="max-w-3xl">
+      <div className="flex items-center justify-between mb-2">
+        <h1 className="font-display text-4xl sm:text-5xl text-cream">Grant Applications</h1>
+        {isManager && !showForm && <Button variant="gold" onClick={openCreate}>+ New Application</Button>}
+      </div>
+      <p className="text-cream/50 text-sm mb-6">Track grant requests submitted to TPUSA national and other sources.</p>
+
+      {grants.length > 0 && (
+        <div className="grid grid-cols-2 gap-3 mb-6">
+          <div className="bg-navy2 border border-cream/10 rounded-xl p-4">
+            <div className="text-cream/50 text-xs uppercase tracking-wider mb-1">Total Requested</div>
+            <div className="text-2xl font-display text-cream">${total.requested.toLocaleString()}</div>
+          </div>
+          <div className="bg-navy2 border border-emerald-500/20 rounded-xl p-4">
+            <div className="text-cream/50 text-xs uppercase tracking-wider mb-1">Total Awarded</div>
+            <div className="text-2xl font-display text-emerald-300">${total.awarded.toLocaleString()}</div>
+          </div>
+        </div>
+      )}
+
+      {showForm && (
+        <form onSubmit={save} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
+          <div className="font-display text-xl text-gold">{editId ? 'Edit Application' : 'New Grant Application'}</div>
+          <Field label="Grant Title / Purpose"><input className={inputCls} value={title} autoFocus onChange={(e) => setTitle(e.target.value)} placeholder="e.g. TPUSA Activism Grant — Spring Speaker Event" /></Field>
+          <Field label="Description"><textarea className={inputCls} rows="2" value={purpose} onChange={(e) => setPurpose(e.target.value)} /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Amount Requested ($)"><input type="number" min="0" className={inputCls} value={amountRequested} onChange={(e) => setAmountRequested(e.target.value)} /></Field>
+            <Field label="Submission Date"><input type="date" className={inputCls} value={submissionDate} onChange={(e) => setSubmissionDate(e.target.value)} /></Field>
+          </div>
+          <Field label="Notes"><textarea className={inputCls} rows="2" value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
+          {error && <div className="text-red text-sm">{error}</div>}
+          <div className="flex gap-2">
+            <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner />Saving…</span> : 'Save'}</Button>
+            <Button variant="ghost" onClick={() => setShowForm(false)} disabled={loading}>Cancel</Button>
+          </div>
+        </form>
+      )}
+
+      {!loaded && <Loading label="Loading grants…" />}
+      {loaded && grants.length === 0 && <EmptyState icon="💰" title="No grant applications yet" hint="Track grants submitted to TPUSA national or other funders." />}
+      <div className="space-y-3">
+        {grants.map((g) => (
+          <div key={g.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="min-w-0 flex-1">
+                <div className="font-medium text-cream">{g.title}</div>
+                {g.purpose && <div className="text-sm text-cream/60 mt-0.5">{g.purpose}</div>}
+                <div className="text-xs text-cream/40 mt-1">
+                  Requested: <span className="text-cream/70">${(g.amountRequested||0).toLocaleString()}</span>
+                  {g.submissionDate && <> · Submitted {fmtShortDate(g.submissionDate)}</>}
+                  {g.notes && <> · <span className="italic">{g.notes}</span></>}
+                </div>
+                {g.status === 'Approved' && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="text-xs text-emerald-300">Awarded: $</span>
+                    <input type="number" min="0" className="bg-navy border border-cream/20 rounded px-2 py-0.5 text-xs text-emerald-300 w-24"
+                      defaultValue={g.amountAwarded || ''}
+                      onBlur={(e) => updateAwarded(g, e.target.value)} />
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-col items-end gap-2 shrink-0">
+                <Badge tone={GRANT_STATUS_TONES[g.status] || 'slate'}>{g.status}</Badge>
+                {isManager && (
+                  <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs text-cream/70"
+                    value={g.status} onChange={(e) => updateStatus(g, e.target.value)}>
+                    {GRANT_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                )}
+              </div>
+            </div>
+            {isManager && (
+              <div className="flex gap-3 mt-2">
+                <button onClick={() => openEdit(g)} className="text-xs text-gold/60 hover:text-gold">Edit</button>
+                {me.role === 'admin' && <button onClick={() => deleteGrant(g)} className="text-xs text-red/60 hover:text-red">Delete</button>}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Speaker Event Workflow
+// ---------------------------------------------------------------------------
+const SPEAKER_STATUSES = ['Planning','Confirmed','Completed','Cancelled'];
+const SPEAKER_STATUS_TONES = { Planning: 'slate', Confirmed: 'blue', Completed: 'green', Cancelled: 'red' };
+
+function SpeakerEventsPage({ me }) {
+  const [events, setEvents] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+  const [form, setForm] = useState({ title:'', speakerName:'', speakerOrg:'', topic:'', eventDate:'', location:'', expectedAttendance:'', avNeeds:'', materialsRequested:'', budgetEstimate:'' });
+  const { loading, error, setError, run } = useAction();
+  const isManager = me.role === 'admin' || me.role === 'manager';
+
+  const load = useCallback(async () => {
+    try { const d = await api('/speaker-events'); setEvents(d.events || []); }
+    catch (e) { setError(e.message); }
+    finally { setLoaded(true); }
+  }, [setError]);
+
+  useEffect(() => { load(); }, [load]);
+
+  function setField(k, v) { setForm((f) => ({ ...f, [k]: v })); }
+
+  function openCreate() {
+    setEditId(null);
+    setForm({ title:'', speakerName:'', speakerOrg:'', topic:'', eventDate:'', location:'', expectedAttendance:'', avNeeds:'', materialsRequested:'', budgetEstimate:'' });
+    setShowForm(true);
+  }
+  function openEdit(ev) {
+    setEditId(ev.id);
+    setForm({ title: ev.title, speakerName: ev.speakerName||'', speakerOrg: ev.speakerOrg||'', topic: ev.topic||'', eventDate: ev.eventDate||'', location: ev.location||'', expectedAttendance: String(ev.expectedAttendance||''), avNeeds: ev.avNeeds||'', materialsRequested: ev.materialsRequested||'', budgetEstimate: String(ev.budgetEstimate||'') });
+    setShowForm(true);
+  }
+
+  async function save(e) {
+    e.preventDefault();
+    if (!form.title.trim()) { setError('Title is required'); return; }
+    const body = { ...form, expectedAttendance: Number(form.expectedAttendance)||0, budgetEstimate: Number(form.budgetEstimate)||0, eventDate: form.eventDate||null };
+    try {
+      await run(() => editId ? api(`/speaker-events/${editId}`, { method: 'PATCH', body }) : api('/speaker-events', { method: 'POST', body }));
+      setShowForm(false); load();
+    } catch (_) {}
+  }
+
+  async function toggleChecklist(ev, key, val) {
+    try { await api(`/speaker-events/${ev.id}`, { method: 'PATCH', body: { [key]: val ? 1 : 0 } }); load(); } catch (_) {}
+  }
+
+  async function updateStatus(ev, status) {
+    try { await api(`/speaker-events/${ev.id}`, { method: 'PATCH', body: { status } }); load(); } catch (_) {}
+  }
+
+  async function deleteEvent(ev) {
+    if (!window.confirm(`Delete "${ev.title}"?`)) return;
+    try { await api(`/speaker-events/${ev.id}`, { method: 'DELETE' }); load(); } catch (_) {}
+  }
+
+  const CHECKLIST = [
+    { key: 'roomConfirmed',  label: 'Room / venue confirmed' },
+    { key: 'promotionDone',  label: 'Promotion & social posts done' },
+    { key: 'logisticsSent',  label: 'Logistics email sent to speaker' },
+    { key: 'tpusaNotified',  label: 'TPUSA national notified' },
+  ];
+
+  return (
+    <div className="max-w-3xl">
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="font-display text-4xl sm:text-5xl text-cream">Speaker Events</h1>
+        {isManager && !showForm && <Button variant="gold" onClick={openCreate}>+ New Event</Button>}
+      </div>
+
+      {showForm && (
+        <form onSubmit={save} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
+          <div className="font-display text-xl text-gold">{editId ? 'Edit Speaker Event' : 'New Speaker Event'}</div>
+          <Field label="Event Title"><input className={inputCls} value={form.title} autoFocus onChange={(e) => setField('title', e.target.value)} /></Field>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="Speaker Name"><input className={inputCls} value={form.speakerName} onChange={(e) => setField('speakerName', e.target.value)} /></Field>
+            <Field label="Speaker Organization"><input className={inputCls} value={form.speakerOrg} onChange={(e) => setField('speakerOrg', e.target.value)} /></Field>
+          </div>
+          <Field label="Topic / Title of Talk"><input className={inputCls} value={form.topic} onChange={(e) => setField('topic', e.target.value)} /></Field>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="Event Date"><input type="date" className={inputCls} value={form.eventDate} onChange={(e) => setField('eventDate', e.target.value)} /></Field>
+            <Field label="Location / Room"><input className={inputCls} value={form.location} onChange={(e) => setField('location', e.target.value)} /></Field>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="Expected Attendance"><input type="number" min="0" className={inputCls} value={form.expectedAttendance} onChange={(e) => setField('expectedAttendance', e.target.value)} /></Field>
+            <Field label="Budget Estimate ($)"><input type="number" min="0" className={inputCls} value={form.budgetEstimate} onChange={(e) => setField('budgetEstimate', e.target.value)} /></Field>
+          </div>
+          <Field label="AV / Tech Needs"><input className={inputCls} value={form.avNeeds} placeholder="e.g. Projector, lapel mic" onChange={(e) => setField('avNeeds', e.target.value)} /></Field>
+          <Field label="TPUSA Materials Requested"><input className={inputCls} value={form.materialsRequested} placeholder="e.g. 4×2 banner, flyers" onChange={(e) => setField('materialsRequested', e.target.value)} /></Field>
+          {error && <div className="text-red text-sm">{error}</div>}
+          <div className="flex gap-2">
+            <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner />Saving…</span> : 'Save'}</Button>
+            <Button variant="ghost" onClick={() => setShowForm(false)} disabled={loading}>Cancel</Button>
+          </div>
+        </form>
+      )}
+
+      {!loaded && <Loading label="Loading speaker events…" />}
+      {loaded && events.length === 0 && <EmptyState icon="🎤" title="No speaker events yet" hint={isManager ? 'Plan your first speaker event above.' : 'Speaker events will appear here once planned.'} />}
+      <div className="space-y-3">
+        {events.map((ev) => {
+          const done = CHECKLIST.filter((c) => ev[c.key]).length;
+          const isExpanded = expanded === ev.id;
+          return (
+            <div key={ev.id} className="bg-navy2 border border-cream/10 rounded-xl overflow-hidden hover:border-cream/20 transition-colors">
+              <div className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium text-cream">{ev.title}</div>
+                    <div className="text-sm text-cream/60 mt-0.5">
+                      {ev.speakerName && <span>{ev.speakerName}{ev.speakerOrg ? ` — ${ev.speakerOrg}` : ''}</span>}
+                    </div>
+                    <div className="text-xs text-cream/40 mt-1 flex flex-wrap gap-x-3">
+                      {ev.eventDate && <span>{fmtShortDate(ev.eventDate)}</span>}
+                      {ev.location && <span>📍 {ev.location}</span>}
+                      {ev.expectedAttendance > 0 && <span>~{ev.expectedAttendance} expected</span>}
+                      {ev.budgetEstimate > 0 && <span>${ev.budgetEstimate.toLocaleString()} budget</span>}
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <div className="flex-1 bg-navy rounded-full h-1.5">
+                        <div className="bg-gold h-1.5 rounded-full transition-all" style={{ width: `${(done/CHECKLIST.length)*100}%` }} />
+                      </div>
+                      <span className="text-xs text-cream/40">{done}/{CHECKLIST.length} checklist</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-2 shrink-0">
+                    <Badge tone={SPEAKER_STATUS_TONES[ev.status] || 'slate'}>{ev.status}</Badge>
+                    <button onClick={() => setExpanded(isExpanded ? null : ev.id)}
+                      className="text-xs text-cream/50 hover:text-cream flex items-center gap-1">
+                      {isExpanded ? 'Close' : 'Details'}
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        {isExpanded ? <path d="M18 15l-6-6-6 6"/> : <path d="M6 9l6 6 6-6"/>}
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {isExpanded && (
+                <div className="border-t border-cream/10 p-4 space-y-4 bg-navy/30">
+                  {ev.topic && <div className="text-sm"><span className="text-cream/40">Topic: </span><span className="text-cream/80">{ev.topic}</span></div>}
+                  {ev.avNeeds && <div className="text-sm"><span className="text-cream/40">AV Needs: </span><span className="text-cream/80">{ev.avNeeds}</span></div>}
+                  {ev.materialsRequested && <div className="text-sm"><span className="text-cream/40">Materials Requested: </span><span className="text-cream/80">{ev.materialsRequested}</span></div>}
+
+                  {isManager && (
+                    <>
+                      <div>
+                        <div className="text-xs uppercase tracking-wider text-cream/50 mb-2">Pre-Event Checklist</div>
+                        <div className="space-y-2">
+                          {CHECKLIST.map((item) => (
+                            <label key={item.key} className="flex items-center gap-2.5 cursor-pointer group">
+                              <input type="checkbox" checked={!!ev[item.key]} onChange={(e) => toggleChecklist(ev, item.key, e.target.checked)}
+                                className="w-4 h-4 accent-gold" />
+                              <span className={`text-sm ${ev[item.key] ? 'text-cream/50 line-through' : 'text-cream/80'}`}>{item.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <Field label="Status">
+                          <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-sm text-cream/70"
+                            value={ev.status} onChange={(e) => updateStatus(ev, e.target.value)}>
+                            {SPEAKER_STATUSES.map((s) => <option key={s}>{s}</option>)}
+                          </select>
+                        </Field>
+                      </div>
+                      <div className="flex gap-3">
+                        <button onClick={() => { openEdit(ev); setExpanded(null); }} className="text-xs text-gold/60 hover:text-gold">Edit Details</button>
+                        {me.role === 'admin' && <button onClick={() => deleteEvent(ev)} className="text-xs text-red/60 hover:text-red">Delete</button>}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Social Media Post Tracker
+// ---------------------------------------------------------------------------
+const SOCIAL_PLATFORMS = ['Instagram','Twitter/X','TikTok','Facebook','Other'];
+const PLATFORM_COLORS = { Instagram: 'text-pink-300', 'Twitter/X': 'text-sky-300', TikTok: 'text-red', Facebook: 'text-blue-400', Other: 'text-cream/70' };
+
+function SocialTrackerPage({ me }) {
+  const [posts, setPosts] = useState([]);
+  const [daysSince, setDaysSince] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [platform, setPlatform] = useState('Instagram');
+  const [captionDraft, setCaptionDraft] = useState('');
+  const [imageDescription, setImageDescription] = useState('');
+  const [scheduledDate, setScheduledDate] = useState('');
+  const [assignedToId, setAssignedToId] = useState('');
+  const { loading, error, setError, run } = useAction();
+  const canPost = me.role === 'admin' || me.role === 'manager' || !!me.canManageSocial;
+
+  const load = useCallback(async () => {
+    try {
+      const [d, u] = await Promise.all([api('/social-posts'), api('/users')]);
+      setPosts(d.posts || []);
+      setDaysSince(d.daysSinceLastPost);
+      setUsers(u.users || []);
+    } catch (e) { setError(e.message); }
+    finally { setLoaded(true); }
+  }, [setError]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function save(e) {
+    e.preventDefault();
+    try {
+      await run(() => api('/social-posts', { method: 'POST', body: {
+        platform, captionDraft, imageDescription, scheduledDate: scheduledDate||null,
+        assignedToId: assignedToId ? Number(assignedToId) : null,
+      }}));
+      setPlatform('Instagram'); setCaptionDraft(''); setImageDescription(''); setScheduledDate(''); setAssignedToId('');
+      setShowForm(false); load();
+    } catch (_) {}
+  }
+
+  async function markPosted(post) {
+    try { await api(`/social-posts/${post.id}`, { method: 'PATCH', body: { status: 'Posted' } }); load(); } catch (_) {}
+  }
+
+  async function markCancelled(post) {
+    try { await api(`/social-posts/${post.id}`, { method: 'PATCH', body: { status: 'Cancelled' } }); load(); } catch (_) {}
+  }
+
+  async function deletePost(post) {
+    if (!window.confirm('Delete this post?')) return;
+    try { await api(`/social-posts/${post.id}`, { method: 'DELETE' }); load(); } catch (_) {}
+  }
+
+  const planned = posts.filter((p) => p.status === 'Planned');
+  const posted  = posts.filter((p) => p.status === 'Posted');
+
+  return (
+    <div className="max-w-3xl">
+      <div className="flex items-center justify-between mb-2">
+        <h1 className="font-display text-4xl sm:text-5xl text-cream">Social Media</h1>
+        {canPost && !showForm && <Button variant="gold" onClick={() => setShowForm(true)}>+ Add Post</Button>}
+      </div>
+      <p className="text-cream/50 text-sm mb-4">Plan and track the chapter's social media content.</p>
+
+      {daysSince !== null && daysSince >= 3 && (
+        <div className="mb-4 bg-red/10 border border-red/30 rounded-xl px-4 py-3 flex items-start gap-3">
+          <span className="text-xl shrink-0">⚠️</span>
+          <div>
+            <div className="text-cream font-medium text-sm">No posts logged in {daysSince === 999 ? 'a while' : `${daysSince} day${daysSince === 1 ? '' : 's'}`}</div>
+            <div className="text-cream/60 text-xs mt-0.5">The socials manager should log or schedule a new post soon to keep the chapter visible.</div>
+          </div>
+        </div>
+      )}
+
+      {showForm && (
+        <form onSubmit={save} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
+          <div className="font-display text-xl text-gold">Plan a Post</div>
+          <Field label="Platform">
+            <div className="flex gap-2 flex-wrap">
+              {SOCIAL_PLATFORMS.map((p) => (
+                <button key={p} type="button" onClick={() => setPlatform(p)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${platform === p ? 'bg-gold text-navy' : 'bg-navy border border-cream/20 text-cream/60 hover:border-gold/50'}`}>
+                  {p}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Caption Draft"><textarea className={inputCls} rows="3" value={captionDraft} placeholder="Write the caption here…" onChange={(e) => setCaptionDraft(e.target.value)} /></Field>
+          <Field label="Image / Video Description"><input className={inputCls} value={imageDescription} placeholder="e.g. Photo of the tabling table with sign" onChange={(e) => setImageDescription(e.target.value)} /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Scheduled Date (optional)"><input type="date" className={inputCls} value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} /></Field>
+            <Field label="Assign To">
+              <select className={inputCls} value={assignedToId} onChange={(e) => setAssignedToId(e.target.value)}>
+                <option value="">— anyone —</option>
+                {users.map((u) => <option key={u.id} value={u.id}>{u.displayName}</option>)}
+              </select>
+            </Field>
+          </div>
+          {error && <div className="text-red text-sm">{error}</div>}
+          <div className="flex gap-2">
+            <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner />Saving…</span> : 'Add Post'}</Button>
+            <Button variant="ghost" onClick={() => setShowForm(false)} disabled={loading}>Cancel</Button>
+          </div>
+        </form>
+      )}
+
+      {!loaded && <Loading label="Loading posts…" />}
+
+      {loaded && posts.length === 0 && (
+        <EmptyState icon="📱" title="No posts tracked yet" hint={canPost ? 'Plan your first post with "+ Add Post" above.' : 'Planned posts will show up here.'} />
+      )}
+
+      {planned.length > 0 && (
+        <div className="mb-6">
+          <div className="font-display text-xl text-gold mb-3">Planned ({planned.length})</div>
+          <div className="space-y-3">
+            {planned.map((p) => (
+              <div key={p.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className={`text-xs font-bold uppercase tracking-wider mb-1 ${PLATFORM_COLORS[p.platform] || 'text-cream/60'}`}>{p.platform}</div>
+                    {p.captionDraft && <div className="text-sm text-cream/80 whitespace-pre-wrap">{p.captionDraft}</div>}
+                    {p.imageDescription && <div className="text-xs text-cream/40 mt-1 italic">Visual: {p.imageDescription}</div>}
+                    <div className="text-xs text-cream/40 mt-1 flex gap-3 flex-wrap">
+                      {p.scheduledDate && <span>📅 {fmtShortDate(p.scheduledDate)}</span>}
+                      {p.assignedToName && <span>👤 {p.assignedToName}</span>}
+                    </div>
+                  </div>
+                  {canPost && (
+                    <div className="flex flex-col gap-1.5 shrink-0">
+                      <Button variant="gold" className="text-xs px-3 py-1" onClick={() => markPosted(p)}>✓ Posted</Button>
+                      <button onClick={() => markCancelled(p)} className="text-xs text-cream/40 hover:text-cream/70 text-center">Cancel</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {posted.length > 0 && (
+        <div>
+          <div className="font-display text-xl text-emerald-300 mb-3">Posted ({posted.length})</div>
+          <div className="space-y-2">
+            {posted.slice(0, 10).map((p) => (
+              <div key={p.id} className="bg-navy2/60 border border-cream/5 rounded-xl p-3 flex items-center gap-3 opacity-75">
+                <div className={`text-xs font-bold uppercase tracking-wider shrink-0 ${PLATFORM_COLORS[p.platform] || 'text-cream/60'}`}>{p.platform}</div>
+                <div className="flex-1 min-w-0">
+                  {p.captionDraft && <div className="text-xs text-cream/50 truncate">{p.captionDraft}</div>}
+                </div>
+                {p.postedDate && <div className="text-xs text-cream/30 shrink-0">{fmtShortDate(p.postedDate)}</div>}
+                {me.role === 'admin' && <button onClick={() => deletePost(p)} className="text-xs text-red/40 hover:text-red shrink-0">✕</button>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

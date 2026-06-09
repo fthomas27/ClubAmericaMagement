@@ -726,7 +726,7 @@ app.patch('/api/roster/:id', (req, res) => {
   if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
   const m = db.prepare('SELECT * FROM roster_members WHERE id=?').get(Number(req.params.id));
   if (!m) return res.status(404).json({ error: 'Not found' });
-  const { firstName, lastName, phone, email, grade, gender, roleDescription, status, notes } = req.body || {};
+  const { firstName, lastName, phone, email, grade, gender, roleDescription, status, notes, parentFormCollected } = req.body || {};
   if (grade != null && grade !== '' && !GRADES.includes(String(grade))) {
     return res.status(400).json({ error: 'Grade must be 9, 10, 11, or 12' });
   }
@@ -740,9 +740,11 @@ app.patch('/api/roster/:id', (req, res) => {
     firstName=COALESCE(?,firstName), lastName=COALESCE(?,lastName), phone=COALESCE(?,phone),
     email=COALESCE(?,email), grade=COALESCE(?,grade), gender=COALESCE(?,gender),
     roleDescription=COALESCE(?,roleDescription), status=COALESCE(?,status), notes=COALESCE(?,notes),
+    parentFormCollected=COALESCE(?,parentFormCollected),
     updatedAt=datetime('now') WHERE id=?`).run(
     firstName??null, lastName??null, phone??null, email??null, grade??null,
-    gender??null, roleDescription??null, status??null, notes??null, m.id
+    gender??null, roleDescription??null, status??null, notes??null,
+    parentFormCollected !== undefined ? (parentFormCollected ? 1 : 0) : null, m.id
   );
   res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id) });
 });
@@ -1480,6 +1482,210 @@ app.put('/api/role-descriptions/:title', requireAdmin, (req, res) => {
   res.json({ ok: true, description: db.prepare('SELECT * FROM role_descriptions WHERE positionTitle = ?').get(positionTitle) });
 });
 
+// ---- Meetings ---------------------------------------------------------------
+
+app.get('/api/meetings', requireAuth, (req, res) => {
+  const rows = db.prepare(`SELECT m.*, u.displayName AS createdByName FROM meetings m
+    LEFT JOIN users u ON u.id = m.createdById ORDER BY m.meetingDate DESC`).all();
+  res.json({ meetings: rows });
+});
+
+app.post('/api/meetings', requireAuth, (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const { title, meetingDate, agendaUrl, minutesUrl, notes } = req.body || {};
+  if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required' });
+  if (!meetingDate) return res.status(400).json({ error: 'Date is required' });
+  const info = db.prepare(`INSERT INTO meetings (title, meetingDate, agendaUrl, minutesUrl, notes, createdById)
+    VALUES (?, ?, ?, ?, ?, ?)`).run(title.trim(), meetingDate, agendaUrl || '', minutesUrl || '', notes || '', req.user.id);
+  res.status(201).json({ meeting: db.prepare('SELECT * FROM meetings WHERE id=?').get(info.lastInsertRowid) });
+});
+
+app.patch('/api/meetings/:id', requireAuth, (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const m = db.prepare('SELECT * FROM meetings WHERE id=?').get(Number(req.params.id));
+  if (!m) return res.status(404).json({ error: 'Not found' });
+  const { title, meetingDate, agendaUrl, minutesUrl, notes } = req.body || {};
+  db.prepare(`UPDATE meetings SET title=COALESCE(?,title), meetingDate=COALESCE(?,meetingDate),
+    agendaUrl=COALESCE(?,agendaUrl), minutesUrl=COALESCE(?,minutesUrl), notes=COALESCE(?,notes) WHERE id=?`)
+    .run(title||null, meetingDate||null, agendaUrl!=null?agendaUrl:null, minutesUrl!=null?minutesUrl:null, notes!=null?notes:null, m.id);
+  res.json({ meeting: db.prepare('SELECT * FROM meetings WHERE id=?').get(m.id) });
+});
+
+app.delete('/api/meetings/:id', requireAuth, (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Not allowed' });
+  db.prepare('DELETE FROM meetings WHERE id=?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+// ---- Grant Applications -----------------------------------------------------
+
+app.get('/api/grants', requireAuth, (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const rows = db.prepare(`SELECT g.*, u.displayName AS createdByName FROM grant_applications g
+    LEFT JOIN users u ON u.id = g.createdById ORDER BY g.createdAt DESC`).all();
+  res.json({ grants: rows });
+});
+
+app.post('/api/grants', requireAuth, (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const { title, purpose, amountRequested, submissionDate, notes } = req.body || {};
+  if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required' });
+  const info = db.prepare(`INSERT INTO grant_applications (title, purpose, amountRequested, submissionDate, notes, createdById)
+    VALUES (?, ?, ?, ?, ?, ?)`).run(title.trim(), purpose||'', Number(amountRequested)||0, submissionDate||null, notes||'', req.user.id);
+  res.status(201).json({ grant: db.prepare('SELECT * FROM grant_applications WHERE id=?').get(info.lastInsertRowid) });
+});
+
+app.patch('/api/grants/:id', requireAuth, (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const g = db.prepare('SELECT * FROM grant_applications WHERE id=?').get(Number(req.params.id));
+  if (!g) return res.status(404).json({ error: 'Not found' });
+  const { title, purpose, amountRequested, submissionDate, status, amountAwarded, notes } = req.body || {};
+  const validStatuses = ['Draft','Submitted','Under Review','Approved','Denied'];
+  if (status && !validStatuses.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  db.prepare(`UPDATE grant_applications SET
+    title=COALESCE(?,title), purpose=COALESCE(?,purpose), amountRequested=COALESCE(?,amountRequested),
+    submissionDate=COALESCE(?,submissionDate), status=COALESCE(?,status),
+    amountAwarded=COALESCE(?,amountAwarded), notes=COALESCE(?,notes),
+    updatedAt=datetime('now') WHERE id=?`)
+    .run(title||null, purpose!=null?purpose:null, amountRequested!=null?Number(amountRequested):null,
+      submissionDate!=null?submissionDate:null, status||null, amountAwarded!=null?Number(amountAwarded):null,
+      notes!=null?notes:null, g.id);
+  res.json({ grant: db.prepare('SELECT * FROM grant_applications WHERE id=?').get(g.id) });
+});
+
+app.delete('/api/grants/:id', requireAuth, (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Not allowed' });
+  db.prepare('DELETE FROM grant_applications WHERE id=?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+// ---- Speaker Events ---------------------------------------------------------
+
+app.get('/api/speaker-events', requireAuth, (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const rows = db.prepare(`SELECT se.*, u.displayName AS createdByName FROM speaker_events se
+    LEFT JOIN users u ON u.id = se.createdById ORDER BY se.eventDate DESC`).all();
+  res.json({ events: rows });
+});
+
+app.post('/api/speaker-events', requireAuth, (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const { title, speakerName, speakerOrg, topic, eventDate, location, expectedAttendance, avNeeds, materialsRequested, budgetEstimate } = req.body || {};
+  if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required' });
+  const info = db.prepare(`INSERT INTO speaker_events
+    (title, speakerName, speakerOrg, topic, eventDate, location, expectedAttendance, avNeeds, materialsRequested, budgetEstimate, createdById)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    title.trim(), speakerName||'', speakerOrg||'', topic||'', eventDate||null,
+    location||'', Number(expectedAttendance)||0, avNeeds||'', materialsRequested||'', Number(budgetEstimate)||0, req.user.id);
+  res.status(201).json({ event: db.prepare('SELECT * FROM speaker_events WHERE id=?').get(info.lastInsertRowid) });
+});
+
+app.patch('/api/speaker-events/:id', requireAuth, (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const ev = db.prepare('SELECT * FROM speaker_events WHERE id=?').get(Number(req.params.id));
+  if (!ev) return res.status(404).json({ error: 'Not found' });
+  const { title, speakerName, speakerOrg, topic, eventDate, location, expectedAttendance, avNeeds,
+    materialsRequested, budgetEstimate, roomConfirmed, promotionDone, logisticsSent, tpusaNotified,
+    actualAttendance, postEventNotes, status } = req.body || {};
+  const validStatuses = ['Planning','Confirmed','Completed','Cancelled'];
+  if (status && !validStatuses.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  db.prepare(`UPDATE speaker_events SET
+    title=COALESCE(?,title), speakerName=COALESCE(?,speakerName), speakerOrg=COALESCE(?,speakerOrg),
+    topic=COALESCE(?,topic), eventDate=COALESCE(?,eventDate), location=COALESCE(?,location),
+    expectedAttendance=COALESCE(?,expectedAttendance), avNeeds=COALESCE(?,avNeeds),
+    materialsRequested=COALESCE(?,materialsRequested), budgetEstimate=COALESCE(?,budgetEstimate),
+    roomConfirmed=COALESCE(?,roomConfirmed), promotionDone=COALESCE(?,promotionDone),
+    logisticsSent=COALESCE(?,logisticsSent), tpusaNotified=COALESCE(?,tpusaNotified),
+    actualAttendance=COALESCE(?,actualAttendance), postEventNotes=COALESCE(?,postEventNotes),
+    status=COALESCE(?,status) WHERE id=?`)
+    .run(title||null, speakerName!=null?speakerName:null, speakerOrg!=null?speakerOrg:null,
+      topic!=null?topic:null, eventDate!=null?eventDate:null, location!=null?location:null,
+      expectedAttendance!=null?Number(expectedAttendance):null, avNeeds!=null?avNeeds:null,
+      materialsRequested!=null?materialsRequested:null, budgetEstimate!=null?Number(budgetEstimate):null,
+      roomConfirmed!=null?(roomConfirmed?1:0):null, promotionDone!=null?(promotionDone?1:0):null,
+      logisticsSent!=null?(logisticsSent?1:0):null, tpusaNotified!=null?(tpusaNotified?1:0):null,
+      actualAttendance!=null?Number(actualAttendance):null, postEventNotes!=null?postEventNotes:null,
+      status||null, ev.id);
+  res.json({ event: db.prepare('SELECT * FROM speaker_events WHERE id=?').get(ev.id) });
+});
+
+app.delete('/api/speaker-events/:id', requireAuth, (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Not allowed' });
+  db.prepare('DELETE FROM speaker_events WHERE id=?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+// ---- Social Media Posts -----------------------------------------------------
+
+function canManageSocialPosts(user) {
+  return user.role === 'admin' || user.role === 'manager' || !!user.canManageSocial;
+}
+
+app.get('/api/social-posts', requireAuth, (req, res) => {
+  const posts = db.prepare(`SELECT sp.*, u.displayName AS assignedToName, c.displayName AS createdByName
+    FROM social_posts sp
+    LEFT JOIN users u ON u.id = sp.assignedToId
+    LEFT JOIN users c ON c.id = sp.createdById
+    ORDER BY sp.createdAt DESC`).all();
+  // Calculate days since last posted post for nudge.
+  const lastPosted = db.prepare(`SELECT postedDate FROM social_posts WHERE status='Posted' ORDER BY postedDate DESC LIMIT 1`).get();
+  let daysSinceLastPost = null;
+  if (lastPosted) {
+    daysSinceLastPost = Math.floor((Date.now() - new Date(lastPosted.postedDate).getTime()) / (1000 * 60 * 60 * 24));
+  } else {
+    const firstPost = db.prepare('SELECT createdAt FROM social_posts ORDER BY createdAt ASC LIMIT 1').get();
+    if (firstPost) daysSinceLastPost = 999;
+  }
+  // Send nudge notification to canManageSocial users if overdue.
+  if (daysSinceLastPost !== null && daysSinceLastPost >= 3) {
+    const socialManagers = db.prepare("SELECT id FROM users WHERE canManageSocial=1 OR role='admin'").all();
+    const recentNudge = db.prepare(`SELECT id FROM notifications WHERE message LIKE '%social media post%' AND createdAt > datetime('now','-1 day') LIMIT 1`).get();
+    if (!recentNudge) {
+      for (const u of socialManagers) {
+        pushNotification(u.id, `No social media post has been logged in ${daysSinceLastPost} day${daysSinceLastPost===1?'':'s'}. Time to post!`, 'social', 'warning');
+      }
+    }
+  }
+  res.json({ posts, daysSinceLastPost });
+});
+
+app.post('/api/social-posts', requireAuth, (req, res) => {
+  if (!canManageSocialPosts(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const { platform, captionDraft, imageDescription, scheduledDate, assignedToId } = req.body || {};
+  if (!platform || !platform.trim()) return res.status(400).json({ error: 'Platform is required' });
+  const validPlatforms = ['Instagram','Twitter/X','TikTok','Facebook','Other'];
+  if (!validPlatforms.includes(platform)) return res.status(400).json({ error: 'Invalid platform' });
+  const info = db.prepare(`INSERT INTO social_posts (platform, captionDraft, imageDescription, scheduledDate, assignedToId, createdById)
+    VALUES (?, ?, ?, ?, ?, ?)`).run(platform, captionDraft||'', imageDescription||'', scheduledDate||null,
+    assignedToId ? Number(assignedToId) : null, req.user.id);
+  res.status(201).json({ post: db.prepare(`SELECT sp.*, u.displayName AS assignedToName FROM social_posts sp LEFT JOIN users u ON u.id=sp.assignedToId WHERE sp.id=?`).get(info.lastInsertRowid) });
+});
+
+app.patch('/api/social-posts/:id', requireAuth, (req, res) => {
+  if (!canManageSocialPosts(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const post = db.prepare('SELECT * FROM social_posts WHERE id=?').get(Number(req.params.id));
+  if (!post) return res.status(404).json({ error: 'Not found' });
+  const { platform, captionDraft, imageDescription, scheduledDate, postedDate, status, assignedToId } = req.body || {};
+  const validStatuses = ['Planned','Posted','Cancelled'];
+  if (status && !validStatuses.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  const postedDateVal = status === 'Posted' && !postedDate ? new Date().toISOString().slice(0,10) : (postedDate != null ? postedDate : null);
+  db.prepare(`UPDATE social_posts SET
+    platform=COALESCE(?,platform), captionDraft=COALESCE(?,captionDraft),
+    imageDescription=COALESCE(?,imageDescription), scheduledDate=COALESCE(?,scheduledDate),
+    postedDate=COALESCE(?,postedDate), status=COALESCE(?,status),
+    assignedToId=COALESCE(?,assignedToId) WHERE id=?`)
+    .run(platform||null, captionDraft!=null?captionDraft:null, imageDescription!=null?imageDescription:null,
+      scheduledDate!=null?scheduledDate:null, postedDateVal, status||null,
+      assignedToId!=null?Number(assignedToId):null, post.id);
+  res.json({ post: db.prepare(`SELECT sp.*, u.displayName AS assignedToName FROM social_posts sp LEFT JOIN users u ON u.id=sp.assignedToId WHERE sp.id=?`).get(post.id) });
+});
+
+app.delete('/api/social-posts/:id', requireAuth, (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Not allowed' });
+  db.prepare('DELETE FROM social_posts WHERE id=?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
 // ---- Admin Panel ------------------------------------------------------------
 app.post('/api/admin/users', requireAdmin, rateLimit({ windowMs: 60 * 60 * 1000, max: 30, name: 'admin-create-user' }), (req, res) => {
   let { firstName, lastName, role, title, managerId, grade, email } = req.body || {};
@@ -1510,7 +1716,7 @@ app.post('/api/admin/users', requireAdmin, rateLimit({ windowMs: 60 * 60 * 1000,
 app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
   const user = getUser(Number(req.params.id));
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { role, title, managerId, grade, email, canManageRoster, managedGrade, canAnnounce, canEditHome, bigBoard, canViewLogistics, username, firstName, lastName } = req.body || {};
+  const { role, title, managerId, grade, email, canManageRoster, managedGrade, canAnnounce, canEditHome, bigBoard, canViewLogistics, canManageSocial, username, firstName, lastName } = req.body || {};
   const prevManager = user.managerId;
 
   // Validate and normalize username if provided.
@@ -1564,6 +1770,7 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     canEditHome     = COALESCE(?, canEditHome),
     bigBoard           = COALESCE(?, bigBoard),
     canViewLogistics   = COALESCE(?, canViewLogistics),
+    canManageSocial    = COALESCE(?, canManageSocial),
     username        = COALESCE(?, username),
     firstName       = COALESCE(?, firstName),
     lastName        = COALESCE(?, lastName),
@@ -1580,6 +1787,7 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     canEditHome !== undefined ? (canEditHome ? 1 : 0) : null,
     bigBoard !== undefined ? (bigBoard ? 1 : 0) : null,
     canViewLogistics !== undefined ? (canViewLogistics ? 1 : 0) : null,
+    canManageSocial !== undefined ? (canManageSocial ? 1 : 0) : null,
     newUsername,
     newFirst,
     newLast,
