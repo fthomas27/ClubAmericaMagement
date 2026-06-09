@@ -398,28 +398,6 @@ function init() {
     CREATE INDEX IF NOT EXISTS idx_reimbursements_submitter
       ON reimbursements(submittedById, status);
 
-    -- Shoutouts / kudos between board members.
-    CREATE TABLE IF NOT EXISTS shoutouts (
-      id        INTEGER PRIMARY KEY AUTOINCREMENT,
-      fromId    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      toId      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      message   TEXT NOT NULL DEFAULT '',
-      tag       TEXT NOT NULL DEFAULT '',
-      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE INDEX IF NOT EXISTS idx_shoutouts_created ON shoutouts(createdAt DESC);
-
-    -- RSVP responses for upcoming attendance events.
-    CREATE TABLE IF NOT EXISTS event_rsvps (
-      id        INTEGER PRIMARY KEY AUTOINCREMENT,
-      eventId   INTEGER NOT NULL REFERENCES attendance_events(id) ON DELETE CASCADE,
-      userId    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      response  TEXT NOT NULL CHECK(response IN ('yes','maybe','no')),
-      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(eventId, userId)
-    );
-    CREATE INDEX IF NOT EXISTS idx_event_rsvps_event ON event_rsvps(eventId);
-
     -- Shared resource library (links, templates, policies, etc.)
     CREATE TABLE IF NOT EXISTS resources (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,

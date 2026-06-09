@@ -2167,15 +2167,16 @@ app.get('/api/directory', (req, res) => {
   res.json({ users });
 });
 
-// ---- Home summary card ------------------------------------------------------
+// ---- Home feed / summary card -----------------------------------------------
 app.get('/api/me/summary', (req, res) => {
   const userId = req.user.id;
   const today = new Date().toISOString().slice(0, 10);
   const in7 = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
 
-  const tasksDueSoon = db.prepare(
-    "SELECT COUNT(*) AS n FROM tasks WHERE userId = ? AND status != 'Complete' AND approvalStatus = 'approved' AND dueDate IS NOT NULL AND dueDate <= ?"
-  ).get(userId, in7).n;
+  // My tasks: active ones due within 7 days, or any overdue, up to 5
+  const myTasks = db.prepare(
+    "SELECT id, name, dueDate, status FROM tasks WHERE userId = ? AND status != 'Complete' AND approvalStatus = 'approved' ORDER BY dueDate ASC NULLS LAST LIMIT 5"
+  ).all(userId);
 
   const settings = db.prepare('SELECT weeklyCheckinEnabled FROM site_settings WHERE id = 1').get();
   let checkinSubmitted = null;
@@ -2185,122 +2186,39 @@ app.get('/api/me/summary', (req, res) => {
     checkinSubmitted = !!row;
   }
 
-  const nextMeeting = db.prepare(
-    "SELECT title, meetingDate FROM meetings WHERE meetingDate >= ? ORDER BY meetingDate ASC LIMIT 1"
-  ).get(today);
-
-  // Count polls the user hasn't voted on yet (open polls only)
-  const openPolls = db.prepare(
-    "SELECT COUNT(*) AS n FROM polls WHERE status = 'open' AND id NOT IN (SELECT pollId FROM poll_votes WHERE userId = ?)"
-  ).get(userId).n;
-
-  res.json({ tasksDueSoon, checkinSubmitted, nextMeeting: nextMeeting || null, openPolls });
-});
-
-// ---- Shoutouts / Kudos ------------------------------------------------------
-const SHOUTOUT_TAGS = ['', '🎉 Great Work', '💡 Creative', '🤝 Teamwork', '🏆 Above and Beyond'];
-
-app.get('/api/shoutouts', (req, res) => {
-  const rows = db.prepare(`
-    SELECT s.id, s.message, s.tag, s.createdAt,
-           f.displayName AS fromName, f.id AS fromId,
-           t.displayName AS toName,   t.id AS toId
-    FROM shoutouts s
-    JOIN users f ON f.id = s.fromId
-    JOIN users t ON t.id = s.toId
-    ORDER BY s.createdAt DESC
-    LIMIT 100
-  `).all();
-  res.json({ shoutouts: rows });
-});
-
-app.post('/api/shoutouts', (req, res) => {
-  const { toId, message, tag = '' } = req.body || {};
-  if (!toId || !message || !String(message).trim()) {
-    return res.status(400).json({ error: 'toId and message are required' });
-  }
-  if (!SHOUTOUT_TAGS.includes(tag)) {
-    return res.status(400).json({ error: 'Invalid tag' });
-  }
-  const recipient = db.prepare('SELECT id, displayName FROM users WHERE id = ?').get(Number(toId));
-  if (!recipient) return res.status(404).json({ error: 'Recipient not found' });
-
-  const result = db.prepare(
-    'INSERT INTO shoutouts (fromId, toId, message, tag) VALUES (?, ?, ?, ?)'
-  ).run(req.user.id, Number(toId), String(message).slice(0, 280), tag);
-
-  const tagPart = tag ? ' (' + tag + ')' : '';
-  pushNotification(
-    Number(toId),
-    req.user.displayName + ' gave you a shoutout' + tagPart + ': "' + String(message).slice(0, 100) + '"',
-    '',
-    'info'
-  );
-  res.json({ id: result.lastInsertRowid });
-});
-
-app.delete('/api/shoutouts/:id', (req, res) => {
-  const row = db.prepare('SELECT id, fromId FROM shoutouts WHERE id = ?').get(Number(req.params.id));
-  if (!row) return res.status(404).json({ error: 'Not found' });
-  if (req.user.role !== 'admin' && row.fromId !== req.user.id) {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
-  db.prepare('DELETE FROM shoutouts WHERE id = ?').run(row.id);
-  res.json({ ok: true });
-});
-
-// ---- Event RSVPs ------------------------------------------------------------
-app.get('/api/attendance/upcoming', (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
-  const events = db.prepare(
-    "SELECT id, title, eventDate, location FROM attendance_events WHERE eventDate >= ? ORDER BY eventDate ASC LIMIT 20"
+  // Upcoming meetings (next 3)
+  const upcomingMeetings = db.prepare(
+    "SELECT id, title, meetingDate FROM meetings WHERE meetingDate >= ? ORDER BY meetingDate ASC LIMIT 3"
   ).all(today);
 
-  const userId = req.user.id;
-  const result = events.map(ev => {
-    const counts = db.prepare(
-      "SELECT response, COUNT(*) AS n FROM event_rsvps WHERE eventId = ? GROUP BY response"
-    ).all(ev.id);
-    const rsvpCounts = { yes: 0, maybe: 0, no: 0 };
-    for (const c of counts) rsvpCounts[c.response] = c.n;
-    const myRsvp = db.prepare('SELECT response FROM event_rsvps WHERE eventId = ? AND userId = ?').get(ev.id, userId);
-    return { ...ev, rsvpCounts, myRsvp: myRsvp ? myRsvp.response : null };
+  // Open polls the user hasn't voted on yet
+  const openPolls = db.prepare(
+    "SELECT id, question FROM polls WHERE status = 'open' AND id NOT IN (SELECT pollId FROM poll_votes WHERE userId = ?) LIMIT 3"
+  ).all(userId);
+
+  // Current team announcement (most recent)
+  const announcement = db.prepare(
+    "SELECT text, updatedAt FROM team_announcements ORDER BY updatedAt DESC LIMIT 1"
+  ).get();
+
+  // My open action items from meetings
+  const actionItems = db.prepare(`
+    SELECT a.id, a.text, a.dueDate, m.title AS meetingTitle, m.id AS meetingId
+    FROM meeting_action_items a
+    JOIN meetings m ON m.id = a.meetingId
+    WHERE a.assigneeId = ? AND a.done = 0
+    ORDER BY a.dueDate ASC NULLS LAST LIMIT 5
+  `).all(userId);
+
+  res.json({
+    myTasks,
+    checkinSubmitted,
+    upcomingMeetings,
+    openPolls,
+    announcement: announcement || null,
+    actionItems,
+    tasksDueSoon: myTasks.filter(t => t.dueDate && t.dueDate <= in7).length,
   });
-  res.json({ events: result });
-});
-
-app.post('/api/attendance/:id/rsvp', (req, res) => {
-  const eventId = Number(req.params.id);
-  const ev = db.prepare('SELECT id FROM attendance_events WHERE id = ?').get(eventId);
-  if (!ev) return res.status(404).json({ error: 'Event not found' });
-
-  const { response } = req.body || {};
-  if (response === null || response === undefined) {
-    db.prepare('DELETE FROM event_rsvps WHERE eventId = ? AND userId = ?').run(eventId, req.user.id);
-    return res.json({ ok: true, removed: true });
-  }
-  if (!['yes', 'maybe', 'no'].includes(response)) {
-    return res.status(400).json({ error: 'response must be yes, maybe, or no' });
-  }
-  db.prepare(
-    'INSERT INTO event_rsvps (eventId, userId, response) VALUES (?, ?, ?) ON CONFLICT(eventId, userId) DO UPDATE SET response = excluded.response'
-  ).run(eventId, req.user.id, response);
-  res.json({ ok: true });
-});
-
-app.get('/api/attendance/:id/rsvps', (req, res) => {
-  if (req.user.role !== 'admin' && req.user.role !== 'manager') {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
-  const eventId = Number(req.params.id);
-  const rows = db.prepare(`
-    SELECT r.response, u.id AS userId, u.displayName
-    FROM event_rsvps r
-    JOIN users u ON u.id = r.userId
-    WHERE r.eventId = ?
-    ORDER BY r.response, u.displayName
-  `).all(eventId);
-  res.json({ rsvps: rows });
 });
 
 // ---- Resource Hub -----------------------------------------------------------
@@ -2370,10 +2288,12 @@ app.get('/api/meetings/:id/action-items', (req, res) => {
   const rows = db.prepare(`
     SELECT a.id, a.text, a.dueDate, a.done, a.taskId, a.createdAt,
            a.assigneeId, u.displayName AS assigneeName,
-           c.displayName AS createdByName, a.createdById
+           c.displayName AS createdByName, a.createdById,
+           t.status AS taskStatus
     FROM meeting_action_items a
     LEFT JOIN users u ON u.id = a.assigneeId
     LEFT JOIN users c ON c.id = a.createdById
+    LEFT JOIN tasks t ON t.id = a.taskId
     WHERE a.meetingId = ?
     ORDER BY a.createdAt ASC
   `).all(meetingId);
@@ -2382,18 +2302,37 @@ app.get('/api/meetings/:id/action-items', (req, res) => {
 
 app.post('/api/meetings/:id/action-items', (req, res) => {
   const meetingId = Number(req.params.id);
-  const meeting = db.prepare('SELECT id FROM meetings WHERE id = ?').get(meetingId);
+  const meeting = db.prepare('SELECT id, title FROM meetings WHERE id = ?').get(meetingId);
   if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
   const { text, assigneeId, dueDate = '' } = req.body || {};
   if (!text || !String(text).trim()) return res.status(400).json({ error: 'text is required' });
-  const result = db.prepare(
-    'INSERT INTO meeting_action_items (meetingId, text, assigneeId, dueDate, createdById) VALUES (?, ?, ?, ?, ?)'
-  ).run(meetingId, String(text).slice(0, 500), assigneeId ? Number(assigneeId) : null, String(dueDate).slice(0, 10), req.user.id);
-  if (assigneeId && Number(assigneeId) !== req.user.id) {
-    const m = db.prepare('SELECT title FROM meetings WHERE id = ?').get(meetingId);
-    pushNotification(Number(assigneeId), 'You have a new action item from ' + (m ? m.title : 'a meeting') + ': "' + String(text).slice(0, 100) + '"', '', 'info');
+
+  const parsedAssignee = assigneeId ? Number(assigneeId) : null;
+  let taskId = null;
+
+  // Auto-create a task for the assignee so it shows on their to-do page.
+  if (parsedAssignee) {
+    const taskResult = db.prepare(
+      'INSERT INTO tasks (userId, name, description, dueDate, status, assignedById) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(
+      parsedAssignee,
+      String(text).slice(0, 500),
+      'From meeting: ' + meeting.title,
+      dueDate || null,
+      'Not Started',
+      req.user.id
+    );
+    taskId = taskResult.lastInsertRowid;
   }
-  res.json({ id: result.lastInsertRowid });
+
+  const result = db.prepare(
+    'INSERT INTO meeting_action_items (meetingId, text, assigneeId, dueDate, createdById, taskId) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(meetingId, String(text).slice(0, 500), parsedAssignee, String(dueDate).slice(0, 10), req.user.id, taskId);
+
+  if (parsedAssignee) {
+    pushNotification(parsedAssignee, 'New action item from ' + meeting.title + ': "' + String(text).slice(0, 100) + '"', '', 'info');
+  }
+  res.json({ id: result.lastInsertRowid, taskId });
 });
 
 app.patch('/api/meetings/:id/action-items/:itemId', (req, res) => {
