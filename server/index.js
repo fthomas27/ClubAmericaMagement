@@ -1484,13 +1484,13 @@ app.put('/api/role-descriptions/:title', requireAdmin, (req, res) => {
 
 // ---- Meetings ---------------------------------------------------------------
 
-app.get('/api/meetings', requireAuth, (req, res) => {
+app.get('/api/meetings', (req, res) => {
   const rows = db.prepare(`SELECT m.*, u.displayName AS createdByName FROM meetings m
     LEFT JOIN users u ON u.id = m.createdById ORDER BY m.meetingDate DESC`).all();
   res.json({ meetings: rows });
 });
 
-app.post('/api/meetings', requireAuth, (req, res) => {
+app.post('/api/meetings', (req, res) => {
   if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
   const { title, meetingDate, agendaUrl, minutesUrl, notes } = req.body || {};
   if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required' });
@@ -1500,7 +1500,7 @@ app.post('/api/meetings', requireAuth, (req, res) => {
   res.status(201).json({ meeting: db.prepare('SELECT * FROM meetings WHERE id=?').get(info.lastInsertRowid) });
 });
 
-app.patch('/api/meetings/:id', requireAuth, (req, res) => {
+app.patch('/api/meetings/:id', (req, res) => {
   if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
   const m = db.prepare('SELECT * FROM meetings WHERE id=?').get(Number(req.params.id));
   if (!m) return res.status(404).json({ error: 'Not found' });
@@ -1511,7 +1511,7 @@ app.patch('/api/meetings/:id', requireAuth, (req, res) => {
   res.json({ meeting: db.prepare('SELECT * FROM meetings WHERE id=?').get(m.id) });
 });
 
-app.delete('/api/meetings/:id', requireAuth, (req, res) => {
+app.delete('/api/meetings/:id', (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Not allowed' });
   db.prepare('DELETE FROM meetings WHERE id=?').run(Number(req.params.id));
   res.json({ ok: true });
@@ -1519,14 +1519,14 @@ app.delete('/api/meetings/:id', requireAuth, (req, res) => {
 
 // ---- Grant Applications -----------------------------------------------------
 
-app.get('/api/grants', requireAuth, (req, res) => {
+app.get('/api/grants', (req, res) => {
   if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
   const rows = db.prepare(`SELECT g.*, u.displayName AS createdByName FROM grant_applications g
     LEFT JOIN users u ON u.id = g.createdById ORDER BY g.createdAt DESC`).all();
   res.json({ grants: rows });
 });
 
-app.post('/api/grants', requireAuth, (req, res) => {
+app.post('/api/grants', (req, res) => {
   if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
   const { title, purpose, amountRequested, submissionDate, notes } = req.body || {};
   if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required' });
@@ -1535,7 +1535,7 @@ app.post('/api/grants', requireAuth, (req, res) => {
   res.status(201).json({ grant: db.prepare('SELECT * FROM grant_applications WHERE id=?').get(info.lastInsertRowid) });
 });
 
-app.patch('/api/grants/:id', requireAuth, (req, res) => {
+app.patch('/api/grants/:id', (req, res) => {
   if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
   const g = db.prepare('SELECT * FROM grant_applications WHERE id=?').get(Number(req.params.id));
   if (!g) return res.status(404).json({ error: 'Not found' });
@@ -1553,7 +1553,7 @@ app.patch('/api/grants/:id', requireAuth, (req, res) => {
   res.json({ grant: db.prepare('SELECT * FROM grant_applications WHERE id=?').get(g.id) });
 });
 
-app.delete('/api/grants/:id', requireAuth, (req, res) => {
+app.delete('/api/grants/:id', (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Not allowed' });
   db.prepare('DELETE FROM grant_applications WHERE id=?').run(Number(req.params.id));
   res.json({ ok: true });
@@ -1561,14 +1561,14 @@ app.delete('/api/grants/:id', requireAuth, (req, res) => {
 
 // ---- Speaker Events ---------------------------------------------------------
 
-app.get('/api/speaker-events', requireAuth, (req, res) => {
+app.get('/api/speaker-events', (req, res) => {
   if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
   const rows = db.prepare(`SELECT se.*, u.displayName AS createdByName FROM speaker_events se
     LEFT JOIN users u ON u.id = se.createdById ORDER BY se.eventDate DESC`).all();
   res.json({ events: rows });
 });
 
-app.post('/api/speaker-events', requireAuth, (req, res) => {
+app.post('/api/speaker-events', (req, res) => {
   if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
   const { title, speakerName, speakerOrg, topic, eventDate, location, expectedAttendance, avNeeds, materialsRequested, budgetEstimate } = req.body || {};
   if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required' });
@@ -1580,7 +1580,7 @@ app.post('/api/speaker-events', requireAuth, (req, res) => {
   res.status(201).json({ event: db.prepare('SELECT * FROM speaker_events WHERE id=?').get(info.lastInsertRowid) });
 });
 
-app.patch('/api/speaker-events/:id', requireAuth, (req, res) => {
+app.patch('/api/speaker-events/:id', (req, res) => {
   if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
   const ev = db.prepare('SELECT * FROM speaker_events WHERE id=?').get(Number(req.params.id));
   if (!ev) return res.status(404).json({ error: 'Not found' });
@@ -1609,7 +1609,7 @@ app.patch('/api/speaker-events/:id', requireAuth, (req, res) => {
   res.json({ event: db.prepare('SELECT * FROM speaker_events WHERE id=?').get(ev.id) });
 });
 
-app.delete('/api/speaker-events/:id', requireAuth, (req, res) => {
+app.delete('/api/speaker-events/:id', (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Not allowed' });
   db.prepare('DELETE FROM speaker_events WHERE id=?').run(Number(req.params.id));
   res.json({ ok: true });
@@ -1621,7 +1621,7 @@ function canManageSocialPosts(user) {
   return user.role === 'admin' || user.role === 'manager' || !!user.canManageSocial;
 }
 
-app.get('/api/social-posts', requireAuth, (req, res) => {
+app.get('/api/social-posts', (req, res) => {
   const posts = db.prepare(`SELECT sp.*, u.displayName AS assignedToName, c.displayName AS createdByName
     FROM social_posts sp
     LEFT JOIN users u ON u.id = sp.assignedToId
@@ -1649,7 +1649,7 @@ app.get('/api/social-posts', requireAuth, (req, res) => {
   res.json({ posts, daysSinceLastPost });
 });
 
-app.post('/api/social-posts', requireAuth, (req, res) => {
+app.post('/api/social-posts', (req, res) => {
   if (!canManageSocialPosts(req.user)) return res.status(403).json({ error: 'Not allowed' });
   const { platform, captionDraft, imageDescription, scheduledDate, assignedToId } = req.body || {};
   if (!platform || !platform.trim()) return res.status(400).json({ error: 'Platform is required' });
@@ -1661,7 +1661,7 @@ app.post('/api/social-posts', requireAuth, (req, res) => {
   res.status(201).json({ post: db.prepare(`SELECT sp.*, u.displayName AS assignedToName FROM social_posts sp LEFT JOIN users u ON u.id=sp.assignedToId WHERE sp.id=?`).get(info.lastInsertRowid) });
 });
 
-app.patch('/api/social-posts/:id', requireAuth, (req, res) => {
+app.patch('/api/social-posts/:id', (req, res) => {
   if (!canManageSocialPosts(req.user)) return res.status(403).json({ error: 'Not allowed' });
   const post = db.prepare('SELECT * FROM social_posts WHERE id=?').get(Number(req.params.id));
   if (!post) return res.status(404).json({ error: 'Not found' });
@@ -1680,7 +1680,7 @@ app.patch('/api/social-posts/:id', requireAuth, (req, res) => {
   res.json({ post: db.prepare(`SELECT sp.*, u.displayName AS assignedToName FROM social_posts sp LEFT JOIN users u ON u.id=sp.assignedToId WHERE sp.id=?`).get(post.id) });
 });
 
-app.delete('/api/social-posts/:id', requireAuth, (req, res) => {
+app.delete('/api/social-posts/:id', (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Not allowed' });
   db.prepare('DELETE FROM social_posts WHERE id=?').run(Number(req.params.id));
   res.json({ ok: true });
