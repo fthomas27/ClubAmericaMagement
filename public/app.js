@@ -1924,8 +1924,11 @@ function fmtEvent(iso) {
 
 // Shows upcoming events when a calendar is connected; otherwise falls back to
 // the manually-entered "Next Meeting" details.
-function MeetingCard({ home, events }) {
+function MeetingCard({ home, events, volunteerEvents = [] }) {
   const hasEvents = events && events.length > 0;
+  const volMap = {};
+  volunteerEvents.forEach((v) => { volMap[v.icalUid] = v; });
+  const origin = window.location.origin;
   return (
     <section className="bg-navy2 border border-gold/30 rounded-2xl p-6 hover:border-gold/50 hover:shadow-lg hover:shadow-black/20 transition-all duration-200">
       <div className="flex items-center justify-between">
@@ -1934,13 +1937,30 @@ function MeetingCard({ home, events }) {
       </div>
       {hasEvents ? (
         <ul className="mt-4 space-y-3">
-          {events.map((e, i) => (
-            <li key={i} className="border-l-2 border-gold/50 pl-3">
-              <div className="text-lg text-cream font-medium leading-tight">{e.title}</div>
-              <div className="text-sm text-gold/80">{fmtEvent(e.start)}</div>
-              {e.location && <div className="text-sm text-cream/50">{e.location}</div>}
-            </li>
-          ))}
+          {events.map((e, i) => {
+            const vol = e.uid ? volMap[e.uid] : null;
+            const spotsLeft = vol ? (vol.totalCap === 0 ? Infinity : vol.totalCap - vol.confirmedCount) : 0;
+            const needsVolunteers = vol && spotsLeft > 0;
+            const signupUrl = vol ? `${origin}/volunteer/${vol.id}` : '';
+            return (
+              <li key={i} className="border-l-2 border-gold/50 pl-3">
+                <div className="text-lg text-cream font-medium leading-tight">{e.title}</div>
+                <div className="text-sm text-gold/80">{fmtEvent(e.start)}</div>
+                {e.location && <div className="text-sm text-cream/50">{e.location}</div>}
+                {needsVolunteers && (
+                  <div className="mt-1.5 flex flex-col gap-1">
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-300 bg-emerald-500/15 border border-emerald-500/30 rounded-full px-2 py-0.5 w-fit">
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 11l-4 4-2-2"/></svg>
+                      Volunteers Needed
+                    </span>
+                    <a href={signupUrl} className="text-xs text-teal-400 hover:text-teal-300 underline underline-offset-2 transition-colors">
+                      Sign up to volunteer →
+                    </a>
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       ) : (
         <div className="mt-4 space-y-3">
@@ -2460,10 +2480,11 @@ function FlagBackground() {
 function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onBack }) {
   const [home, setHome] = useState(null);
   const [events, setEvents] = useState([]);
+  const [volunteerEvents, setVolunteerEvents] = useState([]);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
-    try { const d = await api('/home'); setHome(d.home); setEvents(d.events || []); }
+    try { const d = await api('/home'); setHome(d.home); setEvents(d.events || []); setVolunteerEvents(d.volunteerEvents || []); }
     catch (err) { setError(err.message); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -2475,7 +2496,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
 
   const cards = (
     <div className="grid md:grid-cols-2 gap-6">
-      <MeetingCard home={home} events={events} />
+      <MeetingCard home={home} events={events} volunteerEvents={volunteerEvents} />
       <PodcastCard home={home} />
     </div>
   );
@@ -4554,9 +4575,11 @@ function AIChatPage({ me }) {
 // ---------------------------------------------------------------------------
 function HomeSummaryCard({ me, onNavigate }) {
   const [summary, setSummary] = useState(null);
+  const [volunteerEvents, setVolunteerEvents] = useState([]);
 
   useEffect(() => {
     api('/me/summary').then(setSummary).catch(() => {});
+    api('/home').then((d) => setVolunteerEvents(d.volunteerEvents || [])).catch(() => {});
   }, []);
 
   if (!summary) return null;
@@ -4689,6 +4712,32 @@ function HomeSummaryCard({ me, onNavigate }) {
                       <div className={`text-sm truncate ${overdue ? 'text-red/80' : 'text-cream/80'}`}>{a.text}</div>
                       <div className="text-xs text-cream/35">{a.meetingTitle}{a.dueDate ? ' · ' + (overdue ? 'Overdue' : fmtShortDate(a.dueDate)) : ''}</div>
                     </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Upcoming volunteer events */}
+        {volunteerEvents.length > 0 && (
+          <div className="bg-navy2 border border-emerald-500/20 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs font-semibold text-emerald-400/70 uppercase tracking-wide">Volunteers Needed</div>
+              <a href="/home" className="text-xs text-gold/60 hover:text-gold">Club Home</a>
+            </div>
+            <div className="space-y-3">
+              {volunteerEvents.slice(0, 3).map((v) => {
+                const spotsLeft = v.totalCap === 0 ? null : v.totalCap - v.confirmedCount;
+                const signupUrl = window.location.origin + '/volunteer/' + v.id;
+                return (
+                  <div key={v.id}>
+                    <div className="text-sm text-cream/80 font-medium leading-tight">{v.title}</div>
+                    <div className="text-xs text-cream/40 mt-0.5">{fmtEvent(v.startDate)}</div>
+                    {spotsLeft !== null && <div className="text-xs text-emerald-400/70 mt-0.5">{spotsLeft > 0 ? spotsLeft + ' spot' + (spotsLeft !== 1 ? 's' : '') + ' left' : 'Waitlist open'}</div>}
+                    <a href={signupUrl} className="text-xs text-teal-400 hover:text-teal-300 underline underline-offset-1 mt-0.5 inline-block">
+                      Sign up →
+                    </a>
                   </div>
                 );
               })}
@@ -4838,6 +4887,409 @@ function ResourceHubPage({ me }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Volunteer Sign-Up Page (public, no auth required)
+// ---------------------------------------------------------------------------
+function VolunteerSignUpPage({ eventId }) {
+  const [event, setEvent] = useState(null);
+  const [roles, setRoles] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState('');
+  const [selectedRole, setSelectedRole] = useState(null);
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [grade, setGrade] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const d = await fetch('/api/public/volunteer/' + eventId).then(async (r) => {
+          const j = await r.json();
+          if (!r.ok) throw new Error(j.error || 'Event not found');
+          return j;
+        });
+        setEvent(d.event);
+        setRoles(d.roles);
+      } catch (e) { setError(e.message); }
+      finally { setLoaded(true); }
+    })();
+  }, [eventId]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/public/volunteer/' + eventId + '/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roleId: selectedRole, name: name.trim(), phone, email, grade }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || 'Sign-up failed');
+      setSubmitted(j.status);
+    } catch (e) { setError(e.message); }
+    finally { setSubmitting(false); }
+  }
+
+  if (!loaded) return (
+    <div className="min-h-screen flex items-center justify-center" style={{ background: '#0d1b2e' }}>
+      <div className="flex items-center gap-2 text-cream/50"><Spinner /> Loading…</div>
+    </div>
+  );
+
+  if (error && !event) return (
+    <div className="min-h-screen flex items-center justify-center p-8" style={{ background: '#0d1b2e' }}>
+      <div className="text-center max-w-sm">
+        <div className="text-4xl mb-4">🚫</div>
+        <div className="text-cream/70 text-lg mb-2">Sign-ups Unavailable</div>
+        <div className="text-cream/40 text-sm">{error}</div>
+        <a href="/" className="mt-4 inline-block text-gold/60 hover:text-gold text-sm underline">← Back to home</a>
+      </div>
+    </div>
+  );
+
+  if (submitted) return (
+    <div className="min-h-screen flex items-center justify-center p-8" style={{ background: '#0d1b2e' }}>
+      <div className="text-center max-w-sm">
+        <div className="text-5xl mb-4">{submitted === 'waitlisted' ? '⏳' : '🎉'}</div>
+        <div className="text-2xl font-semibold text-cream mb-2">
+          {submitted === 'waitlisted' ? "You're on the waitlist!" : "You're signed up!"}
+        </div>
+        <div className="text-cream/50 text-sm mb-1">{event.title}</div>
+        <div className="text-cream/40 text-sm">{fmtEvent(event.startDate)}</div>
+        {submitted === 'waitlisted' && (
+          <div className="mt-3 text-sm text-cream/50">We'll reach out if a spot opens up.</div>
+        )}
+        <a href="/" className="mt-6 inline-block text-gold/60 hover:text-gold text-sm underline">← Back to home</a>
+      </div>
+    </div>
+  );
+
+  const GRADES = ['9th', '10th', '11th', '12th', 'Other'];
+
+  return (
+    <div className="min-h-screen py-10 px-4" style={{ background: '#0d1b2e' }}>
+      <div className="max-w-lg mx-auto">
+        <a href="/" className="text-sm text-cream/40 hover:text-cream/70 mb-6 inline-block">← Back to home</a>
+        <div className="bg-navy2 border border-cream/10 rounded-2xl p-6 mb-6">
+          <div className="text-xs text-gold/60 uppercase tracking-wider mb-1">Volunteer Sign-Up</div>
+          <h1 className="text-2xl font-semibold text-cream mb-1">{event.title}</h1>
+          <div className="text-sm text-gold/70">{fmtEvent(event.startDate)}</div>
+          {event.location && <div className="text-sm text-cream/40 mt-0.5">{event.location}</div>}
+        </div>
+
+        {roles.length > 0 && (
+          <div className="mb-6">
+            <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide mb-3">Select a Role</div>
+            <div className="space-y-2">
+              {roles.map((r) => {
+                const full = r.cap > 0 && r.confirmed >= r.cap;
+                const selected = selectedRole === r.id;
+                return (
+                  <button key={r.id} onClick={() => !full && setSelectedRole(selected ? null : r.id)}
+                    className={`w-full text-left rounded-xl border p-3 transition-all ${full ? 'opacity-50 cursor-not-allowed border-cream/10 bg-cream/5' : selected ? 'border-gold/50 bg-gold/10' : 'border-cream/15 bg-navy3/50 hover:border-gold/30'}`}>
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-sm text-cream">{r.roleName}</span>
+                      <span className={`text-xs ${full ? 'text-red/60' : r.cap > 0 ? 'text-cream/40' : 'text-emerald-400/70'}`}>
+                        {full ? 'Full' : r.cap > 0 ? `${r.confirmed}/${r.cap} filled` : 'Open'}
+                      </span>
+                    </div>
+                    {r.waitlisted > 0 && <div className="text-xs text-amber-400/60 mt-0.5">{r.waitlisted} on waitlist</div>}
+                    {full && r.waitlisted >= 0 && <div className="text-xs text-cream/40 mt-0.5">Join waitlist</div>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="bg-navy2 border border-cream/10 rounded-2xl p-6 space-y-4">
+          <div className="text-sm font-semibold text-cream mb-1">Your Information</div>
+          <div>
+            <label className="block text-xs text-cream/50 mb-1">Full Name *</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} required
+              className="w-full bg-navy3 border border-cream/15 rounded-lg px-3 py-2 text-sm text-cream placeholder-cream/30 focus:outline-none focus:border-gold/50"
+              placeholder="Your full name" />
+          </div>
+          <div>
+            <label className="block text-xs text-cream/50 mb-1">Phone Number</label>
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel"
+              className="w-full bg-navy3 border border-cream/15 rounded-lg px-3 py-2 text-sm text-cream placeholder-cream/30 focus:outline-none focus:border-gold/50"
+              placeholder="(555) 000-0000" />
+          </div>
+          <div>
+            <label className="block text-xs text-cream/50 mb-1">Email</label>
+            <input value={email} onChange={(e) => setEmail(e.target.value)} type="email"
+              className="w-full bg-navy3 border border-cream/15 rounded-lg px-3 py-2 text-sm text-cream placeholder-cream/30 focus:outline-none focus:border-gold/50"
+              placeholder="your@email.com" />
+          </div>
+          <div>
+            <label className="block text-xs text-cream/50 mb-1">Grade</label>
+            <select value={grade} onChange={(e) => setGrade(e.target.value)}
+              className="w-full bg-navy3 border border-cream/15 rounded-lg px-3 py-2 text-sm text-cream focus:outline-none focus:border-gold/50">
+              <option value="">Select grade…</option>
+              {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </div>
+          {error && <div className="text-sm text-red/70">{error}</div>}
+          <button type="submit" disabled={submitting || !name.trim()}
+            className="w-full bg-gold text-navy font-semibold py-2.5 rounded-xl hover:bg-gold/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm">
+            {submitting ? 'Signing up…' : roles.length > 0 && !selectedRole ? 'Sign Up (No Specific Role)' : 'Sign Up to Volunteer'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Volunteer Manager Page (admin/manager only)
+// ---------------------------------------------------------------------------
+function VolunteerManagerPage({ me }) {
+  const [homeData, setHomeData] = useState({ events: [], volunteerEvents: [] });
+  const [managedEvents, setManagedEvents] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
+  const [signups, setSignups] = useState({});
+  const [showRoleForm, setShowRoleForm] = useState(null);
+  const [newRoleName, setNewRoleName] = useState('');
+  const [newRoleCap, setNewRoleCap] = useState('');
+  const [copied, setCopied] = useState(null);
+  const { loading, error, setError, run } = useAction();
+
+  const loadAll = useCallback(async () => {
+    try {
+      const [hd, mv] = await Promise.all([api('/home'), api('/volunteer-events')]);
+      setHomeData({ events: hd.events || [], volunteerEvents: hd.volunteerEvents || [] });
+      setManagedEvents(mv.events || []);
+    } catch (e) { setError(e.message); }
+    finally { setLoaded(true); }
+  }, [setError]);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  async function enableVolunteers(icalEvent) {
+    await run(async () => {
+      await api('/volunteer-events', { method: 'POST', body: {
+        icalUid: icalEvent.uid,
+        title: icalEvent.title,
+        location: icalEvent.location || '',
+        startDate: icalEvent.start,
+      }});
+      await loadAll();
+    });
+  }
+
+  async function toggleEnabled(ev) {
+    await run(async () => {
+      await api('/volunteer-events/' + ev.id, { method: 'PATCH', body: { volunteersEnabled: !ev.volunteersEnabled }});
+      await loadAll();
+    });
+  }
+
+  async function deleteEvent(ev) {
+    if (!window.confirm('Delete this volunteer event and all sign-ups?')) return;
+    await run(async () => {
+      await api('/volunteer-events/' + ev.id, { method: 'DELETE' });
+      await loadAll();
+    });
+  }
+
+  async function loadSignups(eventId) {
+    try {
+      const d = await api('/volunteer-events/' + eventId + '/signups');
+      setSignups((s) => ({ ...s, [eventId]: d.signups || [] }));
+    } catch (_) {}
+  }
+
+  async function addRole(eventId) {
+    if (!newRoleName.trim()) return;
+    await run(async () => {
+      await api('/volunteer-events/' + eventId + '/roles', { method: 'POST', body: { roleName: newRoleName.trim(), cap: Number(newRoleCap) || 0 }});
+      setNewRoleName(''); setNewRoleCap(''); setShowRoleForm(null);
+      await loadAll();
+    });
+  }
+
+  async function deleteRole(roleId) {
+    await run(async () => {
+      await api('/volunteer-roles/' + roleId, { method: 'DELETE' });
+      await loadAll();
+    });
+  }
+
+  async function removeSignup(signupId, eventId) {
+    await run(async () => {
+      await api('/volunteer-signups/' + signupId, { method: 'DELETE' });
+      await loadSignups(eventId);
+    });
+  }
+
+  function copyLink(id) {
+    const url = window.location.origin + '/volunteer/' + id;
+    navigator.clipboard.writeText(url).catch(() => {});
+    setCopied(id);
+    setTimeout(() => setCopied(null), 2000);
+  }
+
+  const enabledUids = new Set(managedEvents.map((e) => e.icalUid));
+  const managedById = {};
+  managedEvents.forEach((e) => { managedById[e.icalUid] = e; });
+
+  return (
+    <div className="max-w-3xl mx-auto space-y-8">
+      <div>
+        <h2 className="font-display text-3xl text-cream mb-1">Volunteer Manager</h2>
+        <p className="text-sm text-cream/50">Enable volunteer sign-ups on upcoming calendar events, set up roles, and manage who signed up.</p>
+      </div>
+
+      {/* Upcoming calendar events */}
+      <div>
+        <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide mb-3">Upcoming Calendar Events</div>
+        {homeData.events.length === 0 && (
+          <div className="text-sm text-cream/40 bg-navy2 border border-cream/10 rounded-xl p-4">
+            No upcoming calendar events found. Make sure a calendar URL is configured in Edit Website.
+          </div>
+        )}
+        <div className="space-y-2">
+          {homeData.events.map((e) => {
+            const managed = e.uid ? managedById[e.uid] : null;
+            return (
+              <div key={e.uid || e.title} className="bg-navy2 border border-cream/10 rounded-xl p-4 flex items-center gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm text-cream truncate">{e.title}</div>
+                  <div className="text-xs text-cream/40 mt-0.5">{fmtEvent(e.start)}{e.location ? ' · ' + e.location : ''}</div>
+                </div>
+                {managed ? (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2 py-0.5">Active</span>
+                    <button onClick={() => { setExpandedId(managed.id); loadSignups(managed.id); }}
+                      className="text-xs text-gold/60 hover:text-gold border border-gold/30 hover:border-gold/60 rounded px-2 py-1 transition-colors">
+                      Manage
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={() => enableVolunteers(e)} disabled={loading || !e.uid}
+                    className="shrink-0 text-xs bg-gold/10 hover:bg-gold/20 text-gold border border-gold/30 rounded px-3 py-1 transition-colors disabled:opacity-40">
+                    {!e.uid ? 'No UID' : 'Enable Volunteers'}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Managed volunteer events */}
+      {managedEvents.length > 0 && (
+        <div>
+          <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide mb-3">Active Volunteer Events</div>
+          <div className="space-y-4">
+            {managedEvents.map((ev) => (
+              <div key={ev.id} className="bg-navy2 border border-cream/10 rounded-xl overflow-hidden">
+                <div className="p-4 flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-sm text-cream">{ev.title}</span>
+                      <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 ${ev.volunteersEnabled ? 'bg-emerald-500/15 text-emerald-400' : 'bg-cream/10 text-cream/40'}`}>
+                        {ev.volunteersEnabled ? 'Open' : 'Closed'}
+                      </span>
+                    </div>
+                    <div className="text-xs text-cream/40 mt-0.5">{fmtEvent(ev.startDate)}</div>
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {ev.roles.map((r) => (
+                        <div key={r.id} className="flex items-center gap-1 text-xs bg-navy3 border border-cream/10 rounded-full px-2 py-0.5">
+                          <span className="text-cream/70">{r.roleName}</span>
+                          <span className="text-cream/40">{r.cap > 0 ? `${r.confirmed}/${r.cap}` : r.confirmed + ' signed up'}</span>
+                          <button onClick={() => deleteRole(r.id)} className="text-red/40 hover:text-red ml-0.5 text-[11px] leading-none">×</button>
+                        </div>
+                      ))}
+                      {showRoleForm === ev.id ? (
+                        <div className="flex items-center gap-1 mt-1">
+                          <input value={newRoleName} onChange={(e) => setNewRoleName(e.target.value)} placeholder="Role name"
+                            className="bg-navy3 border border-cream/20 rounded px-2 py-0.5 text-xs text-cream placeholder-cream/30 focus:outline-none focus:border-gold/40 w-28" />
+                          <input value={newRoleCap} onChange={(e) => setNewRoleCap(e.target.value)} placeholder="Cap (0=∞)" type="number" min="0"
+                            className="bg-navy3 border border-cream/20 rounded px-2 py-0.5 text-xs text-cream placeholder-cream/30 focus:outline-none focus:border-gold/40 w-20" />
+                          <button onClick={() => addRole(ev.id)} className="text-xs text-gold/70 hover:text-gold">Add</button>
+                          <button onClick={() => setShowRoleForm(null)} className="text-xs text-cream/30 hover:text-cream">Cancel</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => { setShowRoleForm(ev.id); setNewRoleName(''); setNewRoleCap(''); }}
+                          className="text-xs text-gold/50 hover:text-gold border border-gold/20 hover:border-gold/40 rounded-full px-2 py-0.5 transition-colors">
+                          + Role
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1.5 items-end shrink-0">
+                    <button onClick={() => copyLink(ev.id)}
+                      className="text-xs text-teal-400/70 hover:text-teal-300 border border-teal-500/20 hover:border-teal-500/40 rounded px-2 py-1 transition-colors">
+                      {copied === ev.id ? '✓ Copied' : 'Copy Link'}
+                    </button>
+                    <button onClick={() => toggleEnabled(ev)} className="text-xs text-cream/40 hover:text-cream">
+                      {ev.volunteersEnabled ? 'Close sign-ups' : 'Reopen'}
+                    </button>
+                    <button onClick={() => { setExpandedId(expandedId === ev.id ? null : ev.id); if (expandedId !== ev.id) loadSignups(ev.id); }}
+                      className="text-xs text-cream/40 hover:text-gold">
+                      {expandedId === ev.id ? 'Hide signups' : 'View signups'}
+                    </button>
+                    <button onClick={() => deleteEvent(ev)} className="text-xs text-red/40 hover:text-red">Delete</button>
+                  </div>
+                </div>
+                {expandedId === ev.id && (
+                  <div className="border-t border-cream/10 p-4">
+                    {!signups[ev.id] ? (
+                      <div className="text-xs text-cream/40">Loading…</div>
+                    ) : signups[ev.id].length === 0 ? (
+                      <div className="text-xs text-cream/40">No sign-ups yet.</div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide mb-2">
+                          {signups[ev.id].length} Sign-up{signups[ev.id].length !== 1 ? 's' : ''}
+                        </div>
+                        {signups[ev.id].map((s) => (
+                          <div key={s.id} className="flex items-start gap-3 text-sm border-b border-cream/5 pb-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-medium text-cream text-sm">{s.name}</span>
+                                {s.roleName && <span className="text-xs text-cream/50 bg-navy3 rounded-full px-1.5 py-0.5">{s.roleName}</span>}
+                                <span className={`text-xs rounded-full px-1.5 py-0.5 ${s.status === 'waitlisted' ? 'bg-amber-500/15 text-amber-400' : 'bg-emerald-500/15 text-emerald-400'}`}>
+                                  {s.status}
+                                </span>
+                                {s.matchedName && (
+                                  <span className="text-xs text-sky-400 bg-sky-500/10 border border-sky-500/20 rounded-full px-1.5 py-0.5">
+                                    Roster: {s.matchedName.trim()}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-xs text-cream/35 mt-0.5 flex gap-3 flex-wrap">
+                                {s.phone && <span>{s.phone}</span>}
+                                {s.email && <span>{s.email}</span>}
+                                {s.grade && <span>Grade {s.grade}</span>}
+                              </div>
+                            </div>
+                            <button onClick={() => removeSignup(s.id, ev.id)} className="text-xs text-red/40 hover:text-red shrink-0">Remove</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {error && <div className="text-sm text-red/70 p-3 bg-red/10 border border-red/20 rounded-xl">{error}</div>}
+    </div>
+  );
+}
+
 function AppIcon({ name }) {
   const p = { width: 24, height: 24, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', className: 'text-cream/60 group-hover:text-gold transition-colors duration-150' };
   switch (name) {
@@ -4870,6 +5322,7 @@ function AppIcon({ name }) {
     case 'reimbursements': return <svg {...p}><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><circle cx="12" cy="15" r="2"/><path d="M6 15h1M17 15h1"/></svg>;
     case 'directory': return <svg {...p}><path d="M4 4h16v16H4z" rx="2"/><path d="M8 10a3 3 0 1 0 6 0 3 3 0 0 0-6 0"/><path d="M6 20c.3-2.2 2.5-4 6-4s5.7 1.8 6 4"/><path d="M16 4v4M8 4v4"/></svg>;
     case 'resources': return <svg {...p}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M12 7v6M9 10h6"/></svg>;
+    case 'volunteer': return <svg {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 11l-4 4-2-2"/></svg>;
     default:          return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
   }
 }
@@ -4918,6 +5371,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
     ...(isManager || !!me.canManageSocial ? [{ type: 'social', label: 'Social Media', icon: 'social' }] : []),
     ...(isManager         ? [{ type: 'budget',      label: 'Budget Overview',  icon: 'budget'     }] : []),
     ...(isManager || !!me.managedGrade ? [{ type: 'grades', label: 'Grade Pipeline', icon: 'grades' }] : []),
+    ...(isManager ? [{ type: 'volunteers', label: 'Volunteers', icon: 'volunteer' }] : []),
     { type: 'reimbursements', label: 'Reimbursements', icon: 'reimbursements' },
     { type: 'resources',  label: 'Resources',           icon: 'resources'  },
     { type: 'directory',  label: 'Directory',           icon: 'directory'  },
@@ -5081,6 +5535,7 @@ function App() {
   const [searchOpen, setSearchOpen] = useState(false);
 
   const isSurveyPath = window.location.pathname === '/survey';
+  const volunteerMatch = window.location.pathname.match(/^\/volunteer\/(\d+)$/);
   const bump = () => setRefreshSignal((n) => n + 1);
 
   const loadShared = useCallback(async (user) => {
@@ -5142,6 +5597,7 @@ function App() {
 
   if (!booted) return <div className="min-h-screen flex items-center justify-center gap-2 text-cream/40"><Spinner className="w-5 h-5" /> Loading…</div>;
   if (isSurveyPath) return <InterestSurvey onBack={() => { window.history.pushState(null, '', '/'); window.location.reload(); }} />;
+  if (volunteerMatch) return <VolunteerSignUpPage eventId={Number(volunteerMatch[1])} />;
   if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;
   if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); }} onBack={() => setEnterPortal(false)} />;
   if (me.firstLogin) return <ChangePassword user={me} forced onDone={(u) => { setMe(u); loadShared(u); }} />;
@@ -5171,7 +5627,7 @@ function App() {
     attendance: 'Attendance', polls: 'Polls & Voting', budget: 'Budget Overview',
     meetings: 'Meetings', speaker: 'Speaker Events', grants: 'Grant Tracker', social: 'Social Media',
     grades: 'Grade Pipeline', reimbursements: 'Reimbursements', directory: 'Board Directory',
-    resources: 'Resource Hub',
+    resources: 'Resource Hub', volunteers: 'Volunteer Manager',
     org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity',
     ai: 'AI Assistant', password: 'Change Password', profile: 'Edit Profile',
   };
@@ -5207,6 +5663,7 @@ function App() {
   else if (view.type === 'reimbursements') content = <ReimbursementsPage me={me} />;
   else if (view.type === 'directory') content = <DirectoryPage me={me} />;
   else if (view.type === 'resources') content = <ResourceHubPage me={me} />;
+  else if (view.type === 'volunteers') content = (me.role === 'admin' || me.role === 'manager') ? <VolunteerManagerPage me={me} /> : null;
 
   return (
     <>

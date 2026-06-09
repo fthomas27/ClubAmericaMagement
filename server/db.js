@@ -424,6 +424,43 @@ function init() {
     );
     CREATE INDEX IF NOT EXISTS idx_meeting_action_items ON meeting_action_items(meetingId);
     CREATE INDEX IF NOT EXISTS idx_action_items_assignee ON meeting_action_items(assigneeId, done);
+
+    -- Volunteer-enabled iCal events (snapshotted when admin enables volunteers).
+    CREATE TABLE IF NOT EXISTS volunteer_events (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      icalUid          TEXT UNIQUE NOT NULL,
+      title            TEXT NOT NULL,
+      location         TEXT NOT NULL DEFAULT '',
+      startDate        TEXT NOT NULL,
+      volunteersEnabled INTEGER NOT NULL DEFAULT 1,
+      createdById      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      createdAt        TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Roles/slots for each volunteer event.
+    CREATE TABLE IF NOT EXISTS volunteer_roles (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      eventId   INTEGER NOT NULL REFERENCES volunteer_events(id) ON DELETE CASCADE,
+      roleName  TEXT NOT NULL,
+      cap       INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_volunteer_roles ON volunteer_roles(eventId);
+
+    -- Public sign-ups for volunteer roles.
+    CREATE TABLE IF NOT EXISTS volunteer_signups (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      eventId          INTEGER NOT NULL REFERENCES volunteer_events(id) ON DELETE CASCADE,
+      roleId           INTEGER REFERENCES volunteer_roles(id) ON DELETE SET NULL,
+      name             TEXT NOT NULL,
+      phone            TEXT NOT NULL DEFAULT '',
+      email            TEXT NOT NULL DEFAULT '',
+      grade            TEXT NOT NULL DEFAULT '',
+      status           TEXT NOT NULL DEFAULT 'confirmed',
+      matchedRosterId  INTEGER REFERENCES roster_members(id) ON DELETE SET NULL,
+      createdAt        TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_volunteer_signups_event ON volunteer_signups(eventId, status);
+    CREATE INDEX IF NOT EXISTS idx_volunteer_signups_roster ON volunteer_signups(matchedRosterId);
   `);
 
   // User column migrations.

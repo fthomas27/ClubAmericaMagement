@@ -269,7 +269,16 @@ app.get('/api/home', async (req, res) => {
   try { events = await fetchUpcoming(home.calendarUrl, 3); } catch (_) {}
   // Don't leak the raw calendar URL to the public payload.
   const { calendarUrl, ...publicHome } = home;
-  res.json({ home: { ...publicHome, calendarConfigured: !!calendarUrl }, events });
+  // Attach upcoming volunteer events (enabled, future) with per-role signup counts.
+  const volunteerEvents = db.prepare(`
+    SELECT ve.id, ve.icalUid, ve.title, ve.startDate,
+      (SELECT COUNT(*) FROM volunteer_signups vs WHERE vs.eventId = ve.id AND vs.status = 'confirmed') AS confirmedCount,
+      (SELECT COALESCE(SUM(vr2.cap),0) FROM volunteer_roles vr2 WHERE vr2.eventId = ve.id) AS totalCap
+    FROM volunteer_events ve
+    WHERE ve.volunteersEnabled = 1 AND ve.startDate >= datetime('now', '-1 hour')
+    ORDER BY ve.startDate ASC
+  `).all();
+  res.json({ home: { ...publicHome, calendarConfigured: !!calendarUrl }, events, volunteerEvents });
 });
 
 // Public board roster for the "Meet the Board" page (no private info, no auth).
@@ -348,6 +357,64 @@ app.post('/api/track', rateLimit({ windowMs: 60 * 1000, max: 120, name: 'track' 
   db.prepare('INSERT INTO page_events (event, label) VALUES (?, ?)')
     .run(String(event).slice(0, 80), String(label || '').slice(0, 200));
   res.json({ ok: true });
+});
+
+// ---- Public volunteer sign-up routes (NO auth required) ----------------------
+const volunteerSignupRL = rateLimit({ windowMs: 60 * 1000, max: 30, name: 'vsignup' });
+
+app.get('/api/public/volunteer/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const event = db.prepare('SELECT id, title, location, startDate FROM volunteer_events WHERE id = ? AND volunteersEnabled = 1').get(id);
+  if (!event) return res.status(404).json({ error: 'Event not found or sign-ups are closed' });
+  const roles = db.prepare('SELECT id, roleName, cap FROM volunteer_roles WHERE eventId = ? ORDER BY id').all(id);
+  const rolesWithCounts = roles.map((r) => {
+    const confirmed = db.prepare("SELECT COUNT(*) AS n FROM volunteer_signups WHERE roleId = ? AND status = 'confirmed'").get(r.id).n;
+    const waitlisted = db.prepare("SELECT COUNT(*) AS n FROM volunteer_signups WHERE roleId = ? AND status = 'waitlisted'").get(r.id).n;
+    return { ...r, confirmed, waitlisted };
+  });
+  res.json({ event, roles: rolesWithCounts });
+});
+
+app.post('/api/public/volunteer/:id/signup', volunteerSignupRL, (req, res) => {
+  const eventId = Number(req.params.id);
+  const event = db.prepare('SELECT id FROM volunteer_events WHERE id = ? AND volunteersEnabled = 1').get(eventId);
+  if (!event) return res.status(404).json({ error: 'Event not found or sign-ups are closed' });
+  let { roleId, name, phone, email, grade } = req.body || {};
+  name  = String(name  || '').trim().slice(0, 120);
+  phone = String(phone || '').trim().slice(0, 30);
+  email = String(email || '').trim().slice(0, 200);
+  grade = String(grade || '').trim().slice(0, 20);
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+  roleId = roleId ? Number(roleId) : null;
+  if (roleId) {
+    const role = db.prepare('SELECT id, cap FROM volunteer_roles WHERE id = ? AND eventId = ?').get(roleId, eventId);
+    if (!role) return res.status(400).json({ error: 'Invalid role' });
+    let status = 'confirmed';
+    if (role.cap > 0) {
+      const confirmed = db.prepare("SELECT COUNT(*) AS n FROM volunteer_signups WHERE roleId = ? AND status = 'confirmed'").get(roleId).n;
+      if (confirmed >= role.cap) status = 'waitlisted';
+    }
+    // Cross-reference phone against roster.
+    let matchedRosterId = null;
+    if (phone) {
+      const roster = db.prepare('SELECT id FROM roster_members WHERE phone = ? LIMIT 1').get(phone);
+      if (roster) matchedRosterId = roster.id;
+    }
+    const info = db.prepare(
+      'INSERT INTO volunteer_signups (eventId, roleId, name, phone, email, grade, status, matchedRosterId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(eventId, roleId, name, phone, email, grade, status, matchedRosterId);
+    return res.status(201).json({ ok: true, id: info.lastInsertRowid, status });
+  }
+  // No role — general sign-up (cap 0 = no limit).
+  let matchedRosterId = null;
+  if (phone) {
+    const roster = db.prepare('SELECT id FROM roster_members WHERE phone = ? LIMIT 1').get(phone);
+    if (roster) matchedRosterId = roster.id;
+  }
+  const info = db.prepare(
+    'INSERT INTO volunteer_signups (eventId, roleId, name, phone, email, grade, status, matchedRosterId) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)'
+  ).run(eventId, name, phone, email, grade, 'confirmed', matchedRosterId);
+  res.status(201).json({ ok: true, id: info.lastInsertRowid, status: 'confirmed' });
 });
 
 // Everything past this point requires a changed password.
@@ -2404,6 +2471,131 @@ app.get('/api/me/action-items', (req, res) => {
     ORDER BY a.dueDate ASC, a.createdAt ASC
   `).all(req.user.id);
   res.json({ items: rows });
+});
+
+// ---- Volunteer event management (manager/admin) ------------------------------
+function requireManagerOrAdmin(req, res, next) {
+  if (req.user.role === 'admin' || req.user.role === 'manager') return next();
+  res.status(403).json({ error: 'Managers and admins only' });
+}
+
+app.get('/api/volunteer-events', requireManagerOrAdmin, (req, res) => {
+  const events = db.prepare(`
+    SELECT ve.id, ve.icalUid, ve.title, ve.location, ve.startDate, ve.volunteersEnabled, ve.createdAt
+    FROM volunteer_events ve ORDER BY ve.startDate DESC
+  `).all();
+  const result = events.map((ev) => {
+    const roles = db.prepare('SELECT id, roleName, cap FROM volunteer_roles WHERE eventId = ? ORDER BY id').all(ev.id);
+    const rolesWithCounts = roles.map((r) => {
+      const confirmed  = db.prepare("SELECT COUNT(*) AS n FROM volunteer_signups WHERE roleId = ? AND status = 'confirmed'").get(r.id).n;
+      const waitlisted = db.prepare("SELECT COUNT(*) AS n FROM volunteer_signups WHERE roleId = ? AND status = 'waitlisted'").get(r.id).n;
+      return { ...r, confirmed, waitlisted };
+    });
+    return { ...ev, volunteersEnabled: !!ev.volunteersEnabled, roles: rolesWithCounts };
+  });
+  res.json({ events: result });
+});
+
+app.post('/api/volunteer-events', requireManagerOrAdmin, (req, res) => {
+  let { icalUid, title, location, startDate } = req.body || {};
+  icalUid   = String(icalUid   || '').trim().slice(0, 500);
+  title     = String(title     || '').trim().slice(0, 200);
+  location  = String(location  || '').trim().slice(0, 200);
+  startDate = String(startDate || '').trim().slice(0, 30);
+  if (!icalUid || !title || !startDate) return res.status(400).json({ error: 'icalUid, title, and startDate are required' });
+  try {
+    const info = db.prepare(
+      'INSERT INTO volunteer_events (icalUid, title, location, startDate, createdById) VALUES (?, ?, ?, ?, ?)'
+    ).run(icalUid, title, location, startDate, req.user.id);
+    res.status(201).json({ ok: true, id: info.lastInsertRowid });
+  } catch (e) {
+    if (e.message && e.message.includes('UNIQUE')) {
+      // Already exists — return the existing record's id.
+      const existing = db.prepare('SELECT id FROM volunteer_events WHERE icalUid = ?').get(icalUid);
+      return res.json({ ok: true, id: existing.id });
+    }
+    throw e;
+  }
+});
+
+app.patch('/api/volunteer-events/:id', requireManagerOrAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const ev = db.prepare('SELECT id FROM volunteer_events WHERE id = ?').get(id);
+  if (!ev) return res.status(404).json({ error: 'Not found' });
+  const { volunteersEnabled, title } = req.body || {};
+  if (volunteersEnabled !== undefined) {
+    db.prepare('UPDATE volunteer_events SET volunteersEnabled = ? WHERE id = ?').run(volunteersEnabled ? 1 : 0, id);
+  }
+  if (title !== undefined) {
+    db.prepare('UPDATE volunteer_events SET title = ? WHERE id = ?').run(String(title).trim().slice(0, 200), id);
+  }
+  res.json({ ok: true });
+});
+
+app.delete('/api/volunteer-events/:id', requireManagerOrAdmin, (req, res) => {
+  db.prepare('DELETE FROM volunteer_events WHERE id = ?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+app.post('/api/volunteer-events/:id/roles', requireManagerOrAdmin, (req, res) => {
+  const eventId = Number(req.params.id);
+  const ev = db.prepare('SELECT id FROM volunteer_events WHERE id = ?').get(eventId);
+  if (!ev) return res.status(404).json({ error: 'Event not found' });
+  let { roleName, cap } = req.body || {};
+  roleName = String(roleName || '').trim().slice(0, 100);
+  cap      = Math.max(0, Number(cap) || 0);
+  if (!roleName) return res.status(400).json({ error: 'roleName is required' });
+  const info = db.prepare('INSERT INTO volunteer_roles (eventId, roleName, cap) VALUES (?, ?, ?)').run(eventId, roleName, cap);
+  res.status(201).json({ ok: true, id: info.lastInsertRowid });
+});
+
+app.patch('/api/volunteer-roles/:id', requireManagerOrAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const role = db.prepare('SELECT id FROM volunteer_roles WHERE id = ?').get(id);
+  if (!role) return res.status(404).json({ error: 'Not found' });
+  let { roleName, cap } = req.body || {};
+  if (roleName !== undefined) db.prepare('UPDATE volunteer_roles SET roleName = ? WHERE id = ?').run(String(roleName).trim().slice(0, 100), id);
+  if (cap      !== undefined) db.prepare('UPDATE volunteer_roles SET cap = ? WHERE id = ?').run(Math.max(0, Number(cap) || 0), id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/volunteer-roles/:id', requireManagerOrAdmin, (req, res) => {
+  db.prepare('DELETE FROM volunteer_roles WHERE id = ?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+app.get('/api/volunteer-events/:id/signups', requireManagerOrAdmin, (req, res) => {
+  const eventId = Number(req.params.id);
+  const signups = db.prepare(`
+    SELECT vs.id, vs.name, vs.phone, vs.email, vs.grade, vs.status, vs.createdAt,
+           vr.roleName, rm.firstName || ' ' || rm.lastName AS matchedName, rm.id AS rosterMatchId
+    FROM volunteer_signups vs
+    LEFT JOIN volunteer_roles vr ON vr.id = vs.roleId
+    LEFT JOIN roster_members rm ON rm.id = vs.matchedRosterId
+    WHERE vs.eventId = ?
+    ORDER BY vs.createdAt ASC
+  `).all(eventId);
+  res.json({ signups });
+});
+
+app.delete('/api/volunteer-signups/:id', requireManagerOrAdmin, (req, res) => {
+  db.prepare('DELETE FROM volunteer_signups WHERE id = ?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+// Roster cross-reference: volunteer events this roster member signed up for.
+app.get('/api/roster-members/:id/volunteer-history', requireManagerOrAdmin, (req, res) => {
+  const rosterId = Number(req.params.id);
+  const history = db.prepare(`
+    SELECT vs.id, vs.name, vs.status, vs.createdAt, ve.title AS eventTitle, ve.startDate,
+           vr.roleName
+    FROM volunteer_signups vs
+    JOIN volunteer_events ve ON ve.id = vs.eventId
+    LEFT JOIN volunteer_roles vr ON vr.id = vs.roleId
+    WHERE vs.matchedRosterId = ?
+    ORDER BY vs.createdAt DESC
+  `).all(rosterId);
+  res.json({ history });
 });
 
 // ---- Static frontend --------------------------------------------------------
