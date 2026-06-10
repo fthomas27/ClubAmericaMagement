@@ -2408,6 +2408,71 @@ function MeetTheBoard() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Immersive homepage helpers (pure CSS animation — no WebGL/3D libraries)
+// ---------------------------------------------------------------------------
+
+// Field of randomly placed twinkling stars. Positions are memoized so the
+// sky doesn't reshuffle on re-render.
+function Starfield({ count = 42 }) {
+  const stars = useMemo(() => Array.from({ length: count }, () => ({
+    left: Math.random() * 100,
+    top: Math.random() * 100,
+    size: 1 + Math.random() * 1.8,
+    dur: 2.5 + Math.random() * 4.5,
+    delay: Math.random() * 6,
+    min: 0.05 + Math.random() * 0.15,
+    max: 0.45 + Math.random() * 0.5,
+    gold: Math.random() < 0.18,
+  })), [count]);
+  return (
+    <>
+      {stars.map((s, i) => (
+        <span key={i} className="ca-star" style={{
+          left: s.left + '%', top: s.top + '%', width: s.size, height: s.size,
+          background: s.gold ? '#C9A84C' : '#F5F0E8',
+          '--ca-dur': s.dur + 's', '--ca-delay': s.delay + 's', '--ca-min': s.min, '--ca-max': s.max,
+        }} />
+      ))}
+    </>
+  );
+}
+
+// Wrapper that drifts its children as the page scrolls (subtle depth).
+// Mutates the DOM directly from a passive scroll listener so the React tree
+// never re-renders during scrolling.
+function ParallaxLayer({ speed = 0.2, className = '', children }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (ref.current) ref.current.style.transform = `translate3d(0, ${window.scrollY * speed}px, 0)`;
+      });
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => { window.removeEventListener('scroll', onScroll); if (raf) cancelAnimationFrame(raf); };
+  }, [speed]);
+  return <div ref={ref} className={className} aria-hidden="true">{children}</div>;
+}
+
+// Fades content up into view the first time it scrolls into the viewport.
+function Reveal({ children, delay = 0, className = '' }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') { el?.classList.add('is-visible'); return; }
+    const obs = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) { el.classList.add('is-visible'); obs.disconnect(); }
+    }, { threshold: 0.1 });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+  return <div ref={ref} className={`ca-reveal ${className}`} style={delay ? { transitionDelay: delay + 'ms' } : undefined}>{children}</div>;
+}
+
 function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onBack }) {
   const [home, setHome] = useState(null);
   const [events, setEvents] = useState([]);
@@ -2456,17 +2521,24 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
   if (mode === 'portal') {
     return (
       <div className="min-h-screen">
-        <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-10 pb-10 text-center">
-          <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3 ca-fade-in">Park City High School</p>
-          <h1 className="font-display text-5xl sm:text-7xl text-cream leading-none ca-slide-up" style={{ animationDelay: '60ms' }}>CLUB AMERICA</h1>
-          <p className="text-cream/65 max-w-lg mx-auto mt-4 text-base leading-relaxed ca-fade-in" style={{ animationDelay: '160ms' }}>
-            Faith, freedom, and community — standing up for America's founding principles at Park City High School.
-          </p>
-          {home.instagramUrl && (
-            <div className="mt-6 flex justify-center">
-              <InstagramLink url={home.instagramUrl} />
-            </div>
-          )}
+        <section className="relative overflow-hidden max-w-5xl mx-auto px-4 sm:px-6 pt-12 pb-12 text-center">
+          <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+            <div className="ca-aurora-a absolute -top-1/2 left-1/4 w-[60%] h-[120%] rounded-full"
+              style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.18), transparent 60%)', filter: 'blur(40px)' }} />
+            <Starfield count={20} />
+          </div>
+          <div className="relative">
+            <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3 ca-fade-in">Park City High School</p>
+            <h1 className="ca-hero-title font-display text-6xl sm:text-8xl text-cream leading-none">CLUB AMERICA</h1>
+            <p className="text-cream/65 max-w-lg mx-auto mt-4 text-base leading-relaxed ca-fade-in" style={{ animationDelay: '160ms' }}>
+              Faith, freedom, and community — standing up for America's founding principles at Park City High School.
+            </p>
+            {home.instagramUrl && (
+              <div className="mt-6 flex justify-center">
+                <InstagramLink url={home.instagramUrl} />
+              </div>
+            )}
+          </div>
         </section>
         <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 space-y-8">
           <HomeAnnouncementBanner home={home} />
@@ -2502,42 +2574,75 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
     );
   }
 
-  // Public landing page (full screen). This is the club's site for ALL
-  // members and prospective members — practical info (next meeting,
-  // volunteer sign-ups) comes first, decoration stays minimal.
+  // Public landing page — the whole club's site. A full-viewport immersive
+  // hero (twinkling stars, drifting glows, parallax — all CSS, no 3D libs),
+  // then the practical content: announcement, next meeting, volunteer links.
   return (
     <div className="min-h-screen">
-      <header className="max-w-5xl mx-auto px-4 sm:px-6 pt-6 flex items-center justify-between gap-3">
-        <Logo size="sidebar" />
-        <Button variant="primary" onClick={onEnterPortal}>Board Login →</Button>
-      </header>
-      <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-10 pb-10 text-center">
-        <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3 ca-fade-in">Park City High School</p>
-        <h1 className="font-display text-5xl sm:text-7xl text-cream leading-none ca-slide-up" style={{ animationDelay: '60ms' }}>CLUB AMERICA</h1>
-        <p className="text-cream/65 max-w-lg mx-auto mt-4 text-base leading-relaxed ca-fade-in" style={{ animationDelay: '160ms' }}>
-          Faith, freedom, and community — standing up for America's founding principles at Park City High School.
-        </p>
-        <div className="mt-7 flex flex-wrap gap-3 justify-center items-center ca-fade-in" style={{ animationDelay: '250ms' }}>
-          <button
-            onClick={() => document.getElementById('get-involved')?.scrollIntoView({ behavior: 'smooth' })}
-            className="px-7 py-3 bg-red hover:bg-red/85 text-cream font-semibold rounded-lg transition-all shadow-lg shadow-red/20 text-sm active:scale-95 hover:shadow-xl hover:shadow-red/30">
-            Get Involved →
-          </button>
-          <button
-            onClick={() => document.getElementById('meet-the-board')?.scrollIntoView({ behavior: 'smooth' })}
-            className="px-7 py-3 border border-gold/50 text-gold hover:bg-gold/10 rounded-lg transition-all text-sm font-medium active:scale-95">
-            Meet the Board
-          </button>
-          {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
+      <div className="relative min-h-screen flex flex-col overflow-hidden">
+        {/* Ambient background layers */}
+        <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+          <div className="ca-aurora-a absolute -top-1/4 -left-1/4 w-[80%] h-[80%] rounded-full"
+            style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.28), transparent 60%)', filter: 'blur(40px)' }} />
+          <div className="ca-aurora-b absolute -bottom-1/3 -right-1/4 w-[85%] h-[85%] rounded-full"
+            style={{ background: 'radial-gradient(circle, rgba(0,40,104,0.55), transparent 60%)', filter: 'blur(40px)' }} />
+          <div className="ca-aurora-b absolute top-1/4 right-[10%] w-[40%] h-[40%] rounded-full"
+            style={{ background: 'radial-gradient(circle, rgba(201,168,76,0.10), transparent 60%)', filter: 'blur(30px)' }} />
         </div>
-      </section>
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 space-y-8">
-        <HomeAnnouncementBanner home={home} />
-        {cards}
-        <AboutSection home={home} />
-        <ValuesSection />
-        <div id="meet-the-board"><MeetTheBoard /></div>
-        <div id="get-involved"><GetInvolved /></div>
+        <ParallaxLayer speed={0.35} className="absolute inset-0 pointer-events-none"><Starfield count={26} /></ParallaxLayer>
+        <ParallaxLayer speed={0.15} className="absolute inset-0 pointer-events-none"><Starfield count={26} /></ParallaxLayer>
+
+        <header className="relative z-10 max-w-5xl mx-auto w-full px-4 sm:px-6 pt-6 flex items-center justify-between gap-3">
+          <Logo size="sidebar" />
+          <Button variant="primary" onClick={onEnterPortal}>Board Login →</Button>
+        </header>
+
+        <section className="relative z-10 flex-1 flex flex-col items-center justify-center text-center px-4 sm:px-6 py-16">
+          <p className="font-display text-sm tracking-[0.6em] text-gold/70 uppercase mb-4 ca-fade-in" style={{ animationDelay: '500ms', animationDuration: '0.8s' }}>
+            Park City High School
+          </p>
+          <h1 className="ca-hero-title font-display text-[clamp(4.5rem,16vw,11rem)] text-cream leading-[0.9]"
+            style={{ textShadow: '0 0 80px rgba(201,168,76,0.25)' }}>
+            CLUB<br className="sm:hidden" /> AMERICA
+          </h1>
+          <div className="flex items-center gap-3 mt-5 ca-fade-in" style={{ animationDelay: '650ms', animationDuration: '0.8s' }}>
+            <span className="h-px w-12 bg-gold/40" />
+            <span className="text-gold/80 tracking-[0.4em] text-sm">★ ★ ★</span>
+            <span className="h-px w-12 bg-gold/40" />
+          </div>
+          <p className="text-cream/70 max-w-xl mt-6 text-base sm:text-lg leading-relaxed ca-fade-in" style={{ animationDelay: '800ms', animationDuration: '0.8s' }}>
+            Faith, freedom, and community — standing up for America's founding principles at Park City High School.
+          </p>
+          <div className="mt-9 flex flex-wrap gap-3 justify-center items-center ca-fade-in" style={{ animationDelay: '950ms', animationDuration: '0.8s' }}>
+            <button
+              onClick={() => document.getElementById('get-involved')?.scrollIntoView({ behavior: 'smooth' })}
+              className="px-8 py-3.5 bg-red hover:bg-red/85 text-cream font-semibold rounded-lg transition-all shadow-lg shadow-red/25 text-sm active:scale-95 hover:shadow-xl hover:shadow-red/35 hover:-translate-y-0.5">
+              Get Involved →
+            </button>
+            <button
+              onClick={() => document.getElementById('meet-the-board')?.scrollIntoView({ behavior: 'smooth' })}
+              className="px-8 py-3.5 border border-gold/50 text-gold hover:bg-gold/10 rounded-lg transition-all text-sm font-medium active:scale-95 hover:-translate-y-0.5">
+              Meet the Board
+            </button>
+            {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
+          </div>
+        </section>
+
+        <button
+          onClick={() => document.getElementById('club-content')?.scrollIntoView({ behavior: 'smooth' })}
+          className="ca-scroll-cue relative z-10 mx-auto mb-7 text-cream/60 hover:text-gold transition-colors"
+          aria-label="Scroll to content">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+      </div>
+
+      <main id="club-content" className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 pt-10 space-y-8">
+        {home.homeAnnouncementEnabled && home.homeAnnouncement && <Reveal><HomeAnnouncementBanner home={home} /></Reveal>}
+        <Reveal>{cards}</Reveal>
+        {home.aboutText && <Reveal><AboutSection home={home} /></Reveal>}
+        <Reveal><ValuesSection /></Reveal>
+        <Reveal><div id="meet-the-board"><MeetTheBoard /></div></Reveal>
+        <Reveal><div id="get-involved"><GetInvolved /></div></Reveal>
       </main>
       <footer className="border-t border-cream/10 py-10">
         <div className="max-w-5xl mx-auto px-4 sm:px-6">
