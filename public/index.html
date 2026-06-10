@@ -183,6 +183,8 @@
     }, 10000);
   </script>
 
-  <script type="text/babel" src="app.js" data-presets="react"></script>
+  <!-- Absolute path: the SPA also serves nested routes like /volunteer/123,
+       where a relative "app.js" would wrongly resolve to /volunteer/app.js. -->
+  <script type="text/babel" src="/app.js" data-presets="react"></script>
 </body>
 </html>
