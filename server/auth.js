@@ -1,16 +1,22 @@
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { db } = require('./db');
 
 const TOKEN_TTL = '12h';
 
-if (!process.env.JWT_SECRET) {
+// Refuse to fall back to any hardcoded secret. A constant baked into the
+// (public) source could be used by anyone to forge admin tokens, so when
+// JWT_SECRET is unset we generate a random per-process secret instead. In
+// production that is still a misconfiguration, so we fail fast there.
+let JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
   if (process.env.NODE_ENV === 'production') {
     console.error('\x1b[31mFATAL: JWT_SECRET is not set. Refusing to start in production.\x1b[0m');
     process.exit(1);
   }
-  console.warn('\x1b[33mWARNING: JWT_SECRET is not set — using an insecure development default. Never deploy without this set.\x1b[0m');
+  JWT_SECRET = crypto.randomBytes(32).toString('hex');
+  console.warn('\x1b[33mWARNING: JWT_SECRET is not set — generated a random development secret. Tokens will not survive a restart. Set JWT_SECRET for a stable secret.\x1b[0m');
 }
-const JWT_SECRET = process.env.JWT_SECRET || 'club-america-dev-secret-change-me';
 
 function signToken(user) {
   return jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: TOKEN_TTL });
