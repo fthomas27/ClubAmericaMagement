@@ -2242,6 +2242,27 @@ function ValuesSection() {
   );
 }
 
+// Tribute to the founder of Turning Point USA, the movement this club is
+// part of (see "Powered by TPUSA" in the footer).
+function CharlieKirkTribute() {
+  return (
+    <section className="relative overflow-hidden bg-navy2 border border-gold/25 rounded-2xl p-8 sm:p-10 text-center">
+      <div className="absolute inset-0 pointer-events-none" aria-hidden="true"
+        style={{ background: 'radial-gradient(420px 200px at 50% 0%, rgba(201,168,76,0.08), transparent 70%)' }} />
+      <div className="relative">
+        <div className="text-gold/80 tracking-[0.5em] text-base mb-3">★ ★ ★</div>
+        <h2 className="font-display text-3xl sm:text-4xl text-cream">In Memory of Charlie Kirk</h2>
+        <p className="text-gold/70 text-sm mt-2">Founder of Turning Point USA · 1993 – 2025</p>
+        <p className="text-cream/65 max-w-xl mx-auto mt-5 leading-relaxed">
+          Charlie founded Turning Point USA at eighteen and spent his life showing that young
+          Americans can stand up, speak out, and lead. Every meeting of this club is part of
+          the movement he started.
+        </p>
+      </div>
+    </section>
+  );
+}
+
 function HomeAnnouncementEditor({ home, onSaved }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState(home.homeAnnouncement || '');
@@ -2561,6 +2582,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
           {cards}
           <AboutSection home={home} />
           <ValuesSection />
+          <CharlieKirkTribute />
           <div id="meet-the-board"><MeetTheBoard /></div>
           <div id="get-involved"><GetInvolved /></div>
         </main>
@@ -2664,6 +2686,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         <Reveal>{cards}</Reveal>
         {home.aboutText && <Reveal><AboutSection home={home} /></Reveal>}
         <Reveal><ValuesSection /></Reveal>
+        <Reveal><CharlieKirkTribute /></Reveal>
         <Reveal><div id="meet-the-board"><MeetTheBoard /></div></Reveal>
         <Reveal><div id="get-involved"><GetInvolved /></div></Reveal>
       </main>
