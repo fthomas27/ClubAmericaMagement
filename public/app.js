@@ -2839,8 +2839,29 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
   const [busyAction, setBusyAction] = useState('');
   const [converting, setConverting] = useState(false);
   const [convertForm, setConvertForm] = useState({ grade: member.grade || '', roleDescription: member.roleDescription || '' });
+  const [showActivity, setShowActivity] = useState(false);
+  const [activityLoaded, setActivityLoaded] = useState(false);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [meetings, setMeetings] = useState([]);
+  const [volunteerEvents, setVolunteerEvents] = useState([]);
 
   const busy = !!busyAction;
+
+  async function toggleActivity() {
+    if (activityLoaded) { setShowActivity((v) => !v); return; }
+    setShowActivity(true);
+    setActivityLoading(true);
+    try {
+      const [att, vol] = await Promise.all([
+        fetch(`/api/roster-members/${member.id}/attendance-history`).then((r) => r.json()),
+        fetch(`/api/roster-members/${member.id}/volunteer-history`).then((r) => r.json()),
+      ]);
+      setMeetings(att.history || []);
+      setVolunteerEvents(vol.history || []);
+      setActivityLoaded(true);
+    } catch (_) {}
+    finally { setActivityLoading(false); }
+  }
 
   async function act(action, body) {
     setBusyAction(action);
@@ -2944,6 +2965,67 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
           </label>
         </div>
       )}
+
+      <div className="mt-3 border-t border-cream/10 pt-2">
+        <button onClick={toggleActivity}
+          className="text-xs text-cream/40 hover:text-cream/70 transition-colors">
+          {showActivity ? 'Hide Activity ▴' : 'View Activity ▾'}
+        </button>
+        {showActivity && (
+          <div className="mt-2 space-y-4">
+            {activityLoading ? (
+              <div className="text-xs text-cream/40">Loading…</div>
+            ) : (
+              <>
+                <div>
+                  <div className="text-xs font-semibold text-cream/40 uppercase tracking-wide mb-1.5">Meetings Attended</div>
+                  {meetings.length === 0 ? (
+                    <div className="text-xs text-cream/25">No attendance records found</div>
+                  ) : (
+                    <div className="space-y-1">
+                      {meetings.map((m) => (
+                        <div key={m.id} className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-cream/65 truncate">{m.title}</span>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-cream/35">{m.eventDate}</span>
+                            <span className={`rounded-full px-1.5 py-0.5 ${
+                              m.status === 'present'  ? 'bg-emerald-500/15 text-emerald-400' :
+                              m.status === 'excused'  ? 'bg-amber-500/15 text-amber-400' :
+                                                        'bg-red-500/10 text-red/60'
+                            }`}>{m.status}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <div className="text-xs font-semibold text-cream/40 uppercase tracking-wide mb-1.5">Volunteer Events</div>
+                  {volunteerEvents.length === 0 ? (
+                    <div className="text-xs text-cream/25">No volunteer history found</div>
+                  ) : (
+                    <div className="space-y-1">
+                      {volunteerEvents.map((v) => (
+                        <div key={v.id} className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-cream/65 truncate">
+                            {v.eventTitle}{v.roleName ? ` — ${v.roleName}` : ''}
+                          </span>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-cream/35">{v.startDate ? v.startDate.slice(0, 10) : ''}</span>
+                            <span className={`rounded-full px-1.5 py-0.5 ${
+                              v.status === 'waitlisted' ? 'bg-amber-500/15 text-amber-400' : 'bg-emerald-500/15 text-emerald-400'
+                            }`}>{v.status}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -4985,7 +5067,7 @@ function VolunteerSignUpPage({ eventId }) {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || !phone.trim()) return;
     setSubmitting(true);
     setError('');
     try {
@@ -5098,8 +5180,8 @@ function VolunteerSignUpPage({ eventId }) {
               placeholder="Your full name" />
           </div>
           <div>
-            <label className="block text-xs text-cream/50 mb-1">Phone Number</label>
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel"
+            <label className="block text-xs text-cream/50 mb-1">Phone Number *</label>
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" required
               className="w-full bg-navy3 border border-cream/15 rounded-lg px-3 py-2 text-sm text-cream placeholder-cream/30 focus:outline-none focus:border-gold/50"
               placeholder="(555) 000-0000" />
           </div>
@@ -5123,7 +5205,7 @@ function VolunteerSignUpPage({ eventId }) {
               No role selected — you'll sign up as a general volunteer. Tap a role above to claim a specific spot.
             </div>
           )}
-          <button type="submit" disabled={submitting || !name.trim()}
+          <button type="submit" disabled={submitting || !name.trim() || !phone.trim()}
             className="w-full bg-gold text-navy font-semibold py-2.5 rounded-xl hover:bg-gold/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm">
             {submitting ? 'Signing up…'
               : selectedRoleFull ? `Join Waitlist for ${selectedRoleObj.roleName}`
@@ -5367,6 +5449,11 @@ function VolunteerManagerPage({ me }) {
                                     Roster: {s.matchedName.trim()}
                                   </span>
                                 )}
+                                {s.needsReview ? (
+                                  <span className="text-xs text-orange-400 bg-orange-500/10 border border-orange-500/20 rounded-full px-1.5 py-0.5">
+                                    Needs Review
+                                  </span>
+                                ) : null}
                               </div>
                               <div className="text-xs text-cream/35 mt-0.5 flex gap-3 flex-wrap">
                                 {s.phone && <span>{s.phone}</span>}
