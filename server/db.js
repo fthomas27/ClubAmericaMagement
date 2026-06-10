@@ -495,6 +495,13 @@ function init() {
   // roster_members column migrations.
   const rosterCols = db.prepare("PRAGMA table_info(roster_members)").all().map((c) => c.name);
   if (!rosterCols.includes('parentFormCollected')) db.exec("ALTER TABLE roster_members ADD COLUMN parentFormCollected INTEGER NOT NULL DEFAULT 0");
+  if (!rosterCols.includes('linkedUserId')) {
+    db.exec("ALTER TABLE roster_members ADD COLUMN linkedUserId INTEGER REFERENCES users(id) ON DELETE SET NULL");
+    // Backfill: link existing roster members to users with matching emails.
+    db.exec(`UPDATE roster_members SET linkedUserId = (
+      SELECT u.id FROM users u WHERE u.email != '' AND lower(u.email) = lower(roster_members.email) LIMIT 1
+    ) WHERE linkedUserId IS NULL AND email != ''`);
+  }
 
   // volunteer_signups column migrations.
   const vsCols = db.prepare("PRAGMA table_info(volunteer_signups)").all().map((c) => c.name);

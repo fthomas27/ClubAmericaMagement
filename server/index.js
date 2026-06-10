@@ -747,8 +747,8 @@ app.post('/api/roster/import-board', (req, res) => {
   const existingEmails = new Set(existing.map((r) => r.email?.toLowerCase()).filter(Boolean));
   const existingNames = new Set(existing.map((r) => `${r.firstName?.toLowerCase()}|${r.lastName?.toLowerCase()}`));
 
-  const insert = db.prepare(`INSERT INTO roster_members (firstName, lastName, email, grade, roleDescription, status)
-    VALUES (?, ?, ?, ?, 'Board Member', 'Onboarded')`);
+  const insert = db.prepare(`INSERT INTO roster_members (firstName, lastName, email, grade, roleDescription, status, linkedUserId)
+    VALUES (?, ?, ?, ?, 'Board Member', 'Onboarded', ?)`);
 
   let imported = 0;
   let skipped = 0;
@@ -762,7 +762,7 @@ app.post('/api/roster/import-board', (req, res) => {
       }
       insert.run(
         u.firstName || u.displayName, u.lastName || '',
-        u.email || '', u.grade ? String(u.grade) : null
+        u.email || '', u.grade ? String(u.grade) : null, u.id
       );
       if (email) existingEmails.add(email);
       existingNames.add(nameKey);
@@ -2629,23 +2629,26 @@ app.get('/api/roster-members/:id/volunteer-history', (req, res) => {
   res.json({ history });
 });
 
-// Roster cross-reference: meeting attendance for this roster member (matched via email).
+// Roster cross-reference: meeting attendance for this roster member.
+// Resolves the user account via the explicit linkedUserId FK; falls back to email match.
 app.get('/api/roster-members/:id/attendance-history', (req, res) => {
   if (!canViewRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
-  const member = db.prepare('SELECT email FROM roster_members WHERE id = ?').get(Number(req.params.id));
+  const member = db.prepare('SELECT email, linkedUserId FROM roster_members WHERE id = ?').get(Number(req.params.id));
   if (!member) return res.status(404).json({ error: 'Not found' });
+  let linkedUserId = member.linkedUserId;
+  if (!linkedUserId && member.email) {
+    const hit = db.prepare("SELECT id FROM users WHERE email != '' AND lower(email) = lower(?)").get(member.email);
+    if (hit) linkedUserId = hit.id;
+  }
   let history = [];
-  if (member.email) {
-    const linkedUser = db.prepare("SELECT id FROM users WHERE email != '' AND lower(email) = lower(?)").get(member.email);
-    if (linkedUser) {
-      history = db.prepare(`
-        SELECT ae.id, ae.title, ae.eventDate, ae.location, ar.status
-        FROM attendance_records ar
-        JOIN attendance_events ae ON ae.id = ar.eventId
-        WHERE ar.userId = ?
-        ORDER BY ae.eventDate DESC
-      `).all(linkedUser.id);
-    }
+  if (linkedUserId) {
+    history = db.prepare(`
+      SELECT ae.id, ae.title, ae.eventDate, ae.location, ar.status
+      FROM attendance_records ar
+      JOIN attendance_events ae ON ae.id = ar.eventId
+      WHERE ar.userId = ?
+      ORDER BY ae.eventDate DESC
+    `).all(linkedUserId);
   }
   res.json({ history });
 });
