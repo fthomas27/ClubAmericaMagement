@@ -1577,6 +1577,18 @@ app.get('/api/meetings', (req, res) => {
   res.json({ meetings: rows });
 });
 
+// Returns upcoming iCal events for the Meetings page (club meetings tab).
+app.get('/api/meetings/calendar', async (req, res) => {
+  const home = db.prepare('SELECT calendarUrl FROM site_settings WHERE id = 1').get();
+  if (!home || !home.calendarUrl) return res.json({ events: [], configured: false });
+  try {
+    const events = await fetchUpcoming(home.calendarUrl, 10);
+    res.json({ events, configured: true });
+  } catch (_) {
+    res.json({ events: [], configured: true });
+  }
+});
+
 app.post('/api/meetings', (req, res) => {
   if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
   const { title, meetingDate, agendaUrl, minutesUrl, notes } = req.body || {};

@@ -5366,12 +5366,12 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
     { type: 'attendance',   label: 'Attendance',          icon: 'attendance' },
     { type: 'polls',       label: 'Polls & Voting',      icon: 'poll'       },
     { type: 'meetings',    label: 'Meetings',             icon: 'meetings'   },
+    ...(isManager ? [{ type: 'volunteers', label: 'Volunteers',        icon: 'volunteer'  }] : []),
     ...(isManager ? [{ type: 'speaker',   label: 'Speaker Events',    icon: 'speaker'    }] : []),
     ...(isManager ? [{ type: 'grants',    label: 'Grant Tracker',     icon: 'grants'     }] : []),
     ...(isManager || !!me.canManageSocial ? [{ type: 'social', label: 'Social Media', icon: 'social' }] : []),
     ...(isManager         ? [{ type: 'budget',      label: 'Budget Overview',  icon: 'budget'     }] : []),
     ...(isManager || !!me.managedGrade ? [{ type: 'grades', label: 'Grade Pipeline', icon: 'grades' }] : []),
-    ...(isManager ? [{ type: 'volunteers', label: 'Volunteers', icon: 'volunteer' }] : []),
     { type: 'reimbursements', label: 'Reimbursements', icon: 'reimbursements' },
     { type: 'resources',  label: 'Resources',           icon: 'resources'  },
     { type: 'directory',  label: 'Directory',           icon: 'directory'  },
@@ -5798,6 +5798,8 @@ function MeetingActionItems({ meetingId, me, allUsers }) {
 // Meetings Page
 // ---------------------------------------------------------------------------
 function MeetingsPage({ me }) {
+  const [tab, setTab] = useState('club');
+  // Board meetings state
   const [meetings, setMeetings] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -5809,6 +5811,10 @@ function MeetingsPage({ me }) {
   const [notes, setNotes] = useState('');
   const [expandedId, setExpandedId] = useState(null);
   const [allUsers, setAllUsers] = useState([]);
+  // Club calendar state
+  const [calEvents, setCalEvents] = useState([]);
+  const [calLoaded, setCalLoaded] = useState(false);
+  const [calConfigured, setCalConfigured] = useState(false);
   const { loading, error, setError, run } = useAction();
   const isManager = me.role === 'admin' || me.role === 'manager';
 
@@ -5821,7 +5827,16 @@ function MeetingsPage({ me }) {
     finally { setLoaded(true); }
   }, [setError]);
 
-  useEffect(() => { load(); }, [load]);
+  const loadCal = useCallback(async () => {
+    try {
+      const d = await api('/meetings/calendar');
+      setCalEvents(d.events || []);
+      setCalConfigured(!!d.configured);
+    } catch (_) {}
+    finally { setCalLoaded(true); }
+  }, []);
+
+  useEffect(() => { load(); loadCal(); }, [load, loadCal]);
 
   function openCreate() { setEditId(null); setTitle(''); setMeetingDate(''); setAgendaUrl(''); setMinutesUrl(''); setNotes(''); setShowForm(true); }
   function openEdit(m) { setEditId(m.id); setTitle(m.title); setMeetingDate(m.meetingDate); setAgendaUrl(m.agendaUrl||''); setMinutesUrl(m.minutesUrl||''); setNotes(m.notes||''); setShowForm(true); }
@@ -5846,81 +5861,121 @@ function MeetingsPage({ me }) {
 
   const safeLink = (url) => url && (url.startsWith('http://') || url.startsWith('https://')) ? url : url ? 'https://' + url : '';
 
+  const tabCls = (t) => `px-4 py-2 text-sm font-medium rounded-lg transition-colors ${tab === t ? 'bg-gold/15 text-gold border border-gold/30' : 'text-cream/50 hover:text-cream hover:bg-cream/5'}`;
+
   return (
     <div className="max-w-3xl">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h1 className="font-display text-4xl sm:text-5xl text-cream">Meetings</h1>
-        {isManager && !showForm && <Button variant="gold" onClick={openCreate}>+ New Meeting</Button>}
+        {isManager && tab === 'board' && !showForm && <Button variant="gold" onClick={openCreate}>+ New</Button>}
       </div>
 
-      {showForm && (
-        <form onSubmit={save} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
-          <div className="font-display text-xl text-gold">{editId ? 'Edit Meeting' : 'New Meeting'}</div>
-          <Field label="Title"><input className={inputCls} value={title} autoFocus onChange={(e) => setTitle(e.target.value)} /></Field>
-          <Field label="Date"><input type="date" className={inputCls} value={meetingDate} onChange={(e) => setMeetingDate(e.target.value)} /></Field>
-          <Field label="Agenda (Google Doc URL)"><input className={inputCls} value={agendaUrl} placeholder="https://docs.google.com/…" onChange={(e) => setAgendaUrl(e.target.value)} /></Field>
-          <Field label="Minutes (Google Doc URL)"><input className={inputCls} value={minutesUrl} placeholder="https://docs.google.com/…" onChange={(e) => setMinutesUrl(e.target.value)} /></Field>
-          <Field label="Notes"><textarea className={inputCls} rows="2" value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
-          {error && <div className="text-red text-sm">{error}</div>}
-          <div className="flex gap-2">
-            <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner />Saving…</span> : 'Save'}</Button>
-            <Button variant="ghost" onClick={() => setShowForm(false)} disabled={loading}>Cancel</Button>
-          </div>
-        </form>
-      )}
+      {/* Tabs */}
+      <div className="flex gap-2 mb-6">
+        <button className={tabCls('club')} onClick={() => setTab('club')}>Club Meetings</button>
+        <button className={tabCls('board')} onClick={() => setTab('board')}>Board Meetings</button>
+      </div>
 
-      {!loaded && <Loading label="Loading meetings…" />}
-      {loaded && meetings.length === 0 && (
-        <EmptyState icon="📋" title="No meetings yet" hint={isManager ? 'Create the first meeting record above.' : 'Meeting records will appear here once added.'} />
-      )}
-      <div className="space-y-3">
-        {meetings.map((m) => (
-          <div key={m.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="font-medium text-cream">{m.title}</div>
-                <div className="text-xs text-cream/50 mt-0.5">{fmtShortDate(m.meetingDate)} · Added by {m.createdByName}</div>
-                {m.notes && <div className="text-sm text-cream/60 mt-1">{m.notes}</div>}
-                <div className="flex gap-3 mt-2 flex-wrap">
-                  {safeLink(m.agendaUrl) && (
-                    <a href={safeLink(m.agendaUrl)} target="_blank" rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-gold/80 hover:text-gold transition-colors">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
-                      Agenda
-                    </a>
-                  )}
-                  {safeLink(m.minutesUrl) && (
-                    <a href={safeLink(m.minutesUrl)} target="_blank" rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-emerald-400/80 hover:text-emerald-300 transition-colors">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>
-                      Minutes
-                    </a>
-                  )}
-                  {!safeLink(m.agendaUrl) && isManager && <span className="text-xs text-cream/25 italic">No agenda link yet</span>}
-                  {!safeLink(m.minutesUrl) && isManager && <span className="text-xs text-cream/25 italic">No minutes link yet</span>}
+      {/* ── Club Meetings tab (iCal) ── */}
+      {tab === 'club' && (
+        <div>
+          {!calLoaded && <Loading label="Loading club meetings…" />}
+          {calLoaded && !calConfigured && (
+            <EmptyState icon="📅" title="No calendar connected"
+              hint={isManager ? 'Connect a calendar URL in Edit Website to auto-populate club meetings.' : 'No calendar has been connected yet.'} />
+          )}
+          {calLoaded && calConfigured && calEvents.length === 0 && (
+            <EmptyState icon="📅" title="No upcoming club meetings" hint="No events found in the next few weeks on the connected calendar." />
+          )}
+          <div className="space-y-3">
+            {calEvents.map((e, i) => (
+              <div key={i} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-medium text-cream">{e.title}</div>
+                    <div className="text-sm text-gold/70 mt-0.5">{fmtEvent(e.start)}</div>
+                    {e.location && <div className="text-xs text-cream/50 mt-0.5">{e.location}</div>}
+                  </div>
+                  <span className="text-xs text-sky-400/70 bg-sky-500/10 border border-sky-500/20 rounded-full px-2 py-0.5 shrink-0">From Calendar</span>
                 </div>
               </div>
-              {isManager && (
-                <div className="flex gap-2 shrink-0">
-                  <button onClick={() => openEdit(m)} className="text-xs text-gold/60 hover:text-gold">Edit</button>
-                  {me.role === 'admin' && <button onClick={() => deleteMeeting(m)} className="text-xs text-red/60 hover:text-red">Delete</button>}
-                </div>
-              )}
-            </div>
-            <button
-              onClick={() => setExpandedId(expandedId === m.id ? null : m.id)}
-              className="mt-2 text-xs text-cream/40 hover:text-gold transition-colors flex items-center gap-1">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                {expandedId === m.id ? <path d="M18 15l-6-6-6 6"/> : <path d="M6 9l6 6 6-6"/>}
-              </svg>
-              Action Items
-            </button>
-            {expandedId === m.id && (
-              <MeetingActionItems meetingId={m.id} me={me} allUsers={allUsers} />
-            )}
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
+      )}
+
+      {/* ── Board Meetings tab (manual) ── */}
+      {tab === 'board' && (
+        <div>
+          {showForm && (
+            <form onSubmit={save} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
+              <div className="font-display text-xl text-gold">{editId ? 'Edit Meeting' : 'New Board Meeting'}</div>
+              <Field label="Title"><input className={inputCls} value={title} autoFocus onChange={(e) => setTitle(e.target.value)} /></Field>
+              <Field label="Date"><input type="date" className={inputCls} value={meetingDate} onChange={(e) => setMeetingDate(e.target.value)} /></Field>
+              <Field label="Agenda (Google Doc URL)"><input className={inputCls} value={agendaUrl} placeholder="https://docs.google.com/…" onChange={(e) => setAgendaUrl(e.target.value)} /></Field>
+              <Field label="Minutes (Google Doc URL)"><input className={inputCls} value={minutesUrl} placeholder="https://docs.google.com/…" onChange={(e) => setMinutesUrl(e.target.value)} /></Field>
+              <Field label="Notes"><textarea className={inputCls} rows="2" value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
+              {error && <div className="text-red text-sm">{error}</div>}
+              <div className="flex gap-2">
+                <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner />Saving…</span> : 'Save'}</Button>
+                <Button variant="ghost" onClick={() => setShowForm(false)} disabled={loading}>Cancel</Button>
+              </div>
+            </form>
+          )}
+          {!loaded && <Loading label="Loading board meetings…" />}
+          {loaded && meetings.length === 0 && (
+            <EmptyState icon="📋" title="No board meetings yet" hint={isManager ? 'Create the first board meeting record above.' : 'Board meeting records will appear here once added.'} />
+          )}
+          <div className="space-y-3">
+            {meetings.map((m) => (
+              <div key={m.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-medium text-cream">{m.title}</div>
+                    <div className="text-xs text-cream/50 mt-0.5">{fmtShortDate(m.meetingDate)} · Added by {m.createdByName}</div>
+                    {m.notes && <div className="text-sm text-cream/60 mt-1">{m.notes}</div>}
+                    <div className="flex gap-3 mt-2 flex-wrap">
+                      {safeLink(m.agendaUrl) && (
+                        <a href={safeLink(m.agendaUrl)} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs text-gold/80 hover:text-gold transition-colors">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
+                          Agenda
+                        </a>
+                      )}
+                      {safeLink(m.minutesUrl) && (
+                        <a href={safeLink(m.minutesUrl)} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs text-emerald-400/80 hover:text-emerald-300 transition-colors">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>
+                          Minutes
+                        </a>
+                      )}
+                      {!safeLink(m.agendaUrl) && isManager && <span className="text-xs text-cream/25 italic">No agenda link yet</span>}
+                      {!safeLink(m.minutesUrl) && isManager && <span className="text-xs text-cream/25 italic">No minutes link yet</span>}
+                    </div>
+                  </div>
+                  {isManager && (
+                    <div className="flex gap-2 shrink-0">
+                      <button onClick={() => openEdit(m)} className="text-xs text-gold/60 hover:text-gold">Edit</button>
+                      {me.role === 'admin' && <button onClick={() => deleteMeeting(m)} className="text-xs text-red/60 hover:text-red">Delete</button>}
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => setExpandedId(expandedId === m.id ? null : m.id)}
+                  className="mt-2 text-xs text-cream/40 hover:text-gold transition-colors flex items-center gap-1">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    {expandedId === m.id ? <path d="M18 15l-6-6-6 6"/> : <path d="M6 9l6 6 6-6"/>}
+                  </svg>
+                  Action Items
+                </button>
+                {expandedId === m.id && (
+                  <MeetingActionItems meetingId={m.id} me={me} allUsers={allUsers} />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
