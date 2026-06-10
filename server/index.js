@@ -2499,7 +2499,21 @@ app.get('/api/volunteer-events', requireManagerOrAdmin, (req, res) => {
       const waitlisted = db.prepare("SELECT COUNT(*) AS n FROM volunteer_signups WHERE roleId = ? AND status = 'waitlisted'").get(r.id).n;
       return { ...r, confirmed, waitlisted };
     });
-    return { ...ev, volunteersEnabled: !!ev.volunteersEnabled, roles: rolesWithCounts };
+    // Event-level totals INCLUDE general (no-role) sign-ups, which role chips
+    // alone would hide from the admin.
+    const totals = db.prepare(`
+      SELECT
+        SUM(CASE WHEN status = 'confirmed'  THEN 1 ELSE 0 END) AS confirmedTotal,
+        SUM(CASE WHEN status = 'waitlisted' THEN 1 ELSE 0 END) AS waitlistedTotal,
+        SUM(CASE WHEN roleId IS NULL THEN 1 ELSE 0 END)        AS generalCount
+      FROM volunteer_signups WHERE eventId = ?
+    `).get(ev.id);
+    return {
+      ...ev, volunteersEnabled: !!ev.volunteersEnabled, roles: rolesWithCounts,
+      confirmedTotal: totals.confirmedTotal || 0,
+      waitlistedTotal: totals.waitlistedTotal || 0,
+      generalCount: totals.generalCount || 0,
+    };
   });
   res.json({ events: result });
 });

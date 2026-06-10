@@ -5001,6 +5001,9 @@ function VolunteerSignUpPage({ eventId }) {
     finally { setSubmitting(false); }
   }
 
+  const selectedRoleObj = roles.find((r) => r.id === selectedRole);
+  const selectedRoleFull = !!selectedRoleObj && selectedRoleObj.cap > 0 && selectedRoleObj.confirmed >= selectedRoleObj.cap;
+
   if (!loaded) return (
     <div className="min-h-screen flex items-center justify-center" style={{ background: '#0d1b2e' }}>
       <div className="flex items-center gap-2 text-cream/50"><Spinner /> Loading…</div>
@@ -5023,7 +5026,9 @@ function VolunteerSignUpPage({ eventId }) {
       <div className="text-center max-w-sm">
         <div className="text-5xl mb-4">{submitted === 'waitlisted' ? '⏳' : '🎉'}</div>
         <div className="text-2xl font-semibold text-cream mb-2">
-          {submitted === 'waitlisted' ? "You're on the waitlist!" : "You're signed up!"}
+          {submitted === 'waitlisted'
+            ? (selectedRoleObj ? `You're on the waitlist for ${selectedRoleObj.roleName}!` : "You're on the waitlist!")
+            : (selectedRoleObj ? `You're signed up as ${selectedRoleObj.roleName}!` : "You're signed up!")}
         </div>
         <div className="text-cream/50 text-sm mb-1">{event.title}</div>
         <div className="text-cream/40 text-sm">{fmtEvent(event.startDate)}</div>
@@ -5036,8 +5041,6 @@ function VolunteerSignUpPage({ eventId }) {
   );
 
   const GRADES = ['9th', '10th', '11th', '12th', 'Other'];
-  const selectedRoleObj = roles.find((r) => r.id === selectedRole);
-  const selectedRoleFull = !!selectedRoleObj && selectedRoleObj.cap > 0 && selectedRoleObj.confirmed >= selectedRoleObj.cap;
 
   return (
     <div className="min-h-screen py-10 px-4" style={{ background: '#0d1b2e' }}>
@@ -5059,15 +5062,26 @@ function VolunteerSignUpPage({ eventId }) {
                 const selected = selectedRole === r.id;
                 return (
                   <button key={r.id} type="button" onClick={() => setSelectedRole(selected ? null : r.id)}
-                    className={`w-full text-left rounded-xl border p-3 transition-all ${selected ? (full ? 'border-amber-400/50 bg-amber-500/10' : 'border-gold/50 bg-gold/10') : full ? 'border-cream/10 bg-cream/5 hover:border-amber-400/30' : 'border-cream/15 bg-navy3/50 hover:border-gold/30'}`}>
-                    <div className="flex items-center justify-between">
-                      <span className={`font-medium text-sm ${full && !selected ? 'text-cream/60' : 'text-cream'}`}>{r.roleName}</span>
-                      <span className={`text-xs ${full ? 'text-amber-400/80' : r.cap > 0 ? 'text-cream/40' : 'text-emerald-400/70'}`}>
-                        {full ? 'Full · waitlist open' : r.cap > 0 ? `${r.confirmed}/${r.cap} filled` : 'Open'}
+                    className={`w-full text-left rounded-xl border-2 p-3 transition-all ${selected ? (full ? 'border-amber-400 bg-amber-500/15' : 'border-gold bg-gold/15') : full ? 'border-cream/10 bg-cream/5 hover:border-amber-400/40' : 'border-cream/15 bg-navy3/50 hover:border-gold/40'}`}>
+                    <div className="flex items-center gap-3">
+                      {/* Radio-style indicator so selection state is unmistakable */}
+                      <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${selected ? (full ? 'border-amber-400 bg-amber-400' : 'border-gold bg-gold') : 'border-cream/30'}`}>
+                        {selected && (
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#0A1628" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 5 5 9-9"/></svg>
+                        )}
                       </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`font-medium text-sm ${full && !selected ? 'text-cream/60' : 'text-cream'}`}>{r.roleName}</span>
+                          <span className={`text-xs shrink-0 ${full ? 'text-amber-400/80' : r.cap > 0 ? 'text-cream/40' : 'text-emerald-400/70'}`}>
+                            {full ? 'Full · waitlist open' : r.cap > 0 ? `${r.confirmed}/${r.cap} filled` : 'Open'}
+                          </span>
+                        </div>
+                        {r.waitlisted > 0 && <div className="text-xs text-amber-400/60 mt-0.5">{r.waitlisted} on waitlist</div>}
+                        {full && <div className="text-xs text-cream/40 mt-0.5">{selected ? "You'll be added to the waitlist" : 'Select to join the waitlist'}</div>}
+                        {selected && !full && <div className="text-xs text-gold/80 mt-0.5">Selected — this will be your spot</div>}
+                      </div>
                     </div>
-                    {r.waitlisted > 0 && <div className="text-xs text-amber-400/60 mt-0.5">{r.waitlisted} on waitlist</div>}
-                    {full && <div className="text-xs text-cream/40 mt-0.5">{selected ? "You'll be added to the waitlist" : 'Select to join the waitlist'}</div>}
                   </button>
                 );
               })}
@@ -5104,11 +5118,17 @@ function VolunteerSignUpPage({ eventId }) {
             </select>
           </div>
           {error && <div className="text-sm text-red/70">{error}</div>}
+          {roles.length > 0 && !selectedRole && (
+            <div className="text-xs text-amber-400/80 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+              No role selected — you'll sign up as a general volunteer. Tap a role above to claim a specific spot.
+            </div>
+          )}
           <button type="submit" disabled={submitting || !name.trim()}
             className="w-full bg-gold text-navy font-semibold py-2.5 rounded-xl hover:bg-gold/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm">
             {submitting ? 'Signing up…'
-              : selectedRoleFull ? 'Join the Waitlist'
-              : roles.length > 0 && !selectedRole ? 'Sign Up (No Specific Role)'
+              : selectedRoleFull ? `Join Waitlist for ${selectedRoleObj.roleName}`
+              : selectedRoleObj ? `Sign Up as ${selectedRoleObj.roleName}`
+              : roles.length > 0 ? 'Sign Up (No Specific Role)'
               : 'Sign Up to Volunteer'}
           </button>
         </form>
@@ -5271,6 +5291,11 @@ function VolunteerManagerPage({ me }) {
                       </span>
                     </div>
                     <div className="text-xs text-cream/40 mt-0.5">{fmtEvent(ev.startDate)}</div>
+                    <div className={`text-xs mt-1 font-medium ${ev.confirmedTotal > 0 ? 'text-emerald-400' : 'text-cream/35'}`}>
+                      {ev.confirmedTotal > 0
+                        ? `${ev.confirmedTotal} signed up${ev.waitlistedTotal > 0 ? ` · ${ev.waitlistedTotal} waitlisted` : ''}`
+                        : 'No sign-ups yet'}
+                    </div>
                     <div className="flex flex-wrap gap-1 mt-2">
                       {ev.roles.map((r) => (
                         <div key={r.id} className="flex items-center gap-1 text-xs bg-navy3 border border-cream/10 rounded-full px-2 py-0.5">
@@ -5279,6 +5304,12 @@ function VolunteerManagerPage({ me }) {
                           <button onClick={() => deleteRole(r.id)} className="text-red/40 hover:text-red ml-0.5 text-[11px] leading-none">×</button>
                         </div>
                       ))}
+                      {ev.generalCount > 0 && (
+                        <div className="flex items-center gap-1 text-xs bg-navy3 border border-cream/10 rounded-full px-2 py-0.5">
+                          <span className="text-cream/70">No specific role</span>
+                          <span className="text-cream/40">{ev.generalCount}</span>
+                        </div>
+                      )}
                       {showRoleForm === ev.id ? (
                         <div className="flex items-center gap-1 mt-1">
                           <input value={newRoleName} onChange={(e) => setNewRoleName(e.target.value)} placeholder="Role name"
