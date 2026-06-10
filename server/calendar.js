@@ -41,6 +41,7 @@ function parseEvents(ics) {
       else if (name === 'LOCATION') ev.location = val.trim();
       else if (name === 'DTSTART') ev.start = parseDate(val);
       else if (name === 'DESCRIPTION') ev.description = val.trim();
+      else if (name === 'UID') ev.uid = val.trim();
     }
     if (ev.start && ev.title) events.push(ev);
   }
@@ -75,6 +76,7 @@ function upcoming(events, count) {
     .sort((a, b) => a.start - b.start)
     .slice(0, count)
     .map((e) => ({
+      uid: e.uid || '',
       title: e.title,
       location: e.location || '',
       start: e.start.toISOString(),

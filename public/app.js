@@ -1924,8 +1924,11 @@ function fmtEvent(iso) {
 
 // Shows upcoming events when a calendar is connected; otherwise falls back to
 // the manually-entered "Next Meeting" details.
-function MeetingCard({ home, events }) {
+function MeetingCard({ home, events, volunteerEvents = [] }) {
   const hasEvents = events && events.length > 0;
+  const volMap = {};
+  volunteerEvents.forEach((v) => { volMap[v.icalUid] = v; });
+  const origin = window.location.origin;
   return (
     <section className="bg-navy2 border border-gold/30 rounded-2xl p-6 hover:border-gold/50 hover:shadow-lg hover:shadow-black/20 transition-all duration-200">
       <div className="flex items-center justify-between">
@@ -1934,13 +1937,30 @@ function MeetingCard({ home, events }) {
       </div>
       {hasEvents ? (
         <ul className="mt-4 space-y-3">
-          {events.map((e, i) => (
-            <li key={i} className="border-l-2 border-gold/50 pl-3">
-              <div className="text-lg text-cream font-medium leading-tight">{e.title}</div>
-              <div className="text-sm text-gold/80">{fmtEvent(e.start)}</div>
-              {e.location && <div className="text-sm text-cream/50">{e.location}</div>}
-            </li>
-          ))}
+          {events.map((e, i) => {
+            const vol = e.uid ? volMap[e.uid] : null;
+            const spotsLeft = vol ? (vol.totalCap === 0 ? Infinity : vol.totalCap - vol.confirmedCount) : 0;
+            const isFull = vol && spotsLeft <= 0;
+            const signupUrl = vol ? `${origin}/volunteer/${vol.id}` : '';
+            return (
+              <li key={i} className="border-l-2 border-gold/50 pl-3">
+                <div className="text-lg text-cream font-medium leading-tight">{e.title}</div>
+                <div className="text-sm text-gold/80">{fmtEvent(e.start)}</div>
+                {e.location && <div className="text-sm text-cream/50">{e.location}</div>}
+                {vol && (
+                  <div className="mt-1.5 flex flex-col gap-1">
+                    <span className={`inline-flex items-center gap-1 text-xs font-semibold rounded-full px-2 py-0.5 w-fit ${isFull ? 'text-amber-300 bg-amber-500/15 border border-amber-500/30' : 'text-emerald-300 bg-emerald-500/15 border border-emerald-500/30'}`}>
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 11l-4 4-2-2"/></svg>
+                      {isFull ? 'Waitlist Open' : 'Volunteers Needed'}
+                    </span>
+                    <a href={signupUrl} className="text-xs text-teal-400 hover:text-teal-300 underline underline-offset-2 transition-colors">
+                      {isFull ? 'Join the waitlist →' : 'Sign up to volunteer →'}
+                    </a>
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       ) : (
         <div className="mt-4 space-y-3">
@@ -2222,6 +2242,27 @@ function ValuesSection() {
   );
 }
 
+// Tribute to the founder of Turning Point USA, the movement this club is
+// part of (see "Powered by TPUSA" in the footer).
+function CharlieKirkTribute() {
+  return (
+    <section className="relative overflow-hidden bg-navy2 border border-gold/25 rounded-2xl p-8 sm:p-10 text-center">
+      <div className="absolute inset-0 pointer-events-none" aria-hidden="true"
+        style={{ background: 'radial-gradient(420px 200px at 50% 0%, rgba(201,168,76,0.08), transparent 70%)' }} />
+      <div className="relative">
+        <div className="text-gold/80 tracking-[0.5em] text-base mb-3">★ ★ ★</div>
+        <h2 className="font-display text-3xl sm:text-4xl text-cream">In Memory of Charlie Kirk</h2>
+        <p className="text-gold/70 text-sm mt-2">Founder of Turning Point USA · 1993 – 2025</p>
+        <p className="text-cream/65 max-w-xl mx-auto mt-5 leading-relaxed">
+          Charlie founded Turning Point USA at eighteen and spent his life showing that young
+          Americans can stand up, speak out, and lead. Every meeting of this club is part of
+          the movement he started.
+        </p>
+      </div>
+    </section>
+  );
+}
+
 function HomeAnnouncementEditor({ home, onSaved }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState(home.homeAnnouncement || '');
@@ -2388,82 +2429,95 @@ function MeetTheBoard() {
   );
 }
 
-function FlagBackground() {
+// ---------------------------------------------------------------------------
+// Immersive homepage helpers (pure CSS animation — no WebGL/3D libraries)
+// ---------------------------------------------------------------------------
+
+// Field of randomly placed twinkling stars. Positions are memoized so the
+// sky doesn't reshuffle on re-render.
+function Starfield({ count = 42 }) {
+  const stars = useMemo(() => Array.from({ length: count }, () => ({
+    left: Math.random() * 100,
+    top: Math.random() * 100,
+    size: 1 + Math.random() * 1.8,
+    dur: 2.5 + Math.random() * 4.5,
+    delay: Math.random() * 6,
+    min: 0.05 + Math.random() * 0.15,
+    max: 0.45 + Math.random() * 0.5,
+    gold: Math.random() < 0.18,
+  })), [count]);
   return (
-    <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
-      <svg
-        viewBox="0 0 1900 1000"
-        preserveAspectRatio="xMidYMid slice"
-        className="absolute inset-0 w-full h-full"
-        style={{ opacity: 0.22 }}
-      >
-        <defs>
-          <linearGradient id="flagGrad" x1="0" y1="0" x2="1" y2="0" gradientUnits="objectBoundingBox">
-            <stop offset="0%"   stopColor="#CC1C2E" stopOpacity="1" />
-            <stop offset="38%"  stopColor="#F5F0E8" stopOpacity="0.5" />
-            <stop offset="62%"  stopColor="#F5F0E8" stopOpacity="0.5" />
-            <stop offset="100%" stopColor="#002868" stopOpacity="1" />
-          </linearGradient>
-          <linearGradient id="vFade" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
-            <stop offset="50%"  stopColor="white" stopOpacity="1" />
-            <stop offset="100%" stopColor="white" stopOpacity="0" />
-          </linearGradient>
-          <mask id="bottomFade">
-            <rect x="0" y="0" width="1900" height="1000" fill="url(#vFade)" />
-          </mask>
-          <polygon id="fstar"
-            points="0,-10 2.94,-4.05 9.51,-3.09 4.76,1.55 5.88,8.09 0,5 -5.88,8.09 -4.76,1.55 -9.51,-3.09 -2.94,-4.05"
-          />
-        </defs>
-        <g mask="url(#bottomFade)">
-          {Array.from({ length: 13 }, (_, i) => (
-            <rect
-              key={i}
-              x="0" y={i * 76.92} width="1900" height="76.92"
-              fill="url(#flagGrad)"
-              fillOpacity={i % 2 === 0 ? 1 : 0.2}
-              stroke="#F5F0E8" strokeWidth="0.6" strokeOpacity="0.3"
-            />
-          ))}
-          <rect x="0" y="0" width="760" height="538.5"
-            fill="#001f5c" fillOpacity="0.5"
-            stroke="#F5F0E8" strokeWidth="1" strokeOpacity="0.35"
-          />
-          {(() => {
-            const stars = [];
-            const cw = 760, ch = 538.5;
-            const rowH = ch / 10;
-            const colW6 = cw / 7;
-            const colW5 = cw / 6;
-            for (let row = 0; row < 9; row++) {
-              const y = rowH * (row + 0.5);
-              const isWide = row % 2 === 0;
-              const cols = isWide ? 6 : 5;
-              const colW = isWide ? colW6 : colW5;
-              for (let col = 0; col < cols; col++) {
-                stars.push(
-                  <use key={`${row}-${col}`} href="#fstar"
-                    transform={`translate(${colW * (col + 0.5)},${y})`}
-                    fill="#F5F0E8" fillOpacity="0.85"
-                  />
-                );
-              }
-            }
-            return stars;
-          })()}
-        </g>
-      </svg>
-    </div>
+    <>
+      {stars.map((s, i) => (
+        <span key={i} className="ca-star" style={{
+          left: s.left + '%', top: s.top + '%', width: s.size, height: s.size,
+          background: s.gold ? '#C9A84C' : '#F5F0E8',
+          '--ca-dur': s.dur + 's', '--ca-delay': s.delay + 's', '--ca-min': s.min, '--ca-max': s.max,
+        }} />
+      ))}
+    </>
   );
+}
+
+// Wrapper that drifts its children as the page scrolls (subtle depth).
+// Mutates the DOM directly from a passive scroll listener so the React tree
+// never re-renders during scrolling.
+function ParallaxLayer({ speed = 0.2, className = '', children }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (ref.current) ref.current.style.transform = `translate3d(0, ${window.scrollY * speed}px, 0)`;
+      });
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => { window.removeEventListener('scroll', onScroll); if (raf) cancelAnimationFrame(raf); };
+  }, [speed]);
+  return <div ref={ref} className={className} aria-hidden="true">{children}</div>;
+}
+
+// Ring of 13 stars (Betsy Ross flag) — rendered faint and slowly rotating
+// behind the hero headline.
+function StarRing({ size = 540, className = '' }) {
+  const stars = Array.from({ length: 13 }, (_, i) => {
+    const a = (i / 13) * 2 * Math.PI - Math.PI / 2;
+    return { x: 50 + 42 * Math.cos(a), y: 50 + 42 * Math.sin(a) };
+  });
+  return (
+    <svg viewBox="0 0 100 100" width={size} height={size} className={className} aria-hidden="true">
+      {stars.map((s, i) => (
+        <text key={i} x={s.x} y={s.y} textAnchor="middle" dominantBaseline="central" fontSize="6.5" fill="#F5F0E8">★</text>
+      ))}
+    </svg>
+  );
+}
+
+// Fades content up into view the first time it scrolls into the viewport.
+function Reveal({ children, delay = 0, className = '' }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') { el?.classList.add('is-visible'); return; }
+    const obs = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) { el.classList.add('is-visible'); obs.disconnect(); }
+    }, { threshold: 0.1 });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+  return <div ref={ref} className={`ca-reveal ${className}`} style={delay ? { transitionDelay: delay + 'ms' } : undefined}>{children}</div>;
 }
 
 function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onBack }) {
   const [home, setHome] = useState(null);
   const [events, setEvents] = useState([]);
+  const [volunteerEvents, setVolunteerEvents] = useState([]);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
-    try { const d = await api('/home'); setHome(d.home); setEvents(d.events || []); }
+    try { const d = await api('/home'); setHome(d.home); setEvents(d.events || []); setVolunteerEvents(d.volunteerEvents || []); }
     catch (err) { setError(err.message); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -2475,7 +2529,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
 
   const cards = (
     <div className="grid md:grid-cols-2 gap-6">
-      <MeetingCard home={home} events={events} />
+      <MeetingCard home={home} events={events} volunteerEvents={volunteerEvents} />
       <PodcastCard home={home} />
     </div>
   );
@@ -2504,34 +2558,31 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
   if (mode === 'portal') {
     return (
       <div className="min-h-screen">
-        <div style={{ background: 'radial-gradient(1000px 540px at 50% -5%, rgba(204,28,46,0.40), transparent 65%), radial-gradient(600px 300px at 85% 30%, rgba(201,168,76,0.07), transparent 55%)' }}>
-          <section className="max-w-5xl mx-auto px-4 sm:px-6 pt-12 pb-16 text-center relative overflow-hidden">
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none" aria-hidden="true">
-              <div className="font-display text-[280px] sm:text-[380px] leading-none opacity-[0.035] text-cream">★</div>
-            </div>
-            <div className="relative">
-              <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3 ca-fade-in">Park City High School</p>
-              <h1 className="font-display text-7xl sm:text-9xl text-cream leading-none ca-slide-up" style={{ animationDelay: '60ms' }}>CLUB AMERICA</h1>
-              <p className="text-cream/65 max-w-lg mx-auto mt-5 text-base sm:text-lg leading-relaxed ca-fade-in" style={{ animationDelay: '160ms' }}>
-                Faith, freedom, and community — standing up for America's founding principles at Park City High School.
-              </p>
-              {home.instagramUrl && (
-                <div className="mt-8 flex justify-center">
-                  <InstagramLink url={home.instagramUrl} />
-                </div>
-              )}
-            </div>
-          </section>
-        </div>
-        {home.homeAnnouncementEnabled && home.homeAnnouncement && (
-          <div className="max-w-5xl mx-auto px-4 sm:px-6 pt-6">
-            <HomeAnnouncementBanner home={home} />
+        <section className="relative overflow-hidden max-w-5xl mx-auto px-4 sm:px-6 pt-12 pb-12 text-center">
+          <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+            <div className="ca-aurora-a absolute -top-1/2 left-1/4 w-[60%] h-[120%] rounded-full"
+              style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.18), transparent 60%)', filter: 'blur(40px)' }} />
+            <Starfield count={20} />
           </div>
-        )}
-        <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 space-y-8 mt-8">
+          <div className="relative">
+            <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3 ca-fade-in">Park City High School</p>
+            <h1 className="ca-hero-title font-display text-6xl sm:text-8xl text-cream leading-none">CLUB AMERICA</h1>
+            <p className="text-cream/65 max-w-lg mx-auto mt-4 text-base leading-relaxed ca-fade-in" style={{ animationDelay: '160ms' }}>
+              Faith, freedom, and community — standing up for America's founding principles at Park City High School.
+            </p>
+            {home.instagramUrl && (
+              <div className="mt-6 flex justify-center">
+                <InstagramLink url={home.instagramUrl} />
+              </div>
+            )}
+          </div>
+        </section>
+        <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 space-y-8">
+          <HomeAnnouncementBanner home={home} />
+          {cards}
           <AboutSection home={home} />
           <ValuesSection />
-          {cards}
+          <CharlieKirkTribute />
           <div id="meet-the-board"><MeetTheBoard /></div>
           <div id="get-involved"><GetInvolved /></div>
         </main>
@@ -2540,7 +2591,8 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
             <HomeAnnouncementEditor home={home} onSaved={(h) => setHome(h)} />
           </div>
         )}
-        <footer className="border-t border-cream/10 py-10">
+        <footer className="pb-10">
+        <div className="h-[3px] bg-gradient-to-r from-red via-cream/50 to-[#3b5bdb] opacity-60 mb-10" />
           <div className="max-w-5xl mx-auto px-4 sm:px-6">
             <div className="flex flex-col sm:flex-row items-center justify-between gap-6 text-sm text-cream/40">
               <div className="flex flex-col sm:flex-row items-center gap-3">
@@ -2561,51 +2613,85 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
     );
   }
 
-  // Public landing page (full screen).
+  // Public landing page — the whole club's site. A full-viewport immersive
+  // hero (twinkling stars, drifting glows, parallax — all CSS, no 3D libs),
+  // then the practical content: announcement, next meeting, volunteer links.
   return (
     <div className="min-h-screen">
-      <div className="relative overflow-hidden">
-        <FlagBackground />
-        <header className="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 pt-6 flex items-center justify-between gap-3">
+      <div className="relative min-h-screen flex flex-col overflow-hidden">
+        {/* Ambient background layers — old-glory red, white, and blue */}
+        <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+          <div className="ca-aurora-a absolute -top-1/4 -left-1/4 w-[80%] h-[80%] rounded-full"
+            style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.30), transparent 60%)', filter: 'blur(40px)' }} />
+          <div className="ca-aurora-b absolute -bottom-1/3 -right-1/4 w-[85%] h-[85%] rounded-full"
+            style={{ background: 'radial-gradient(circle, rgba(0,40,104,0.60), transparent 60%)', filter: 'blur(40px)' }} />
+          <div className="ca-aurora-b absolute top-1/4 right-[10%] w-[40%] h-[40%] rounded-full"
+            style={{ background: 'radial-gradient(circle, rgba(245,240,232,0.08), transparent 60%)', filter: 'blur(30px)' }} />
+          {/* Waving flag stripes rising from the bottom of the hero */}
+          <div className="ca-stripes absolute inset-x-0 bottom-0 h-[42%] opacity-20" />
+        </div>
+        <ParallaxLayer speed={0.35} className="absolute inset-0 pointer-events-none"><Starfield count={26} /></ParallaxLayer>
+        <ParallaxLayer speed={0.15} className="absolute inset-0 pointer-events-none"><Starfield count={26} /></ParallaxLayer>
+
+        <header className="relative z-10 max-w-5xl mx-auto w-full px-4 sm:px-6 pt-6 flex items-center justify-between gap-3">
           <Logo size="sidebar" />
-          <Button variant="primary" onClick={onEnterPortal}>Board Portal Login →</Button>
+          <Button variant="primary" onClick={onEnterPortal}>Board Login →</Button>
         </header>
-        <section className="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 pt-12 pb-16 text-center">
-          <div className="relative">
-            <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3 ca-fade-in">Park City High School</p>
-            <h1 className="font-display text-7xl sm:text-9xl text-cream leading-none ca-slide-up" style={{ animationDelay: '60ms' }}>CLUB AMERICA</h1>
-            <p className="text-cream/65 max-w-lg mx-auto mt-5 text-base sm:text-lg leading-relaxed ca-fade-in" style={{ animationDelay: '160ms' }}>
-              Faith, freedom, and community — standing up for America's founding principles at Park City High School.
-            </p>
-            <div className="mt-8 flex flex-wrap gap-3 justify-center items-center ca-fade-in" style={{ animationDelay: '250ms' }}>
-              <button
-                onClick={() => document.getElementById('get-involved')?.scrollIntoView({ behavior: 'smooth' })}
-                className="px-7 py-3 bg-red hover:bg-red/85 text-cream font-semibold rounded-lg transition-all shadow-lg shadow-red/20 text-sm active:scale-95 hover:shadow-xl hover:shadow-red/30">
-                Get Involved →
-              </button>
-              <button
-                onClick={() => document.getElementById('meet-the-board')?.scrollIntoView({ behavior: 'smooth' })}
-                className="px-7 py-3 border border-gold/50 text-gold hover:bg-gold/10 rounded-lg transition-all text-sm font-medium active:scale-95">
-                Meet the Board
-              </button>
-              {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
-            </div>
+
+        <section className="relative z-10 flex-1 flex flex-col items-center justify-center text-center px-4 sm:px-6 py-16">
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none" aria-hidden="true">
+            <StarRing className="ca-spin-slow opacity-[0.09] w-[min(85vw,540px)] h-auto" />
+          </div>
+          <p className="font-display text-sm tracking-[0.6em] text-gold/70 uppercase mb-4 ca-fade-in" style={{ animationDelay: '500ms', animationDuration: '0.8s' }}>
+            Park City High School
+          </p>
+          <h1 className="ca-hero-title font-display text-[clamp(4.5rem,16vw,11rem)] text-cream leading-[0.9]"
+            style={{ textShadow: '0 0 60px rgba(204,28,46,0.35), 0 0 120px rgba(0,40,104,0.45)' }}>
+            CLUB<br className="sm:hidden" /> AMERICA
+          </h1>
+          {/* Tricolor divider */}
+          <div className="flex items-center gap-3 mt-5 ca-fade-in" style={{ animationDelay: '650ms', animationDuration: '0.8s' }}>
+            <span className="h-[3px] w-14 rounded-full bg-red/80" />
+            <span className="text-gold/90 tracking-[0.4em] text-sm">★ ★ ★</span>
+            <span className="h-[3px] w-14 rounded-full" style={{ background: '#3b5bdb' }} />
+          </div>
+          <p className="text-cream/70 max-w-xl mt-6 text-base sm:text-lg leading-relaxed ca-fade-in" style={{ animationDelay: '800ms', animationDuration: '0.8s' }}>
+            Faith, freedom, and community — standing up for America's founding principles at Park City High School.
+          </p>
+          <div className="mt-9 flex flex-wrap gap-3 justify-center items-center ca-fade-in" style={{ animationDelay: '950ms', animationDuration: '0.8s' }}>
+            <button
+              onClick={() => document.getElementById('get-involved')?.scrollIntoView({ behavior: 'smooth' })}
+              className="px-8 py-3.5 bg-red hover:bg-red/85 text-cream font-semibold rounded-lg transition-all shadow-lg shadow-red/25 text-sm active:scale-95 hover:shadow-xl hover:shadow-red/35 hover:-translate-y-0.5">
+              Get Involved →
+            </button>
+            <button
+              onClick={() => document.getElementById('meet-the-board')?.scrollIntoView({ behavior: 'smooth' })}
+              className="px-8 py-3.5 border border-gold/50 text-gold hover:bg-gold/10 rounded-lg transition-all text-sm font-medium active:scale-95 hover:-translate-y-0.5">
+              Meet the Board
+            </button>
+            {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
           </div>
         </section>
+
+        <button
+          onClick={() => document.getElementById('club-content')?.scrollIntoView({ behavior: 'smooth' })}
+          className="ca-scroll-cue relative z-10 mx-auto mb-7 text-cream/60 hover:text-gold transition-colors"
+          aria-label="Scroll to content">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
       </div>
-      {home.homeAnnouncementEnabled && home.homeAnnouncement && (
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 pt-6">
-          <HomeAnnouncementBanner home={home} />
-        </div>
-      )}
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 space-y-8 mt-8">
-        <AboutSection home={home} />
-        <ValuesSection />
-        {cards}
-        <div id="meet-the-board"><MeetTheBoard /></div>
-        <div id="get-involved"><GetInvolved /></div>
+
+      <main id="club-content" className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 pt-10 space-y-8">
+        {home.homeAnnouncementEnabled && home.homeAnnouncement && <Reveal><HomeAnnouncementBanner home={home} /></Reveal>}
+        <Reveal>{cards}</Reveal>
+        {home.aboutText && <Reveal><AboutSection home={home} /></Reveal>}
+        <Reveal><ValuesSection /></Reveal>
+        <Reveal><CharlieKirkTribute /></Reveal>
+        <Reveal><div id="meet-the-board"><MeetTheBoard /></div></Reveal>
+        <Reveal><div id="get-involved"><GetInvolved /></div></Reveal>
       </main>
-      <footer className="border-t border-cream/10 py-10">
+      <footer className="pb-10">
+        <div className="h-[3px] bg-gradient-to-r from-red via-cream/50 to-[#3b5bdb] opacity-60 mb-10" />
         <div className="max-w-5xl mx-auto px-4 sm:px-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-6 text-sm">
             <div className="flex flex-col sm:flex-row items-center gap-3 text-cream/40">
@@ -4554,9 +4640,11 @@ function AIChatPage({ me }) {
 // ---------------------------------------------------------------------------
 function HomeSummaryCard({ me, onNavigate }) {
   const [summary, setSummary] = useState(null);
+  const [volunteerEvents, setVolunteerEvents] = useState([]);
 
   useEffect(() => {
     api('/me/summary').then(setSummary).catch(() => {});
+    api('/home').then((d) => setVolunteerEvents(d.volunteerEvents || [])).catch(() => {});
   }, []);
 
   if (!summary) return null;
@@ -4689,6 +4777,32 @@ function HomeSummaryCard({ me, onNavigate }) {
                       <div className={`text-sm truncate ${overdue ? 'text-red/80' : 'text-cream/80'}`}>{a.text}</div>
                       <div className="text-xs text-cream/35">{a.meetingTitle}{a.dueDate ? ' · ' + (overdue ? 'Overdue' : fmtShortDate(a.dueDate)) : ''}</div>
                     </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Upcoming volunteer events */}
+        {volunteerEvents.length > 0 && (
+          <div className="bg-navy2 border border-emerald-500/20 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs font-semibold text-emerald-400/70 uppercase tracking-wide">Volunteers Needed</div>
+              <button onClick={() => onNavigate({ type: 'home' })} className="text-xs text-gold/60 hover:text-gold">Club Home</button>
+            </div>
+            <div className="space-y-3">
+              {volunteerEvents.slice(0, 3).map((v) => {
+                const spotsLeft = v.totalCap === 0 ? null : v.totalCap - v.confirmedCount;
+                const full = spotsLeft !== null && spotsLeft <= 0;
+                return (
+                  <div key={v.id}>
+                    <div className="text-sm text-cream/80 font-medium leading-tight">{v.title}</div>
+                    <div className="text-xs text-cream/40 mt-0.5">{fmtEvent(v.startDate)}</div>
+                    {spotsLeft !== null && <div className={`text-xs mt-0.5 ${full ? 'text-amber-400/70' : 'text-emerald-400/70'}`}>{full ? 'Waitlist open' : spotsLeft + ' spot' + (spotsLeft !== 1 ? 's' : '') + ' left'}</div>}
+                    <a href={'/volunteer/' + v.id} className="text-xs text-teal-400 hover:text-teal-300 underline underline-offset-1 mt-0.5 inline-block">
+                      {full ? 'Join waitlist →' : 'Sign up →'}
+                    </a>
                   </div>
                 );
               })}
@@ -4838,8 +4952,451 @@ function ResourceHubPage({ me }) {
   );
 }
 
-function AppIcon({ name }) {
-  const p = { width: 24, height: 24, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', className: 'text-cream/60 group-hover:text-gold transition-colors duration-150' };
+// ---------------------------------------------------------------------------
+// Volunteer Sign-Up Page (public, no auth required)
+// ---------------------------------------------------------------------------
+function VolunteerSignUpPage({ eventId }) {
+  const [event, setEvent] = useState(null);
+  const [roles, setRoles] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState('');
+  const [selectedRole, setSelectedRole] = useState(null);
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [grade, setGrade] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const d = await fetch('/api/public/volunteer/' + eventId).then(async (r) => {
+          const j = await r.json();
+          if (!r.ok) throw new Error(j.error || 'Event not found');
+          return j;
+        });
+        setEvent(d.event);
+        setRoles(d.roles);
+      } catch (e) { setError(e.message); }
+      finally { setLoaded(true); }
+    })();
+  }, [eventId]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setSubmitting(true);
+    setError('');
+    try {
+      const res = await fetch('/api/public/volunteer/' + eventId + '/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roleId: selectedRole, name: name.trim(), phone, email, grade }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || 'Sign-up failed');
+      setSubmitted(j.status);
+    } catch (e) { setError(e.message); }
+    finally { setSubmitting(false); }
+  }
+
+  if (!loaded) return (
+    <div className="min-h-screen flex items-center justify-center" style={{ background: '#0d1b2e' }}>
+      <div className="flex items-center gap-2 text-cream/50"><Spinner /> Loading…</div>
+    </div>
+  );
+
+  if (error && !event) return (
+    <div className="min-h-screen flex items-center justify-center p-8" style={{ background: '#0d1b2e' }}>
+      <div className="text-center max-w-sm">
+        <div className="text-4xl mb-4">🚫</div>
+        <div className="text-cream/70 text-lg mb-2">Sign-ups Unavailable</div>
+        <div className="text-cream/40 text-sm">{error}</div>
+        <a href="/" className="mt-4 inline-block text-gold/60 hover:text-gold text-sm underline">← Back to home</a>
+      </div>
+    </div>
+  );
+
+  if (submitted) return (
+    <div className="min-h-screen flex items-center justify-center p-8" style={{ background: '#0d1b2e' }}>
+      <div className="text-center max-w-sm">
+        <div className="text-5xl mb-4">{submitted === 'waitlisted' ? '⏳' : '🎉'}</div>
+        <div className="text-2xl font-semibold text-cream mb-2">
+          {submitted === 'waitlisted' ? "You're on the waitlist!" : "You're signed up!"}
+        </div>
+        <div className="text-cream/50 text-sm mb-1">{event.title}</div>
+        <div className="text-cream/40 text-sm">{fmtEvent(event.startDate)}</div>
+        {submitted === 'waitlisted' && (
+          <div className="mt-3 text-sm text-cream/50">We'll reach out if a spot opens up.</div>
+        )}
+        <a href="/" className="mt-6 inline-block text-gold/60 hover:text-gold text-sm underline">← Back to home</a>
+      </div>
+    </div>
+  );
+
+  const GRADES = ['9th', '10th', '11th', '12th', 'Other'];
+  const selectedRoleObj = roles.find((r) => r.id === selectedRole);
+  const selectedRoleFull = !!selectedRoleObj && selectedRoleObj.cap > 0 && selectedRoleObj.confirmed >= selectedRoleObj.cap;
+
+  return (
+    <div className="min-h-screen py-10 px-4" style={{ background: '#0d1b2e' }}>
+      <div className="max-w-lg mx-auto">
+        <a href="/" className="text-sm text-cream/40 hover:text-cream/70 mb-6 inline-block">← Back to home</a>
+        <div className="bg-navy2 border border-cream/10 rounded-2xl p-6 mb-6">
+          <div className="text-xs text-gold/60 uppercase tracking-wider mb-1">Volunteer Sign-Up</div>
+          <h1 className="text-2xl font-semibold text-cream mb-1">{event.title}</h1>
+          <div className="text-sm text-gold/70">{fmtEvent(event.startDate)}</div>
+          {event.location && <div className="text-sm text-cream/40 mt-0.5">{event.location}</div>}
+        </div>
+
+        {roles.length > 0 && (
+          <div className="mb-6">
+            <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide mb-3">Select a Role</div>
+            <div className="space-y-2">
+              {roles.map((r) => {
+                const full = r.cap > 0 && r.confirmed >= r.cap;
+                const selected = selectedRole === r.id;
+                return (
+                  <button key={r.id} type="button" onClick={() => setSelectedRole(selected ? null : r.id)}
+                    className={`w-full text-left rounded-xl border p-3 transition-all ${selected ? (full ? 'border-amber-400/50 bg-amber-500/10' : 'border-gold/50 bg-gold/10') : full ? 'border-cream/10 bg-cream/5 hover:border-amber-400/30' : 'border-cream/15 bg-navy3/50 hover:border-gold/30'}`}>
+                    <div className="flex items-center justify-between">
+                      <span className={`font-medium text-sm ${full && !selected ? 'text-cream/60' : 'text-cream'}`}>{r.roleName}</span>
+                      <span className={`text-xs ${full ? 'text-amber-400/80' : r.cap > 0 ? 'text-cream/40' : 'text-emerald-400/70'}`}>
+                        {full ? 'Full · waitlist open' : r.cap > 0 ? `${r.confirmed}/${r.cap} filled` : 'Open'}
+                      </span>
+                    </div>
+                    {r.waitlisted > 0 && <div className="text-xs text-amber-400/60 mt-0.5">{r.waitlisted} on waitlist</div>}
+                    {full && <div className="text-xs text-cream/40 mt-0.5">{selected ? "You'll be added to the waitlist" : 'Select to join the waitlist'}</div>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="bg-navy2 border border-cream/10 rounded-2xl p-6 space-y-4">
+          <div className="text-sm font-semibold text-cream mb-1">Your Information</div>
+          <div>
+            <label className="block text-xs text-cream/50 mb-1">Full Name *</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} required
+              className="w-full bg-navy3 border border-cream/15 rounded-lg px-3 py-2 text-sm text-cream placeholder-cream/30 focus:outline-none focus:border-gold/50"
+              placeholder="Your full name" />
+          </div>
+          <div>
+            <label className="block text-xs text-cream/50 mb-1">Phone Number</label>
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel"
+              className="w-full bg-navy3 border border-cream/15 rounded-lg px-3 py-2 text-sm text-cream placeholder-cream/30 focus:outline-none focus:border-gold/50"
+              placeholder="(555) 000-0000" />
+          </div>
+          <div>
+            <label className="block text-xs text-cream/50 mb-1">Email</label>
+            <input value={email} onChange={(e) => setEmail(e.target.value)} type="email"
+              className="w-full bg-navy3 border border-cream/15 rounded-lg px-3 py-2 text-sm text-cream placeholder-cream/30 focus:outline-none focus:border-gold/50"
+              placeholder="your@email.com" />
+          </div>
+          <div>
+            <label className="block text-xs text-cream/50 mb-1">Grade</label>
+            <select value={grade} onChange={(e) => setGrade(e.target.value)}
+              className="w-full bg-navy3 border border-cream/15 rounded-lg px-3 py-2 text-sm text-cream focus:outline-none focus:border-gold/50">
+              <option value="">Select grade…</option>
+              {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </div>
+          {error && <div className="text-sm text-red/70">{error}</div>}
+          <button type="submit" disabled={submitting || !name.trim()}
+            className="w-full bg-gold text-navy font-semibold py-2.5 rounded-xl hover:bg-gold/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm">
+            {submitting ? 'Signing up…'
+              : selectedRoleFull ? 'Join the Waitlist'
+              : roles.length > 0 && !selectedRole ? 'Sign Up (No Specific Role)'
+              : 'Sign Up to Volunteer'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Volunteer Manager Page (admin/manager only)
+// ---------------------------------------------------------------------------
+function VolunteerManagerPage({ me }) {
+  const [calEvents, setCalEvents] = useState([]);
+  const [managedEvents, setManagedEvents] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
+  const [signups, setSignups] = useState({});
+  const [showRoleForm, setShowRoleForm] = useState(null);
+  const [newRoleName, setNewRoleName] = useState('');
+  const [newRoleCap, setNewRoleCap] = useState('');
+  const [copied, setCopied] = useState(null);
+  const { loading, error, setError, run } = useAction();
+
+  const loadAll = useCallback(async () => {
+    try {
+      const [cal, mv] = await Promise.all([api('/meetings/calendar'), api('/volunteer-events')]);
+      setCalEvents(cal.events || []);
+      setManagedEvents(mv.events || []);
+    } catch (e) { setError(e.message); }
+    finally { setLoaded(true); }
+  }, [setError]);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  async function enableVolunteers(icalEvent) {
+    await run(async () => {
+      await api('/volunteer-events', { method: 'POST', body: {
+        icalUid: icalEvent.uid,
+        title: icalEvent.title,
+        location: icalEvent.location || '',
+        startDate: icalEvent.start,
+      }});
+      await loadAll();
+    });
+  }
+
+  async function toggleEnabled(ev) {
+    await run(async () => {
+      await api('/volunteer-events/' + ev.id, { method: 'PATCH', body: { volunteersEnabled: !ev.volunteersEnabled }});
+      await loadAll();
+    });
+  }
+
+  async function deleteEvent(ev) {
+    if (!window.confirm('Delete this volunteer event and all sign-ups?')) return;
+    await run(async () => {
+      await api('/volunteer-events/' + ev.id, { method: 'DELETE' });
+      await loadAll();
+    });
+  }
+
+  async function loadSignups(eventId) {
+    try {
+      const d = await api('/volunteer-events/' + eventId + '/signups');
+      setSignups((s) => ({ ...s, [eventId]: d.signups || [] }));
+    } catch (_) {}
+  }
+
+  async function addRole(eventId) {
+    if (!newRoleName.trim()) return;
+    await run(async () => {
+      await api('/volunteer-events/' + eventId + '/roles', { method: 'POST', body: { roleName: newRoleName.trim(), cap: Number(newRoleCap) || 0 }});
+      setNewRoleName(''); setNewRoleCap(''); setShowRoleForm(null);
+      await loadAll();
+    });
+  }
+
+  async function deleteRole(roleId) {
+    await run(async () => {
+      await api('/volunteer-roles/' + roleId, { method: 'DELETE' });
+      await loadAll();
+    });
+  }
+
+  async function removeSignup(signupId, eventId) {
+    await run(async () => {
+      await api('/volunteer-signups/' + signupId, { method: 'DELETE' });
+      await loadSignups(eventId);
+    });
+  }
+
+  function copyLink(id) {
+    const url = window.location.origin + '/volunteer/' + id;
+    navigator.clipboard.writeText(url).catch(() => {});
+    setCopied(id);
+    setTimeout(() => setCopied(null), 2000);
+  }
+
+  const managedById = {};
+  managedEvents.forEach((e) => { managedById[e.icalUid] = e; });
+
+  return (
+    <div className="max-w-3xl mx-auto space-y-8">
+      <div>
+        <h2 className="font-display text-3xl text-cream mb-1">Volunteer Manager</h2>
+        <p className="text-sm text-cream/50">Enable volunteer sign-ups on upcoming calendar events, set up roles, and manage who signed up.</p>
+      </div>
+
+      {/* Upcoming calendar events */}
+      <div>
+        <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide mb-3">Upcoming Calendar Events</div>
+        {loaded && calEvents.length === 0 && (
+          <div className="text-sm text-cream/40 bg-navy2 border border-cream/10 rounded-xl p-4">
+            No upcoming calendar events found. Make sure a calendar URL is configured in Edit Website.
+          </div>
+        )}
+        {!loaded && <Loading label="Loading events…" />}
+        <div className="space-y-2">
+          {calEvents.map((e) => {
+            const managed = e.uid ? managedById[e.uid] : null;
+            return (
+              <div key={e.uid || e.title} className="bg-navy2 border border-cream/10 rounded-xl p-4 flex items-center gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm text-cream truncate">{e.title}</div>
+                  <div className="text-xs text-cream/40 mt-0.5">{fmtEvent(e.start)}{e.location ? ' · ' + e.location : ''}</div>
+                </div>
+                {managed ? (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2 py-0.5">Active</span>
+                    <button onClick={() => { setExpandedId(managed.id); loadSignups(managed.id); }}
+                      className="text-xs text-gold/60 hover:text-gold border border-gold/30 hover:border-gold/60 rounded px-2 py-1 transition-colors">
+                      Manage
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={() => enableVolunteers(e)} disabled={loading || !e.uid}
+                    className="shrink-0 text-xs bg-gold/10 hover:bg-gold/20 text-gold border border-gold/30 rounded px-3 py-1 transition-colors disabled:opacity-40">
+                    {!e.uid ? 'No UID' : 'Enable Volunteers'}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Managed volunteer events */}
+      {managedEvents.length > 0 && (
+        <div>
+          <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide mb-3">Active Volunteer Events</div>
+          <div className="space-y-4">
+            {managedEvents.map((ev) => (
+              <div key={ev.id} className="bg-navy2 border border-cream/10 rounded-xl overflow-hidden">
+                <div className="p-4 flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-sm text-cream">{ev.title}</span>
+                      <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 ${ev.volunteersEnabled ? 'bg-emerald-500/15 text-emerald-400' : 'bg-cream/10 text-cream/40'}`}>
+                        {ev.volunteersEnabled ? 'Open' : 'Closed'}
+                      </span>
+                    </div>
+                    <div className="text-xs text-cream/40 mt-0.5">{fmtEvent(ev.startDate)}</div>
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {ev.roles.map((r) => (
+                        <div key={r.id} className="flex items-center gap-1 text-xs bg-navy3 border border-cream/10 rounded-full px-2 py-0.5">
+                          <span className="text-cream/70">{r.roleName}</span>
+                          <span className="text-cream/40">{r.cap > 0 ? `${r.confirmed}/${r.cap}` : r.confirmed + ' signed up'}</span>
+                          <button onClick={() => deleteRole(r.id)} className="text-red/40 hover:text-red ml-0.5 text-[11px] leading-none">×</button>
+                        </div>
+                      ))}
+                      {showRoleForm === ev.id ? (
+                        <div className="flex items-center gap-1 mt-1">
+                          <input value={newRoleName} onChange={(e) => setNewRoleName(e.target.value)} placeholder="Role name"
+                            className="bg-navy3 border border-cream/20 rounded px-2 py-0.5 text-xs text-cream placeholder-cream/30 focus:outline-none focus:border-gold/40 w-28" />
+                          <input value={newRoleCap} onChange={(e) => setNewRoleCap(e.target.value)} placeholder="Cap (0=∞)" type="number" min="0"
+                            className="bg-navy3 border border-cream/20 rounded px-2 py-0.5 text-xs text-cream placeholder-cream/30 focus:outline-none focus:border-gold/40 w-20" />
+                          <button onClick={() => addRole(ev.id)} className="text-xs text-gold/70 hover:text-gold">Add</button>
+                          <button onClick={() => setShowRoleForm(null)} className="text-xs text-cream/30 hover:text-cream">Cancel</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => { setShowRoleForm(ev.id); setNewRoleName(''); setNewRoleCap(''); }}
+                          className="text-xs text-gold/50 hover:text-gold border border-gold/20 hover:border-gold/40 rounded-full px-2 py-0.5 transition-colors">
+                          + Role
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1.5 items-end shrink-0">
+                    <button onClick={() => copyLink(ev.id)}
+                      className="text-xs text-teal-400/70 hover:text-teal-300 border border-teal-500/20 hover:border-teal-500/40 rounded px-2 py-1 transition-colors">
+                      {copied === ev.id ? '✓ Copied' : 'Copy Link'}
+                    </button>
+                    <button onClick={() => toggleEnabled(ev)} className="text-xs text-cream/40 hover:text-cream">
+                      {ev.volunteersEnabled ? 'Close sign-ups' : 'Reopen'}
+                    </button>
+                    <button onClick={() => { setExpandedId(expandedId === ev.id ? null : ev.id); if (expandedId !== ev.id) loadSignups(ev.id); }}
+                      className="text-xs text-cream/40 hover:text-gold">
+                      {expandedId === ev.id ? 'Hide signups' : 'View signups'}
+                    </button>
+                    <button onClick={() => deleteEvent(ev)} className="text-xs text-red/40 hover:text-red">Delete</button>
+                  </div>
+                </div>
+                {expandedId === ev.id && (
+                  <div className="border-t border-cream/10 p-4">
+                    {!signups[ev.id] ? (
+                      <div className="text-xs text-cream/40">Loading…</div>
+                    ) : signups[ev.id].length === 0 ? (
+                      <div className="text-xs text-cream/40">No sign-ups yet.</div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide mb-2">
+                          {signups[ev.id].length} Sign-up{signups[ev.id].length !== 1 ? 's' : ''}
+                        </div>
+                        {signups[ev.id].map((s) => (
+                          <div key={s.id} className="flex items-start gap-3 text-sm border-b border-cream/5 pb-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-medium text-cream text-sm">{s.name}</span>
+                                {s.roleName && <span className="text-xs text-cream/50 bg-navy3 rounded-full px-1.5 py-0.5">{s.roleName}</span>}
+                                <span className={`text-xs rounded-full px-1.5 py-0.5 ${s.status === 'waitlisted' ? 'bg-amber-500/15 text-amber-400' : 'bg-emerald-500/15 text-emerald-400'}`}>
+                                  {s.status}
+                                </span>
+                                {s.matchedName && (
+                                  <span className="text-xs text-sky-400 bg-sky-500/10 border border-sky-500/20 rounded-full px-1.5 py-0.5">
+                                    Roster: {s.matchedName.trim()}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-xs text-cream/35 mt-0.5 flex gap-3 flex-wrap">
+                                {s.phone && <span>{s.phone}</span>}
+                                {s.email && <span>{s.email}</span>}
+                                {s.grade && <span>Grade {s.grade}</span>}
+                              </div>
+                            </div>
+                            <button onClick={() => removeSignup(s.id, ev.id)} className="text-xs text-red/40 hover:text-red shrink-0">Remove</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {error && <div className="text-sm text-red/70 p-3 bg-red/10 border border-red/20 rounded-xl">{error}</div>}
+    </div>
+  );
+}
+
+// Per-tile accent colors so the grid is scannable at a glance instead of a
+// monotone wall. Keys match AppIcon names.
+const TILE_TONES = {
+  person:         { icon: 'text-gold',        bg: 'bg-gold/10' },
+  home:           { icon: 'text-sky-300',     bg: 'bg-sky-500/10' },
+  edit:           { icon: 'text-violet-300',  bg: 'bg-violet-500/10' },
+  megaphone:      { icon: 'text-amber-300',   bg: 'bg-amber-500/10' },
+  team:           { icon: 'text-teal-300',    bg: 'bg-teal-500/10' },
+  check:          { icon: 'text-emerald-300', bg: 'bg-emerald-500/10' },
+  inbox:          { icon: 'text-orange-300',  bg: 'bg-orange-500/10' },
+  roster:         { icon: 'text-cyan-300',    bg: 'bg-cyan-500/10' },
+  calendar:       { icon: 'text-rose-300',    bg: 'bg-rose-500/10' },
+  funding:        { icon: 'text-emerald-300', bg: 'bg-emerald-500/10' },
+  apply:          { icon: 'text-indigo-300',  bg: 'bg-indigo-500/10' },
+  dashboard:      { icon: 'text-fuchsia-300', bg: 'bg-fuchsia-500/10' },
+  attendance:     { icon: 'text-teal-300',    bg: 'bg-teal-500/10' },
+  poll:           { icon: 'text-violet-300',  bg: 'bg-violet-500/10' },
+  meetings:       { icon: 'text-sky-300',     bg: 'bg-sky-500/10' },
+  volunteer:      { icon: 'text-emerald-300', bg: 'bg-emerald-500/10' },
+  speaker:        { icon: 'text-amber-300',   bg: 'bg-amber-500/10' },
+  grants:         { icon: 'text-lime-300',    bg: 'bg-lime-500/10' },
+  social:         { icon: 'text-pink-300',    bg: 'bg-pink-500/10' },
+  budget:         { icon: 'text-green-300',   bg: 'bg-green-500/10' },
+  grades:         { icon: 'text-cyan-300',    bg: 'bg-cyan-500/10' },
+  reimbursements: { icon: 'text-orange-300',  bg: 'bg-orange-500/10' },
+  resources:      { icon: 'text-blue-300',    bg: 'bg-blue-500/10' },
+  directory:      { icon: 'text-indigo-300',  bg: 'bg-indigo-500/10' },
+  org:            { icon: 'text-cream/70',    bg: 'bg-cream/10' },
+  admin:          { icon: 'text-red',         bg: 'bg-red/10' },
+  activity:       { icon: 'text-rose-300',    bg: 'bg-rose-500/10' },
+  ai:             { icon: 'text-purple-300',  bg: 'bg-purple-500/10' },
+  bell:           { icon: 'text-gold',        bg: 'bg-gold/10' },
+};
+
+function AppIcon({ name, className }) {
+  const p = { width: 26, height: 26, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', className: className || 'text-cream/60' };
   switch (name) {
     case 'person':    return <svg {...p}><circle cx="12" cy="8" r="3.5"/><path d="M4 20c0-3.866 3.582-7 8-7s8 3.134 8 7"/></svg>;
     case 'home':      return <svg {...p}><path d="M3 11.5 12 3l9 8.5"/><path d="M5 10.5v10h5v-5h4v5h5v-10"/></svg>;
@@ -4856,31 +5413,33 @@ function AppIcon({ name }) {
     case 'org':       return <svg {...p}><circle cx="12" cy="4" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 6v5M12 11H5v6M12 11h7v6"/></svg>;
     case 'admin':     return <svg {...p}><path d="M12 2 3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7Z"/><path d="m9 12 2 2 4-4"/></svg>;
     case 'activity':  return <svg {...p}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>;
-    case 'ai':        return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M9.5 15a4.5 4.5 0 0 0 5 0"/></svg>;
+    case 'ai':        return <svg {...p}><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/><circle cx="12" cy="12" r="4.5"/></svg>;
     case 'bell':      return <svg {...p}><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>;
     case 'search':    return <svg {...p}><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>;
-    case 'attendance':return <svg {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>;
+    case 'attendance':return <svg {...p}><circle cx="9" cy="7" r="3.5"/><path d="M2 20c0-3.5 3.134-6 7-6s7 2.5 7 6"/><path d="m15 8 2.5 2.5L22 6"/></svg>;
     case 'poll':      return <svg {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 16v-4M12 16v-8M17 16v-2"/></svg>;
-    case 'budget':    return <svg {...p}><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>;
-    case 'meetings':  return <svg {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M8 11v2M12 11v2"/></svg>;
-    case 'grants':    return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5a2.5 2.5 0 0 1 5 0c0 1.5-1 2-2.5 2.5-1.5.5-2.5 1-2.5 2.5a2.5 2.5 0 0 0 5 0"/><path d="m16 5-1.5 1.5"/></svg>;
-    case 'speaker':   return <svg {...p}><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/><path d="M3 9l4 4"/></svg>;
+    case 'budget':    return <svg {...p}><path d="M21 12A9 9 0 1 1 12 3"/><path d="M12 3a9 9 0 0 1 9 9h-9z"/></svg>;
+    case 'meetings':  return <svg {...p}><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>;
+    case 'grants':    return <svg {...p}><circle cx="12" cy="9" r="6"/><path d="M12 6.5v5M10 8a2 2 0 0 1 4 0c0 1.2-.9 1.6-2 2"/><path d="m8.5 14-2 7 5.5-3 5.5 3-2-7"/></svg>;
+    case 'speaker':   return <svg {...p}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4M8 21h8"/></svg>;
     case 'social':    return <svg {...p}><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>;
-    case 'grades':    return <svg {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M12 15v4M15 18H9"/></svg>;
-    case 'reimbursements': return <svg {...p}><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><circle cx="12" cy="15" r="2"/><path d="M6 15h1M17 15h1"/></svg>;
-    case 'directory': return <svg {...p}><path d="M4 4h16v16H4z" rx="2"/><path d="M8 10a3 3 0 1 0 6 0 3 3 0 0 0-6 0"/><path d="M6 20c.3-2.2 2.5-4 6-4s5.7 1.8 6 4"/><path d="M16 4v4M8 4v4"/></svg>;
+    case 'grades':    return <svg {...p}><path d="m12 4 10 5-10 5L2 9z"/><path d="M6 11.5V17c0 1.5 2.7 3 6 3s6-1.5 6-3v-5.5"/><path d="M22 9v6"/></svg>;
+    case 'reimbursements': return <svg {...p}><path d="M5 3h14v18l-2.5-1.5L14 21l-2-1.5L10 21l-2.5-1.5L5 21z"/><path d="M9 8h6M9 12h6M13 16h2"/></svg>;
+    case 'directory': return <svg {...p}><rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="12" cy="10" r="2.5"/><path d="M8 17c.4-1.8 2-3 4-3s3.6 1.2 4 3"/><path d="M2 8h2M2 12h2M2 16h2"/></svg>;
     case 'resources': return <svg {...p}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M12 7v6M9 10h6"/></svg>;
+    case 'volunteer': return <svg {...p}><path d="M19.5 12.572 12 20l-7.5-7.428A5 5 0 1 1 12 6.006a5 5 0 1 1 7.5 6.566"/><path d="m9 12 2 2 4-4"/></svg>;
     default:          return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
   }
 }
 
 function AppTile({ label, icon, badge, onClick, style }) {
+  const tone = TILE_TONES[icon] || { icon: 'text-cream/60', bg: 'bg-cream/5' };
   return (
     <button onClick={onClick} style={style}
-      className="ca-fade-in group relative bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/30 rounded-2xl p-5 flex flex-col items-center gap-3 transition-all duration-200 active:scale-95 w-full hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/30">
+      className="ca-fade-in group relative bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/40 rounded-2xl p-5 flex flex-col items-center gap-3 transition-all duration-200 active:scale-95 w-full hover:-translate-y-1 hover:shadow-lg hover:shadow-black/30">
       <div className="relative">
-        <div className="w-14 h-14 rounded-xl bg-navy/60 flex items-center justify-center group-hover:bg-navy2 transition-colors duration-150">
-          <AppIcon name={icon} />
+        <div className={`w-14 h-14 rounded-2xl ${tone.bg} flex items-center justify-center transition-transform duration-200 group-hover:scale-110`}>
+          <AppIcon name={icon} className={`${tone.icon} transition-colors duration-150`} />
         </div>
         {badge > 0 && (
           <span className="absolute -top-1 -right-1 bg-red text-cream text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 ca-pulse">{badge}</span>
@@ -4897,36 +5456,59 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
   const canSeeSubmissions = me.role === 'admin' || !!me.grade;
   const canRoster = isManager || !!me.canManageRoster;
 
-  const tiles = [
-    { type: 'mytasks',    label: 'My Page',          icon: 'person'     },
-    { type: 'home',       label: 'Club Home',         icon: 'home'       },
-    ...(canEditSite       ? [{ type: 'website',     label: 'Edit Website',     icon: 'edit'       }] : []),
-    ...(isManager         ? [{ type: 'announce',    label: 'Announcement',     icon: 'megaphone'  }] : []),
-    ...(isManager         ? [{ type: 'myteam',      label: 'My Team',          icon: 'team'       }] : []),
-    ...(isManager         ? [{ type: 'approvals',   label: 'Approvals',        icon: 'check',     badge: approvalsCount   }] : []),
-    ...(canSeeSubmissions ? [{ type: 'submissions', label: 'Get Involved',     icon: 'inbox',     badge: submissionsCount }] : []),
-    ...(canRoster         ? [{ type: 'roster',      label: 'Roster',           icon: 'roster'     }] : []),
-    ...((checkinEnabled || isManager) ? [{ type: 'checkin', label: checkinEnabled ? 'Check-In' : 'Check-In Settings', icon: 'calendar' }] : []),
-    { type: 'funding',    label: 'Funding',            icon: 'funding'    },
-    { type: 'apply',      label: 'Apply',               icon: 'apply'      },
-    ...(isManager         ? [{ type: 'dashboard',   label: 'Dashboard',        icon: 'dashboard'  }] : []),
-    { type: 'attendance',   label: 'Attendance',          icon: 'attendance' },
-    { type: 'polls',       label: 'Polls & Voting',      icon: 'poll'       },
-    { type: 'meetings',    label: 'Meetings',             icon: 'meetings'   },
-    ...(isManager ? [{ type: 'speaker',   label: 'Speaker Events',    icon: 'speaker'    }] : []),
-    ...(isManager ? [{ type: 'grants',    label: 'Grant Tracker',     icon: 'grants'     }] : []),
-    ...(isManager || !!me.canManageSocial ? [{ type: 'social', label: 'Social Media', icon: 'social' }] : []),
-    ...(isManager         ? [{ type: 'budget',      label: 'Budget Overview',  icon: 'budget'     }] : []),
-    ...(isManager || !!me.managedGrade ? [{ type: 'grades', label: 'Grade Pipeline', icon: 'grades' }] : []),
-    { type: 'reimbursements', label: 'Reimbursements', icon: 'reimbursements' },
-    { type: 'resources',  label: 'Resources',           icon: 'resources'  },
-    { type: 'directory',  label: 'Directory',           icon: 'directory'  },
-    { type: 'org',        label: 'Org Chart',           icon: 'org'        },
-    ...(me.role === 'admin' ? [{ type: 'admin',     label: 'Admin Panel',      icon: 'admin'      }] : []),
-    ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }] : []),
-    ...(me.role === 'admin' ? [{ type: 'ai',        label: 'AI Assistant',     icon: 'ai'         }] : []),
-    { type: 'ainotes',    label: 'Agent Notes',        icon: 'bell',      badge: aiNotesCount || undefined, onClick: onAiNotes },
-  ];
+  // Tiles grouped into labeled sections so the home screen reads as a few
+  // small clusters instead of one undifferentiated wall.
+  const sections = [
+    {
+      title: 'My Club',
+      tiles: [
+        { type: 'mytasks',    label: 'My Page',        icon: 'person'     },
+        { type: 'home',       label: 'Club Home',      icon: 'home'       },
+        ...((checkinEnabled || isManager) ? [{ type: 'checkin', label: checkinEnabled ? 'Check-In' : 'Check-In Settings', icon: 'calendar' }] : []),
+        { type: 'attendance', label: 'Attendance',     icon: 'attendance' },
+        { type: 'polls',      label: 'Polls & Voting', icon: 'poll'       },
+        { type: 'meetings',   label: 'Meetings',       icon: 'meetings'   },
+        { type: 'funding',    label: 'Funding',        icon: 'funding'    },
+        { type: 'apply',      label: 'Apply',          icon: 'apply'      },
+        { type: 'reimbursements', label: 'Reimbursements', icon: 'reimbursements' },
+        { type: 'resources',  label: 'Resources',      icon: 'resources'  },
+        { type: 'directory',  label: 'Directory',      icon: 'directory'  },
+        { type: 'org',        label: 'Org Chart',      icon: 'org'        },
+        { type: 'ainotes',    label: 'Agent Notes',    icon: 'bell', badge: aiNotesCount || undefined, onClick: onAiNotes },
+      ],
+    },
+    {
+      title: 'Leadership',
+      tiles: [
+        ...(isManager         ? [{ type: 'announce',    label: 'Announcement',    icon: 'megaphone'  }] : []),
+        ...(isManager         ? [{ type: 'myteam',      label: 'My Team',         icon: 'team'       }] : []),
+        ...(isManager         ? [{ type: 'approvals',   label: 'Approvals',       icon: 'check',     badge: approvalsCount   }] : []),
+        ...(canSeeSubmissions ? [{ type: 'submissions', label: 'Get Involved',    icon: 'inbox',     badge: submissionsCount }] : []),
+        ...(canRoster         ? [{ type: 'roster',      label: 'Roster',          icon: 'roster'     }] : []),
+        ...(isManager         ? [{ type: 'dashboard',   label: 'Dashboard',       icon: 'dashboard'  }] : []),
+        ...(isManager         ? [{ type: 'volunteers',  label: 'Volunteers',      icon: 'volunteer'  }] : []),
+        ...(isManager         ? [{ type: 'speaker',     label: 'Speaker Events',  icon: 'speaker'    }] : []),
+        ...(isManager         ? [{ type: 'grants',      label: 'Grant Tracker',   icon: 'grants'     }] : []),
+        ...(isManager || !!me.canManageSocial ? [{ type: 'social', label: 'Social Media',   icon: 'social' }] : []),
+        ...(isManager         ? [{ type: 'budget',      label: 'Budget Overview', icon: 'budget'     }] : []),
+        ...(isManager || !!me.managedGrade    ? [{ type: 'grades', label: 'Grade Pipeline', icon: 'grades' }] : []),
+      ],
+    },
+    {
+      title: 'Site & Admin',
+      tiles: [
+        ...(canEditSite         ? [{ type: 'website',   label: 'Edit Website',   icon: 'edit'     }] : []),
+        ...(me.role === 'admin' ? [{ type: 'admin',     label: 'Admin Panel',    icon: 'admin'    }] : []),
+        ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }] : []),
+        ...(me.role === 'admin' ? [{ type: 'ai',        label: 'AI Assistant',   icon: 'ai'       }] : []),
+      ],
+    },
+  ].filter((s) => s.tiles.length > 0);
+
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const dateLine = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  let tileIndex = 0;
 
   return (
     <div className="min-h-screen flex flex-col ca-fade-in" style={{ background: '#0d1b2e' }}>
@@ -4949,13 +5531,27 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
           </div>
         </div>
       </header>
-      <div className="flex-1 px-4 py-8">
+      <div className="flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 py-8">
+        <div className="mb-6">
+          <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">{greeting}, {me.firstName || me.displayName}</h1>
+          <p className="text-cream/40 text-sm mt-1.5">{dateLine}</p>
+        </div>
         <HomeSummaryCard me={me} onNavigate={onNavigate} />
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {tiles.map((t, i) => (
-            <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge}
-              onClick={t.onClick || (() => onNavigate({ type: t.type }))}
-              style={{ animationDelay: `${i * 32}ms` }} />
+        <div className="space-y-8">
+          {sections.map((section) => (
+            <div key={section.title}>
+              <div className="flex items-center gap-3 mb-3">
+                <span className="text-xs font-semibold text-cream/40 uppercase tracking-widest">{section.title}</span>
+                <div className="flex-1 h-px bg-cream/10" />
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {section.tiles.map((t) => (
+                  <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge}
+                    onClick={t.onClick || (() => onNavigate({ type: t.type }))}
+                    style={{ animationDelay: `${tileIndex++ * 28}ms` }} />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       </div>
@@ -5081,6 +5677,7 @@ function App() {
   const [searchOpen, setSearchOpen] = useState(false);
 
   const isSurveyPath = window.location.pathname === '/survey';
+  const volunteerMatch = window.location.pathname.match(/^\/volunteer\/(\d+)$/);
   const bump = () => setRefreshSignal((n) => n + 1);
 
   const loadShared = useCallback(async (user) => {
@@ -5142,6 +5739,7 @@ function App() {
 
   if (!booted) return <div className="min-h-screen flex items-center justify-center gap-2 text-cream/40"><Spinner className="w-5 h-5" /> Loading…</div>;
   if (isSurveyPath) return <InterestSurvey onBack={() => { window.history.pushState(null, '', '/'); window.location.reload(); }} />;
+  if (volunteerMatch) return <VolunteerSignUpPage eventId={Number(volunteerMatch[1])} />;
   if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;
   if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); }} onBack={() => setEnterPortal(false)} />;
   if (me.firstLogin) return <ChangePassword user={me} forced onDone={(u) => { setMe(u); loadShared(u); }} />;
@@ -5171,7 +5769,7 @@ function App() {
     attendance: 'Attendance', polls: 'Polls & Voting', budget: 'Budget Overview',
     meetings: 'Meetings', speaker: 'Speaker Events', grants: 'Grant Tracker', social: 'Social Media',
     grades: 'Grade Pipeline', reimbursements: 'Reimbursements', directory: 'Board Directory',
-    resources: 'Resource Hub',
+    resources: 'Resource Hub', volunteers: 'Volunteer Manager',
     org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity',
     ai: 'AI Assistant', password: 'Change Password', profile: 'Edit Profile',
   };
@@ -5207,6 +5805,7 @@ function App() {
   else if (view.type === 'reimbursements') content = <ReimbursementsPage me={me} />;
   else if (view.type === 'directory') content = <DirectoryPage me={me} />;
   else if (view.type === 'resources') content = <ResourceHubPage me={me} />;
+  else if (view.type === 'volunteers') content = (me.role === 'admin' || me.role === 'manager') ? <VolunteerManagerPage me={me} /> : null;
 
   return (
     <>
@@ -5341,6 +5940,8 @@ function MeetingActionItems({ meetingId, me, allUsers }) {
 // Meetings Page
 // ---------------------------------------------------------------------------
 function MeetingsPage({ me }) {
+  const [tab, setTab] = useState('club');
+  // Board meetings state
   const [meetings, setMeetings] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -5352,6 +5953,10 @@ function MeetingsPage({ me }) {
   const [notes, setNotes] = useState('');
   const [expandedId, setExpandedId] = useState(null);
   const [allUsers, setAllUsers] = useState([]);
+  // Club calendar state
+  const [calEvents, setCalEvents] = useState([]);
+  const [calLoaded, setCalLoaded] = useState(false);
+  const [calConfigured, setCalConfigured] = useState(false);
   const { loading, error, setError, run } = useAction();
   const isManager = me.role === 'admin' || me.role === 'manager';
 
@@ -5364,7 +5969,16 @@ function MeetingsPage({ me }) {
     finally { setLoaded(true); }
   }, [setError]);
 
-  useEffect(() => { load(); }, [load]);
+  const loadCal = useCallback(async () => {
+    try {
+      const d = await api('/meetings/calendar');
+      setCalEvents(d.events || []);
+      setCalConfigured(!!d.configured);
+    } catch (_) {}
+    finally { setCalLoaded(true); }
+  }, []);
+
+  useEffect(() => { load(); loadCal(); }, [load, loadCal]);
 
   function openCreate() { setEditId(null); setTitle(''); setMeetingDate(''); setAgendaUrl(''); setMinutesUrl(''); setNotes(''); setShowForm(true); }
   function openEdit(m) { setEditId(m.id); setTitle(m.title); setMeetingDate(m.meetingDate); setAgendaUrl(m.agendaUrl||''); setMinutesUrl(m.minutesUrl||''); setNotes(m.notes||''); setShowForm(true); }
@@ -5389,81 +6003,121 @@ function MeetingsPage({ me }) {
 
   const safeLink = (url) => url && (url.startsWith('http://') || url.startsWith('https://')) ? url : url ? 'https://' + url : '';
 
+  const tabCls = (t) => `px-4 py-2 text-sm font-medium rounded-lg transition-colors ${tab === t ? 'bg-gold/15 text-gold border border-gold/30' : 'text-cream/50 hover:text-cream hover:bg-cream/5'}`;
+
   return (
     <div className="max-w-3xl">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h1 className="font-display text-4xl sm:text-5xl text-cream">Meetings</h1>
-        {isManager && !showForm && <Button variant="gold" onClick={openCreate}>+ New Meeting</Button>}
+        {isManager && tab === 'board' && !showForm && <Button variant="gold" onClick={openCreate}>+ New</Button>}
       </div>
 
-      {showForm && (
-        <form onSubmit={save} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
-          <div className="font-display text-xl text-gold">{editId ? 'Edit Meeting' : 'New Meeting'}</div>
-          <Field label="Title"><input className={inputCls} value={title} autoFocus onChange={(e) => setTitle(e.target.value)} /></Field>
-          <Field label="Date"><input type="date" className={inputCls} value={meetingDate} onChange={(e) => setMeetingDate(e.target.value)} /></Field>
-          <Field label="Agenda (Google Doc URL)"><input className={inputCls} value={agendaUrl} placeholder="https://docs.google.com/…" onChange={(e) => setAgendaUrl(e.target.value)} /></Field>
-          <Field label="Minutes (Google Doc URL)"><input className={inputCls} value={minutesUrl} placeholder="https://docs.google.com/…" onChange={(e) => setMinutesUrl(e.target.value)} /></Field>
-          <Field label="Notes"><textarea className={inputCls} rows="2" value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
-          {error && <div className="text-red text-sm">{error}</div>}
-          <div className="flex gap-2">
-            <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner />Saving…</span> : 'Save'}</Button>
-            <Button variant="ghost" onClick={() => setShowForm(false)} disabled={loading}>Cancel</Button>
-          </div>
-        </form>
-      )}
+      {/* Tabs */}
+      <div className="flex gap-2 mb-6">
+        <button className={tabCls('club')} onClick={() => setTab('club')}>Club Meetings</button>
+        <button className={tabCls('board')} onClick={() => setTab('board')}>Board Meetings</button>
+      </div>
 
-      {!loaded && <Loading label="Loading meetings…" />}
-      {loaded && meetings.length === 0 && (
-        <EmptyState icon="📋" title="No meetings yet" hint={isManager ? 'Create the first meeting record above.' : 'Meeting records will appear here once added.'} />
-      )}
-      <div className="space-y-3">
-        {meetings.map((m) => (
-          <div key={m.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="font-medium text-cream">{m.title}</div>
-                <div className="text-xs text-cream/50 mt-0.5">{fmtShortDate(m.meetingDate)} · Added by {m.createdByName}</div>
-                {m.notes && <div className="text-sm text-cream/60 mt-1">{m.notes}</div>}
-                <div className="flex gap-3 mt-2 flex-wrap">
-                  {safeLink(m.agendaUrl) && (
-                    <a href={safeLink(m.agendaUrl)} target="_blank" rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-gold/80 hover:text-gold transition-colors">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
-                      Agenda
-                    </a>
-                  )}
-                  {safeLink(m.minutesUrl) && (
-                    <a href={safeLink(m.minutesUrl)} target="_blank" rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-emerald-400/80 hover:text-emerald-300 transition-colors">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>
-                      Minutes
-                    </a>
-                  )}
-                  {!safeLink(m.agendaUrl) && isManager && <span className="text-xs text-cream/25 italic">No agenda link yet</span>}
-                  {!safeLink(m.minutesUrl) && isManager && <span className="text-xs text-cream/25 italic">No minutes link yet</span>}
+      {/* ── Club Meetings tab (iCal) ── */}
+      {tab === 'club' && (
+        <div>
+          {!calLoaded && <Loading label="Loading club meetings…" />}
+          {calLoaded && !calConfigured && (
+            <EmptyState icon="📅" title="No calendar connected"
+              hint={isManager ? 'Connect a calendar URL in Edit Website to auto-populate club meetings.' : 'No calendar has been connected yet.'} />
+          )}
+          {calLoaded && calConfigured && calEvents.length === 0 && (
+            <EmptyState icon="📅" title="No upcoming club meetings" hint="No events found in the next few weeks on the connected calendar." />
+          )}
+          <div className="space-y-3">
+            {calEvents.map((e, i) => (
+              <div key={i} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-medium text-cream">{e.title}</div>
+                    <div className="text-sm text-gold/70 mt-0.5">{fmtEvent(e.start)}</div>
+                    {e.location && <div className="text-xs text-cream/50 mt-0.5">{e.location}</div>}
+                  </div>
+                  <span className="text-xs text-sky-400/70 bg-sky-500/10 border border-sky-500/20 rounded-full px-2 py-0.5 shrink-0">From Calendar</span>
                 </div>
               </div>
-              {isManager && (
-                <div className="flex gap-2 shrink-0">
-                  <button onClick={() => openEdit(m)} className="text-xs text-gold/60 hover:text-gold">Edit</button>
-                  {me.role === 'admin' && <button onClick={() => deleteMeeting(m)} className="text-xs text-red/60 hover:text-red">Delete</button>}
-                </div>
-              )}
-            </div>
-            <button
-              onClick={() => setExpandedId(expandedId === m.id ? null : m.id)}
-              className="mt-2 text-xs text-cream/40 hover:text-gold transition-colors flex items-center gap-1">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                {expandedId === m.id ? <path d="M18 15l-6-6-6 6"/> : <path d="M6 9l6 6 6-6"/>}
-              </svg>
-              Action Items
-            </button>
-            {expandedId === m.id && (
-              <MeetingActionItems meetingId={m.id} me={me} allUsers={allUsers} />
-            )}
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
+      )}
+
+      {/* ── Board Meetings tab (manual) ── */}
+      {tab === 'board' && (
+        <div>
+          {showForm && (
+            <form onSubmit={save} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
+              <div className="font-display text-xl text-gold">{editId ? 'Edit Meeting' : 'New Board Meeting'}</div>
+              <Field label="Title"><input className={inputCls} value={title} autoFocus onChange={(e) => setTitle(e.target.value)} /></Field>
+              <Field label="Date"><input type="date" className={inputCls} value={meetingDate} onChange={(e) => setMeetingDate(e.target.value)} /></Field>
+              <Field label="Agenda (Google Doc URL)"><input className={inputCls} value={agendaUrl} placeholder="https://docs.google.com/…" onChange={(e) => setAgendaUrl(e.target.value)} /></Field>
+              <Field label="Minutes (Google Doc URL)"><input className={inputCls} value={minutesUrl} placeholder="https://docs.google.com/…" onChange={(e) => setMinutesUrl(e.target.value)} /></Field>
+              <Field label="Notes"><textarea className={inputCls} rows="2" value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
+              {error && <div className="text-red text-sm">{error}</div>}
+              <div className="flex gap-2">
+                <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner />Saving…</span> : 'Save'}</Button>
+                <Button variant="ghost" onClick={() => setShowForm(false)} disabled={loading}>Cancel</Button>
+              </div>
+            </form>
+          )}
+          {!loaded && <Loading label="Loading board meetings…" />}
+          {loaded && meetings.length === 0 && (
+            <EmptyState icon="📋" title="No board meetings yet" hint={isManager ? 'Create the first board meeting record above.' : 'Board meeting records will appear here once added.'} />
+          )}
+          <div className="space-y-3">
+            {meetings.map((m) => (
+              <div key={m.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-medium text-cream">{m.title}</div>
+                    <div className="text-xs text-cream/50 mt-0.5">{fmtShortDate(m.meetingDate)} · Added by {m.createdByName}</div>
+                    {m.notes && <div className="text-sm text-cream/60 mt-1">{m.notes}</div>}
+                    <div className="flex gap-3 mt-2 flex-wrap">
+                      {safeLink(m.agendaUrl) && (
+                        <a href={safeLink(m.agendaUrl)} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs text-gold/80 hover:text-gold transition-colors">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
+                          Agenda
+                        </a>
+                      )}
+                      {safeLink(m.minutesUrl) && (
+                        <a href={safeLink(m.minutesUrl)} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs text-emerald-400/80 hover:text-emerald-300 transition-colors">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>
+                          Minutes
+                        </a>
+                      )}
+                      {!safeLink(m.agendaUrl) && isManager && <span className="text-xs text-cream/25 italic">No agenda link yet</span>}
+                      {!safeLink(m.minutesUrl) && isManager && <span className="text-xs text-cream/25 italic">No minutes link yet</span>}
+                    </div>
+                  </div>
+                  {isManager && (
+                    <div className="flex gap-2 shrink-0">
+                      <button onClick={() => openEdit(m)} className="text-xs text-gold/60 hover:text-gold">Edit</button>
+                      {me.role === 'admin' && <button onClick={() => deleteMeeting(m)} className="text-xs text-red/60 hover:text-red">Delete</button>}
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => setExpandedId(expandedId === m.id ? null : m.id)}
+                  className="mt-2 text-xs text-cream/40 hover:text-gold transition-colors flex items-center gap-1">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    {expandedId === m.id ? <path d="M18 15l-6-6-6 6"/> : <path d="M6 9l6 6 6-6"/>}
+                  </svg>
+                  Action Items
+                </button>
+                {expandedId === m.id && (
+                  <MeetingActionItems meetingId={m.id} me={me} allUsers={allUsers} />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
