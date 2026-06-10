@@ -7350,11 +7350,12 @@ function ReimbursementsPage({ me }) {
       <div>
         <div className="font-display text-2xl text-gold mb-3">{isManager ? 'All Requests' : 'My Requests'}</div>
         {items === null && <Loading label="Loading…" />}
-        {items !== null && (isManager ? items : mine).length === 0
-          ? <EmptyState icon="💳" title="No reimbursements yet" hint="Submit a request when you make a purchase for the club." />
-          : (
-            <div className="space-y-2">
-              {(isManager ? items : mine).map((r) => (
+        {items !== null && (
+          (isManager ? items : mine).length === 0
+            ? <EmptyState icon="💳" title="No reimbursements yet" hint="Submit a request when you make a purchase for the club." />
+            : (
+              <div className="space-y-2">
+                {(isManager ? items : mine).map((r) => (
                 <div key={r.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 flex items-center justify-between gap-3 flex-wrap">
                   <div className="min-w-0">
                     <div className="text-cream text-sm font-medium">{fmt(r.amount)} · {REIMBURSEMENT_CATEGORY_ICONS[r.category] || ''} {r.category}</div>
@@ -7367,8 +7368,9 @@ function ReimbursementsPage({ me }) {
                   <Badge tone={statusToneR(r.status)}>{r.status}</Badge>
                 </div>
               ))}
-            </div>
-          )}
+              </div>
+            )
+        )}
       </div>
     </div>
   );
