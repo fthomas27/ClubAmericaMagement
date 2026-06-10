@@ -5866,12 +5866,44 @@ function App() {
     onSkip={() => setMe({ ...me, profileComplete: true })} />;
 
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
+  const isMgrOrAdmin = me.role === 'admin' || me.role === 'manager';
+  const navTiles = [
+    { type: 'mytasks',        label: 'My Page' },
+    { type: 'home',           label: 'Club Home' },
+    { type: 'checkin',        label: 'Check-In' },
+    { type: 'attendance',     label: 'Attendance' },
+    { type: 'polls',          label: 'Polls & Voting' },
+    { type: 'meetings',       label: 'Meetings' },
+    { type: 'funding',        label: 'Funding' },
+    { type: 'apply',          label: 'Apply' },
+    { type: 'reimbursements', label: 'Reimbursements' },
+    { type: 'resources',      label: 'Resources' },
+    { type: 'directory',      label: 'Directory' },
+    { type: 'org',            label: 'Org Chart' },
+    { type: 'ainotes',        label: 'Agent Notes' },
+    ...(isMgrOrAdmin                          ? [{ type: 'announce',    label: 'Announcement' }] : []),
+    ...(isMgrOrAdmin                          ? [{ type: 'myteam',      label: 'My Team' }] : []),
+    ...(isMgrOrAdmin                          ? [{ type: 'approvals',   label: 'Approvals' }] : []),
+    ...(isMgrOrAdmin || !!me.canAnnounce      ? [{ type: 'submissions', label: 'Get Involved' }] : []),
+    ...(isMgrOrAdmin || !!me.canManageRoster  ? [{ type: 'roster',      label: 'Roster' }] : []),
+    ...(isMgrOrAdmin                          ? [{ type: 'dashboard',   label: 'Dashboard' }] : []),
+    ...(isMgrOrAdmin                          ? [{ type: 'volunteers',  label: 'Volunteers' }] : []),
+    ...(isMgrOrAdmin                          ? [{ type: 'speaker',     label: 'Speaker Events' }] : []),
+    ...(isMgrOrAdmin                          ? [{ type: 'grants',      label: 'Grant Tracker' }] : []),
+    ...(isMgrOrAdmin || !!me.canManageSocial  ? [{ type: 'social',      label: 'Social Media' }] : []),
+    ...(isMgrOrAdmin                          ? [{ type: 'budget',      label: 'Budget Overview' }] : []),
+    ...(isMgrOrAdmin || !!me.managedGrade     ? [{ type: 'grades',      label: 'Grade Pipeline' }] : []),
+    ...(canEditSite                           ? [{ type: 'website',     label: 'Edit Website' }] : []),
+    ...(me.role === 'admin'                   ? [{ type: 'admin',       label: 'Admin Panel' }] : []),
+    ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity' }] : []),
+    ...(me.role === 'admin'                   ? [{ type: 'ai',          label: 'AI Assistant' }] : []),
+  ];
   const navigate = (v) => setView(v);
 
   if (view.type === 'apphome') return (
     <>
       {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={() => { setAiNotesOpen(false); bump(); }} />}
-      {searchOpen && <SearchModal me={me} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
+      {searchOpen && <SearchModal me={me} tiles={navTiles} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
       <AppHome me={me} reports={reports} approvalsCount={approvalsCount} submissionsCount={submissionsCount}
         checkinEnabled={checkinEnabled} aiNotesCount={aiNotesCount} onAiNotes={() => setAiNotesOpen(true)}
         onNavigate={navigate} onLogout={logout} onSearch={() => setSearchOpen(true)} />
@@ -5928,7 +5960,7 @@ function App() {
   return (
     <>
       {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={() => { setAiNotesOpen(false); bump(); }} />}
-      {searchOpen && <SearchModal me={me} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
+      {searchOpen && <SearchModal me={me} tiles={navTiles} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
       <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
         <header className="sticky top-0 z-20 flex items-center gap-3 bg-navy2/95 backdrop-blur border-b border-cream/10 px-4 py-3">
           <button onClick={() => navigate({ type: 'apphome' })} aria-label="Back to home"
@@ -6825,7 +6857,7 @@ function TaskComments({ taskId, me }) {
 // ---------------------------------------------------------------------------
 // Search Modal
 // ---------------------------------------------------------------------------
-function SearchModal({ me, onNavigate, onClose }) {
+function SearchModal({ me, tiles = [], onNavigate, onClose }) {
   const [q, setQ] = useState('');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -6846,7 +6878,11 @@ function SearchModal({ me, onNavigate, onClose }) {
     return () => clearTimeout(t);
   }, [q]);
 
-  const total = results ? (results.tasks.length + results.members.length + results.funding.length + results.announcements.length) : 0;
+  const matchingTiles = q.length >= 2
+    ? tiles.filter((t) => t.label.toLowerCase().includes(q.toLowerCase()))
+    : [];
+  const apiTotal = results ? (results.tasks.length + results.members.length + results.funding.length + results.announcements.length) : 0;
+  const hasAnyResults = matchingTiles.length > 0 || apiTotal > 0;
 
   function go(view) { onClose(); onNavigate(view); }
 
@@ -6857,18 +6893,31 @@ function SearchModal({ me, onNavigate, onClose }) {
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-cream/40 shrink-0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
           <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)}
             className="flex-1 bg-transparent text-cream placeholder-cream/30 focus:outline-none text-base"
-            placeholder="Search tasks, members, funding…" />
+            placeholder="Search pages, tasks, members, funding…" />
           {loading && <Spinner className="w-4 h-4 text-cream/40 shrink-0" />}
           <button onClick={onClose} className="text-cream/40 hover:text-cream text-xl leading-none shrink-0">×</button>
         </div>
 
-        {q.length >= 2 && results && (
+        {q.length >= 2 && (matchingTiles.length > 0 || results) && (
           <div className="max-h-[60vh] overflow-y-auto divide-y divide-cream/8">
-            {total === 0 && (
+            {!hasAnyResults && results && (
               <div className="px-5 py-8 text-center text-cream/40 text-sm">No results for "{q}"</div>
             )}
 
-            {results.tasks.length > 0 && (
+            {matchingTiles.length > 0 && (
+              <div className="py-2">
+                <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-cream/40 font-semibold">Pages</div>
+                {matchingTiles.map((t) => (
+                  <button key={t.type} onClick={() => go({ type: t.type })}
+                    className="w-full text-left px-4 py-2.5 hover:bg-navy3 transition-colors flex items-center gap-3">
+                    <span className="mt-0.5 text-gold/50 text-xs shrink-0">▦</span>
+                    <div className="text-cream text-sm font-medium">{t.label}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {results && results.tasks.length > 0 && (
               <div className="py-2">
                 <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-cream/40 font-semibold">Tasks</div>
                 {results.tasks.map((t) => (
@@ -6884,7 +6933,7 @@ function SearchModal({ me, onNavigate, onClose }) {
               </div>
             )}
 
-            {results.members.length > 0 && (
+            {results && results.members.length > 0 && (
               <div className="py-2">
                 <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-cream/40 font-semibold">Members</div>
                 {results.members.map((u) => (
@@ -6902,7 +6951,7 @@ function SearchModal({ me, onNavigate, onClose }) {
               </div>
             )}
 
-            {results.funding.length > 0 && (
+            {results && results.funding.length > 0 && (
               <div className="py-2">
                 <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-cream/40 font-semibold">Funding Requests</div>
                 {results.funding.map((f) => (
@@ -6918,7 +6967,7 @@ function SearchModal({ me, onNavigate, onClose }) {
               </div>
             )}
 
-            {results.announcements.length > 0 && (
+            {results && results.announcements.length > 0 && (
               <div className="py-2">
                 <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-cream/40 font-semibold">Announcements</div>
                 {results.announcements.map((a) => (
