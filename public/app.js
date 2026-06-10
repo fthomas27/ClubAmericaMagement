@@ -4985,7 +4985,7 @@ function VolunteerSignUpPage({ eventId }) {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || !phone.trim()) return;
     setSubmitting(true);
     setError('');
     try {
@@ -5098,8 +5098,8 @@ function VolunteerSignUpPage({ eventId }) {
               placeholder="Your full name" />
           </div>
           <div>
-            <label className="block text-xs text-cream/50 mb-1">Phone Number</label>
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel"
+            <label className="block text-xs text-cream/50 mb-1">Phone Number *</label>
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" required
               className="w-full bg-navy3 border border-cream/15 rounded-lg px-3 py-2 text-sm text-cream placeholder-cream/30 focus:outline-none focus:border-gold/50"
               placeholder="(555) 000-0000" />
           </div>
@@ -5123,7 +5123,7 @@ function VolunteerSignUpPage({ eventId }) {
               No role selected — you'll sign up as a general volunteer. Tap a role above to claim a specific spot.
             </div>
           )}
-          <button type="submit" disabled={submitting || !name.trim()}
+          <button type="submit" disabled={submitting || !name.trim() || !phone.trim()}
             className="w-full bg-gold text-navy font-semibold py-2.5 rounded-xl hover:bg-gold/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm">
             {submitting ? 'Signing up…'
               : selectedRoleFull ? `Join Waitlist for ${selectedRoleObj.roleName}`
@@ -5367,6 +5367,11 @@ function VolunteerManagerPage({ me }) {
                                     Roster: {s.matchedName.trim()}
                                   </span>
                                 )}
+                                {s.needsReview ? (
+                                  <span className="text-xs text-orange-400 bg-orange-500/10 border border-orange-500/20 rounded-full px-1.5 py-0.5">
+                                    Needs Review
+                                  </span>
+                                ) : null}
                               </div>
                               <div className="text-xs text-cream/35 mt-0.5 flex gap-3 flex-wrap">
                                 {s.phone && <span>{s.phone}</span>}

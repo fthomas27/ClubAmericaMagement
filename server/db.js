@@ -496,6 +496,10 @@ function init() {
   const rosterCols = db.prepare("PRAGMA table_info(roster_members)").all().map((c) => c.name);
   if (!rosterCols.includes('parentFormCollected')) db.exec("ALTER TABLE roster_members ADD COLUMN parentFormCollected INTEGER NOT NULL DEFAULT 0");
 
+  // volunteer_signups column migrations.
+  const vsCols = db.prepare("PRAGMA table_info(volunteer_signups)").all().map((c) => c.name);
+  if (!vsCols.includes('needsReview')) db.exec("ALTER TABLE volunteer_signups ADD COLUMN needsReview INTEGER NOT NULL DEFAULT 0");
+
   // Additional user column migrations.
   if (!cols.includes('canManageSocial')) db.exec("ALTER TABLE users ADD COLUMN canManageSocial INTEGER NOT NULL DEFAULT 0");
   if (!cols.includes('phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");

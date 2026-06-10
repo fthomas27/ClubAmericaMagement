@@ -385,6 +385,7 @@ app.post('/api/public/volunteer/:id/signup', volunteerSignupRL, (req, res) => {
   email = String(email || '').trim().slice(0, 200);
   grade = String(grade || '').trim().slice(0, 20);
   if (!name) return res.status(400).json({ error: 'Name is required' });
+  if (!phone) return res.status(400).json({ error: 'Phone number is required' });
   const dup = db.prepare('SELECT id FROM volunteer_signups WHERE eventId = ? AND lower(name) = lower(?)').get(eventId, name);
   if (dup) return res.status(409).json({ error: "Looks like you're already signed up for this event" });
   roleId = roleId ? Number(roleId) : null;
@@ -398,7 +399,7 @@ app.post('/api/public/volunteer/:id/signup', volunteerSignupRL, (req, res) => {
       if (confirmed >= role.cap) status = 'waitlisted';
     }
   }
-  // Cross-reference phone against the roster, ignoring formatting differences
+  // 1. Cross-reference phone against the roster, ignoring formatting differences
   // like "(555) 111-2222" vs "5551112222".
   let matchedRosterId = null;
   const digits = phone.replace(/\D/g, '').slice(-10);
@@ -407,9 +408,16 @@ app.post('/api/public/volunteer/:id/signup', volunteerSignupRL, (req, res) => {
       .find((r) => String(r.phone).replace(/\D/g, '').slice(-10) === digits);
     if (hit) matchedRosterId = hit.id;
   }
+  // 2. If phone didn't match, fall back to email match.
+  if (!matchedRosterId && email) {
+    const emailHit = db.prepare("SELECT id FROM roster_members WHERE email != '' AND lower(email) = lower(?)").get(email);
+    if (emailHit) matchedRosterId = emailHit.id;
+  }
+  // 3. Flag for manual review when neither phone nor email matched a roster member.
+  const needsReview = matchedRosterId ? 0 : 1;
   const info = db.prepare(
-    'INSERT INTO volunteer_signups (eventId, roleId, name, phone, email, grade, status, matchedRosterId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(eventId, roleId, name, phone, email, grade, status, matchedRosterId);
+    'INSERT INTO volunteer_signups (eventId, roleId, name, phone, email, grade, status, matchedRosterId, needsReview) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(eventId, roleId, name, phone, email, grade, status, matchedRosterId, needsReview);
   res.status(201).json({ ok: true, id: info.lastInsertRowid, status });
 });
 
@@ -2589,7 +2597,7 @@ app.delete('/api/volunteer-roles/:id', requireManagerOrAdmin, (req, res) => {
 app.get('/api/volunteer-events/:id/signups', requireManagerOrAdmin, (req, res) => {
   const eventId = Number(req.params.id);
   const signups = db.prepare(`
-    SELECT vs.id, vs.name, vs.phone, vs.email, vs.grade, vs.status, vs.createdAt,
+    SELECT vs.id, vs.name, vs.phone, vs.email, vs.grade, vs.status, vs.needsReview, vs.createdAt,
            vr.roleName, rm.firstName || ' ' || rm.lastName AS matchedName, rm.id AS rosterMatchId
     FROM volunteer_signups vs
     LEFT JOIN volunteer_roles vr ON vr.id = vs.roleId
