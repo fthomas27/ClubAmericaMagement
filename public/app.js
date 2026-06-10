@@ -1624,6 +1624,7 @@ function AdminPanel({ users, reload }) {
   const [editTarget, setEditTarget] = useState(null);
   const [adding, setAdding] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState('');
   const [confirmEl, confirm] = useConfirm();
 
   async function addUser(e) {
@@ -1672,6 +1673,15 @@ function AdminPanel({ users, reload }) {
 
   const byId = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
 
+  const q = search.trim().toLowerCase();
+  const visibleUsers = q
+    ? users.filter((u) =>
+        (u.displayName || '').toLowerCase().includes(q) ||
+        (u.username || '').toLowerCase().includes(q) ||
+        (u.title || '').toLowerCase().includes(q) ||
+        roleLabel(u.role).toLowerCase().includes(q))
+    : users;
+
   return (
     <div className="max-w-5xl">
       {confirmEl}
@@ -1712,12 +1722,19 @@ function AdminPanel({ users, reload }) {
         {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
       </form>
 
-      <div className="flex items-center gap-3 mb-3">
-        <div className="font-display text-2xl text-gold">All Members ({users.length})</div>
+      <div className="flex items-center gap-3 mb-3 flex-wrap">
+        <div className="font-display text-2xl text-gold">
+          All Members ({q ? `${visibleUsers.length} of ${users.length}` : users.length})
+        </div>
         {saving && <span className="flex items-center gap-1.5 text-xs text-cream/50"><Spinner className="w-3 h-3" /> Saving…</span>}
+        <input className={inputCls + ' max-w-xs sm:ml-auto'} placeholder="Search by name, username, title, or role…"
+          value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
+      {q && visibleUsers.length === 0 && (
+        <EmptyState icon="🔍" title="No members match" hint="Try a different name, username, title, or role." />
+      )}
       <div className="space-y-3">
-        {users.map((u) => (
+        {visibleUsers.map((u) => (
           <div key={u.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors duration-150">
             <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
               <div>
@@ -2224,20 +2241,26 @@ function HomeAnnouncementBanner({ home }) {
 }
 
 function ValuesSection() {
+  const values = [
+    { title: 'Faith', cardCls: 'border-gold/30 hover:border-gold/60', titleCls: 'text-gold',
+      text: 'Our rights come from God, not government — we stand on that truth every day.' },
+    { title: 'Freedom', cardCls: 'border-red/30 hover:border-red/60', titleCls: 'text-red',
+      text: 'Free speech, individual liberty, and constitutional rights — defended loudly on campus.' },
+    { title: 'Community', cardCls: 'border-cream/15 hover:border-cream/30', titleCls: 'text-cream',
+      text: 'Real friendships built around a shared love for America and its founding ideals.' },
+  ];
   return (
     <section className="grid sm:grid-cols-3 gap-4">
-      <div className="bg-navy2 border border-gold/30 rounded-2xl p-6 text-center space-y-3 hover:border-gold/60 hover:-translate-y-1 hover:shadow-lg hover:shadow-black/25 transition-all duration-200">
-        <h3 className="font-display text-2xl text-gold">Faith</h3>
-        <p className="text-cream/60 text-sm leading-relaxed">Our rights come from God, not government — we stand on that truth every day.</p>
-      </div>
-      <div className="bg-navy2 border border-red/30 rounded-2xl p-6 text-center space-y-3 hover:border-red/60 hover:-translate-y-1 hover:shadow-lg hover:shadow-black/25 transition-all duration-200">
-        <h3 className="font-display text-2xl text-red">Freedom</h3>
-        <p className="text-cream/60 text-sm leading-relaxed">Free speech, individual liberty, and constitutional rights — defended loudly on campus.</p>
-      </div>
-      <div className="bg-navy2 border border-cream/15 rounded-2xl p-6 text-center space-y-3 hover:border-cream/30 hover:-translate-y-1 hover:shadow-lg hover:shadow-black/25 transition-all duration-200">
-        <h3 className="font-display text-2xl text-cream">Community</h3>
-        <p className="text-cream/60 text-sm leading-relaxed">Real friendships built around a shared love for America and its founding ideals.</p>
-      </div>
+      {values.map((v, i) => (
+        <Reveal key={v.title} delay={i * 140} className="h-full">
+          <Card3D maxTilt={5} className="h-full">
+            <div className={`h-full bg-navy2 border rounded-2xl p-6 text-center space-y-3 hover:-translate-y-1 hover:shadow-lg hover:shadow-black/25 transition-all duration-200 ${v.cardCls}`}>
+              <h3 className={`font-display text-2xl ${v.titleCls}`}>{v.title}</h3>
+              <p className="text-cream/60 text-sm leading-relaxed">{v.text}</p>
+            </div>
+          </Card3D>
+        </Reveal>
+      ))}
     </section>
   );
 }
@@ -2246,8 +2269,9 @@ function ValuesSection() {
 // part of (see "Powered by TPUSA" in the footer).
 function CharlieKirkTribute() {
   return (
+    <Card3D maxTilt={2}>
     <section className="relative overflow-hidden bg-navy2 border border-gold/25 rounded-2xl p-8 sm:p-10 text-center">
-      <div className="absolute inset-0 pointer-events-none" aria-hidden="true"
+      <div className="ca-breathe absolute inset-0 pointer-events-none" aria-hidden="true"
         style={{ background: 'radial-gradient(420px 200px at 50% 0%, rgba(201,168,76,0.08), transparent 70%)' }} />
       <div className="relative">
         <div className="text-gold/80 tracking-[0.5em] text-base mb-3">★ ★ ★</div>
@@ -2260,6 +2284,7 @@ function CharlieKirkTribute() {
         </p>
       </div>
     </section>
+    </Card3D>
   );
 }
 
@@ -2403,12 +2428,14 @@ function MeetTheBoard() {
     if (depth > 20) return null;
     return (
       <div key={node.id} className="flex flex-col items-center">
-        <button onClick={() => { setSel(node); track('board_profile', node.displayName); }}
-          className="bg-navy2 border border-cream/15 rounded-xl px-4 py-3 flex flex-col items-center gap-2 w-36 hover:border-gold hover:-translate-y-1 hover:shadow-md hover:shadow-black/30 transition-all duration-200">
-          <Avatar member={node} size={56} />
-          <div className="text-cream text-sm font-medium text-center leading-tight">{node.displayName}</div>
-          <div className="text-gold/80 text-xs text-center leading-tight">{node.title || roleLabel(node.role)}</div>
-        </button>
+        <Card3D maxTilt={7}>
+          <button onClick={() => { setSel(node); track('board_profile', node.displayName); }}
+            className="bg-navy2 border border-cream/15 rounded-xl px-4 py-3 flex flex-col items-center gap-2 w-36 hover:border-gold hover:-translate-y-1 hover:shadow-md hover:shadow-black/30 transition-all duration-200">
+            <Avatar member={node} size={56} />
+            <div className="text-cream text-sm font-medium text-center leading-tight">{node.displayName}</div>
+            <div className="text-gold/80 text-xs text-center leading-tight">{node.title || roleLabel(node.role)}</div>
+          </button>
+        </Card3D>
         {node.children.length > 0 && <div className="w-px h-4 bg-cream/20" />}
         {node.children.length > 0 && (
           <div className="flex flex-wrap justify-center gap-4">{node.children.map((n) => renderNode(n, depth + 1))}</div>
@@ -2560,7 +2587,7 @@ function TiltScene({ maxTilt = 3, className = '', innerClassName = '', children 
 }
 
 // Card wrapper that tips a few degrees toward the cursor on hover.
-function Card3D({ className = '', children }) {
+function Card3D({ className = '', maxTilt = 4, children }) {
   const ref = useRef(null);
   const onMove = (e) => {
     const el = ref.current;
@@ -2568,7 +2595,7 @@ function Card3D({ className = '', children }) {
     const r = el.getBoundingClientRect();
     const x = (e.clientX - r.left) / r.width - 0.5;
     const y = (e.clientY - r.top) / r.height - 0.5;
-    el.style.transform = `perspective(900px) rotateX(${(-y * 4).toFixed(2)}deg) rotateY(${(x * 4).toFixed(2)}deg)`;
+    el.style.transform = `perspective(900px) rotateX(${(-y * maxTilt).toFixed(2)}deg) rotateY(${(x * maxTilt).toFixed(2)}deg)`;
   };
   const onLeave = () => { if (ref.current) ref.current.style.transform = ''; };
   return (
@@ -2753,16 +2780,26 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         </button>
       </div>
 
-      <main id="club-content" className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 pt-10 space-y-8">
+      <div className="relative">
+        {/* Faint stars and glows continue behind the lower page, drifting
+            slightly against the scroll so the content keeps its depth. */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+          <ParallaxLayer speed={-0.06} className="absolute inset-0"><Starfield count={22} /></ParallaxLayer>
+          <div className="absolute top-[12%] -left-1/4 w-[60%] h-[34%] rounded-full"
+            style={{ background: 'radial-gradient(circle, rgba(0,40,104,0.22), transparent 60%)', filter: 'blur(50px)' }} />
+          <div className="absolute bottom-[8%] -right-1/4 w-[55%] h-[30%] rounded-full"
+            style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.10), transparent 60%)', filter: 'blur(50px)' }} />
+        </div>
+      <main id="club-content" className="relative max-w-5xl mx-auto px-4 sm:px-6 pb-20 pt-10 space-y-8">
         {home.homeAnnouncementEnabled && home.homeAnnouncement && <Reveal><HomeAnnouncementBanner home={home} /></Reveal>}
         <Reveal>{cards}</Reveal>
         {home.aboutText && <Reveal><AboutSection home={home} /></Reveal>}
-        <Reveal><ValuesSection /></Reveal>
+        <ValuesSection />
         <Reveal><CharlieKirkTribute /></Reveal>
         <Reveal><div id="meet-the-board"><MeetTheBoard /></div></Reveal>
         <Reveal><div id="get-involved"><GetInvolved /></div></Reveal>
       </main>
-      <footer className="pb-10">
+      <footer className="relative pb-10">
         <div className="h-[3px] bg-gradient-to-r from-red via-cream/50 to-[#3b5bdb] opacity-60 mb-10" />
         <div className="max-w-5xl mx-auto px-4 sm:px-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-6 text-sm">
@@ -2783,6 +2820,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
           </div>
         </div>
       </footer>
+      </div>
     </div>
   );
 }
