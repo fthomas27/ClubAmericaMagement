@@ -1940,21 +1940,21 @@ function MeetingCard({ home, events, volunteerEvents = [] }) {
           {events.map((e, i) => {
             const vol = e.uid ? volMap[e.uid] : null;
             const spotsLeft = vol ? (vol.totalCap === 0 ? Infinity : vol.totalCap - vol.confirmedCount) : 0;
-            const needsVolunteers = vol && spotsLeft > 0;
+            const isFull = vol && spotsLeft <= 0;
             const signupUrl = vol ? `${origin}/volunteer/${vol.id}` : '';
             return (
               <li key={i} className="border-l-2 border-gold/50 pl-3">
                 <div className="text-lg text-cream font-medium leading-tight">{e.title}</div>
                 <div className="text-sm text-gold/80">{fmtEvent(e.start)}</div>
                 {e.location && <div className="text-sm text-cream/50">{e.location}</div>}
-                {needsVolunteers && (
+                {vol && (
                   <div className="mt-1.5 flex flex-col gap-1">
-                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-300 bg-emerald-500/15 border border-emerald-500/30 rounded-full px-2 py-0.5 w-fit">
+                    <span className={`inline-flex items-center gap-1 text-xs font-semibold rounded-full px-2 py-0.5 w-fit ${isFull ? 'text-amber-300 bg-amber-500/15 border border-amber-500/30' : 'text-emerald-300 bg-emerald-500/15 border border-emerald-500/30'}`}>
                       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 11l-4 4-2-2"/></svg>
-                      Volunteers Needed
+                      {isFull ? 'Waitlist Open' : 'Volunteers Needed'}
                     </span>
                     <a href={signupUrl} className="text-xs text-teal-400 hover:text-teal-300 underline underline-offset-2 transition-colors">
-                      Sign up to volunteer →
+                      {isFull ? 'Join the waitlist →' : 'Sign up to volunteer →'}
                     </a>
                   </div>
                 )}
@@ -4724,19 +4724,19 @@ function HomeSummaryCard({ me, onNavigate }) {
           <div className="bg-navy2 border border-emerald-500/20 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <div className="text-xs font-semibold text-emerald-400/70 uppercase tracking-wide">Volunteers Needed</div>
-              <a href="/home" className="text-xs text-gold/60 hover:text-gold">Club Home</a>
+              <button onClick={() => onNavigate({ type: 'home' })} className="text-xs text-gold/60 hover:text-gold">Club Home</button>
             </div>
             <div className="space-y-3">
               {volunteerEvents.slice(0, 3).map((v) => {
                 const spotsLeft = v.totalCap === 0 ? null : v.totalCap - v.confirmedCount;
-                const signupUrl = window.location.origin + '/volunteer/' + v.id;
+                const full = spotsLeft !== null && spotsLeft <= 0;
                 return (
                   <div key={v.id}>
                     <div className="text-sm text-cream/80 font-medium leading-tight">{v.title}</div>
                     <div className="text-xs text-cream/40 mt-0.5">{fmtEvent(v.startDate)}</div>
-                    {spotsLeft !== null && <div className="text-xs text-emerald-400/70 mt-0.5">{spotsLeft > 0 ? spotsLeft + ' spot' + (spotsLeft !== 1 ? 's' : '') + ' left' : 'Waitlist open'}</div>}
-                    <a href={signupUrl} className="text-xs text-teal-400 hover:text-teal-300 underline underline-offset-1 mt-0.5 inline-block">
-                      Sign up →
+                    {spotsLeft !== null && <div className={`text-xs mt-0.5 ${full ? 'text-amber-400/70' : 'text-emerald-400/70'}`}>{full ? 'Waitlist open' : spotsLeft + ' spot' + (spotsLeft !== 1 ? 's' : '') + ' left'}</div>}
+                    <a href={'/volunteer/' + v.id} className="text-xs text-teal-400 hover:text-teal-300 underline underline-offset-1 mt-0.5 inline-block">
+                      {full ? 'Join waitlist →' : 'Sign up →'}
                     </a>
                   </div>
                 );
@@ -4922,6 +4922,7 @@ function VolunteerSignUpPage({ eventId }) {
     e.preventDefault();
     if (!name.trim()) return;
     setSubmitting(true);
+    setError('');
     try {
       const res = await fetch('/api/public/volunteer/' + eventId + '/signup', {
         method: 'POST',
@@ -4970,6 +4971,8 @@ function VolunteerSignUpPage({ eventId }) {
   );
 
   const GRADES = ['9th', '10th', '11th', '12th', 'Other'];
+  const selectedRoleObj = roles.find((r) => r.id === selectedRole);
+  const selectedRoleFull = !!selectedRoleObj && selectedRoleObj.cap > 0 && selectedRoleObj.confirmed >= selectedRoleObj.cap;
 
   return (
     <div className="min-h-screen py-10 px-4" style={{ background: '#0d1b2e' }}>
@@ -4990,16 +4993,16 @@ function VolunteerSignUpPage({ eventId }) {
                 const full = r.cap > 0 && r.confirmed >= r.cap;
                 const selected = selectedRole === r.id;
                 return (
-                  <button key={r.id} onClick={() => !full && setSelectedRole(selected ? null : r.id)}
-                    className={`w-full text-left rounded-xl border p-3 transition-all ${full ? 'opacity-50 cursor-not-allowed border-cream/10 bg-cream/5' : selected ? 'border-gold/50 bg-gold/10' : 'border-cream/15 bg-navy3/50 hover:border-gold/30'}`}>
+                  <button key={r.id} type="button" onClick={() => setSelectedRole(selected ? null : r.id)}
+                    className={`w-full text-left rounded-xl border p-3 transition-all ${selected ? (full ? 'border-amber-400/50 bg-amber-500/10' : 'border-gold/50 bg-gold/10') : full ? 'border-cream/10 bg-cream/5 hover:border-amber-400/30' : 'border-cream/15 bg-navy3/50 hover:border-gold/30'}`}>
                     <div className="flex items-center justify-between">
-                      <span className="font-medium text-sm text-cream">{r.roleName}</span>
-                      <span className={`text-xs ${full ? 'text-red/60' : r.cap > 0 ? 'text-cream/40' : 'text-emerald-400/70'}`}>
-                        {full ? 'Full' : r.cap > 0 ? `${r.confirmed}/${r.cap} filled` : 'Open'}
+                      <span className={`font-medium text-sm ${full && !selected ? 'text-cream/60' : 'text-cream'}`}>{r.roleName}</span>
+                      <span className={`text-xs ${full ? 'text-amber-400/80' : r.cap > 0 ? 'text-cream/40' : 'text-emerald-400/70'}`}>
+                        {full ? 'Full · waitlist open' : r.cap > 0 ? `${r.confirmed}/${r.cap} filled` : 'Open'}
                       </span>
                     </div>
                     {r.waitlisted > 0 && <div className="text-xs text-amber-400/60 mt-0.5">{r.waitlisted} on waitlist</div>}
-                    {full && r.waitlisted >= 0 && <div className="text-xs text-cream/40 mt-0.5">Join waitlist</div>}
+                    {full && <div className="text-xs text-cream/40 mt-0.5">{selected ? "You'll be added to the waitlist" : 'Select to join the waitlist'}</div>}
                   </button>
                 );
               })}
@@ -5038,7 +5041,10 @@ function VolunteerSignUpPage({ eventId }) {
           {error && <div className="text-sm text-red/70">{error}</div>}
           <button type="submit" disabled={submitting || !name.trim()}
             className="w-full bg-gold text-navy font-semibold py-2.5 rounded-xl hover:bg-gold/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm">
-            {submitting ? 'Signing up…' : roles.length > 0 && !selectedRole ? 'Sign Up (No Specific Role)' : 'Sign Up to Volunteer'}
+            {submitting ? 'Signing up…'
+              : selectedRoleFull ? 'Join the Waitlist'
+              : roles.length > 0 && !selectedRole ? 'Sign Up (No Specific Role)'
+              : 'Sign Up to Volunteer'}
           </button>
         </form>
       </div>
@@ -5050,7 +5056,7 @@ function VolunteerSignUpPage({ eventId }) {
 // Volunteer Manager Page (admin/manager only)
 // ---------------------------------------------------------------------------
 function VolunteerManagerPage({ me }) {
-  const [homeData, setHomeData] = useState({ events: [], volunteerEvents: [] });
+  const [calEvents, setCalEvents] = useState([]);
   const [managedEvents, setManagedEvents] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
@@ -5063,8 +5069,8 @@ function VolunteerManagerPage({ me }) {
 
   const loadAll = useCallback(async () => {
     try {
-      const [hd, mv] = await Promise.all([api('/home'), api('/volunteer-events')]);
-      setHomeData({ events: hd.events || [], volunteerEvents: hd.volunteerEvents || [] });
+      const [cal, mv] = await Promise.all([api('/meetings/calendar'), api('/volunteer-events')]);
+      setCalEvents(cal.events || []);
       setManagedEvents(mv.events || []);
     } catch (e) { setError(e.message); }
     finally { setLoaded(true); }
@@ -5136,7 +5142,6 @@ function VolunteerManagerPage({ me }) {
     setTimeout(() => setCopied(null), 2000);
   }
 
-  const enabledUids = new Set(managedEvents.map((e) => e.icalUid));
   const managedById = {};
   managedEvents.forEach((e) => { managedById[e.icalUid] = e; });
 
@@ -5150,13 +5155,14 @@ function VolunteerManagerPage({ me }) {
       {/* Upcoming calendar events */}
       <div>
         <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide mb-3">Upcoming Calendar Events</div>
-        {homeData.events.length === 0 && (
+        {loaded && calEvents.length === 0 && (
           <div className="text-sm text-cream/40 bg-navy2 border border-cream/10 rounded-xl p-4">
             No upcoming calendar events found. Make sure a calendar URL is configured in Edit Website.
           </div>
         )}
+        {!loaded && <Loading label="Loading events…" />}
         <div className="space-y-2">
-          {homeData.events.map((e) => {
+          {calEvents.map((e) => {
             const managed = e.uid ? managedById[e.uid] : null;
             return (
               <div key={e.uid || e.title} className="bg-navy2 border border-cream/10 rounded-xl p-4 flex items-center gap-4">
@@ -5290,8 +5296,42 @@ function VolunteerManagerPage({ me }) {
   );
 }
 
-function AppIcon({ name }) {
-  const p = { width: 24, height: 24, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', className: 'text-cream/60 group-hover:text-gold transition-colors duration-150' };
+// Per-tile accent colors so the grid is scannable at a glance instead of a
+// monotone wall. Keys match AppIcon names.
+const TILE_TONES = {
+  person:         { icon: 'text-gold',        bg: 'bg-gold/10' },
+  home:           { icon: 'text-sky-300',     bg: 'bg-sky-500/10' },
+  edit:           { icon: 'text-violet-300',  bg: 'bg-violet-500/10' },
+  megaphone:      { icon: 'text-amber-300',   bg: 'bg-amber-500/10' },
+  team:           { icon: 'text-teal-300',    bg: 'bg-teal-500/10' },
+  check:          { icon: 'text-emerald-300', bg: 'bg-emerald-500/10' },
+  inbox:          { icon: 'text-orange-300',  bg: 'bg-orange-500/10' },
+  roster:         { icon: 'text-cyan-300',    bg: 'bg-cyan-500/10' },
+  calendar:       { icon: 'text-rose-300',    bg: 'bg-rose-500/10' },
+  funding:        { icon: 'text-emerald-300', bg: 'bg-emerald-500/10' },
+  apply:          { icon: 'text-indigo-300',  bg: 'bg-indigo-500/10' },
+  dashboard:      { icon: 'text-fuchsia-300', bg: 'bg-fuchsia-500/10' },
+  attendance:     { icon: 'text-teal-300',    bg: 'bg-teal-500/10' },
+  poll:           { icon: 'text-violet-300',  bg: 'bg-violet-500/10' },
+  meetings:       { icon: 'text-sky-300',     bg: 'bg-sky-500/10' },
+  volunteer:      { icon: 'text-emerald-300', bg: 'bg-emerald-500/10' },
+  speaker:        { icon: 'text-amber-300',   bg: 'bg-amber-500/10' },
+  grants:         { icon: 'text-lime-300',    bg: 'bg-lime-500/10' },
+  social:         { icon: 'text-pink-300',    bg: 'bg-pink-500/10' },
+  budget:         { icon: 'text-green-300',   bg: 'bg-green-500/10' },
+  grades:         { icon: 'text-cyan-300',    bg: 'bg-cyan-500/10' },
+  reimbursements: { icon: 'text-orange-300',  bg: 'bg-orange-500/10' },
+  resources:      { icon: 'text-blue-300',    bg: 'bg-blue-500/10' },
+  directory:      { icon: 'text-indigo-300',  bg: 'bg-indigo-500/10' },
+  org:            { icon: 'text-cream/70',    bg: 'bg-cream/10' },
+  admin:          { icon: 'text-red',         bg: 'bg-red/10' },
+  activity:       { icon: 'text-rose-300',    bg: 'bg-rose-500/10' },
+  ai:             { icon: 'text-purple-300',  bg: 'bg-purple-500/10' },
+  bell:           { icon: 'text-gold',        bg: 'bg-gold/10' },
+};
+
+function AppIcon({ name, className }) {
+  const p = { width: 26, height: 26, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', className: className || 'text-cream/60' };
   switch (name) {
     case 'person':    return <svg {...p}><circle cx="12" cy="8" r="3.5"/><path d="M4 20c0-3.866 3.582-7 8-7s8 3.134 8 7"/></svg>;
     case 'home':      return <svg {...p}><path d="M3 11.5 12 3l9 8.5"/><path d="M5 10.5v10h5v-5h4v5h5v-10"/></svg>;
@@ -5308,32 +5348,33 @@ function AppIcon({ name }) {
     case 'org':       return <svg {...p}><circle cx="12" cy="4" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 6v5M12 11H5v6M12 11h7v6"/></svg>;
     case 'admin':     return <svg {...p}><path d="M12 2 3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7Z"/><path d="m9 12 2 2 4-4"/></svg>;
     case 'activity':  return <svg {...p}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>;
-    case 'ai':        return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M9 10h.01M15 10h.01M9.5 15a4.5 4.5 0 0 0 5 0"/></svg>;
+    case 'ai':        return <svg {...p}><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/><circle cx="12" cy="12" r="4.5"/></svg>;
     case 'bell':      return <svg {...p}><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>;
     case 'search':    return <svg {...p}><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>;
-    case 'attendance':return <svg {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>;
+    case 'attendance':return <svg {...p}><circle cx="9" cy="7" r="3.5"/><path d="M2 20c0-3.5 3.134-6 7-6s7 2.5 7 6"/><path d="m15 8 2.5 2.5L22 6"/></svg>;
     case 'poll':      return <svg {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 16v-4M12 16v-8M17 16v-2"/></svg>;
-    case 'budget':    return <svg {...p}><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>;
-    case 'meetings':  return <svg {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M8 11v2M12 11v2"/></svg>;
-    case 'grants':    return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5a2.5 2.5 0 0 1 5 0c0 1.5-1 2-2.5 2.5-1.5.5-2.5 1-2.5 2.5a2.5 2.5 0 0 0 5 0"/><path d="m16 5-1.5 1.5"/></svg>;
-    case 'speaker':   return <svg {...p}><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/><path d="M3 9l4 4"/></svg>;
+    case 'budget':    return <svg {...p}><path d="M21 12A9 9 0 1 1 12 3"/><path d="M12 3a9 9 0 0 1 9 9h-9z"/></svg>;
+    case 'meetings':  return <svg {...p}><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>;
+    case 'grants':    return <svg {...p}><circle cx="12" cy="9" r="6"/><path d="M12 6.5v5M10 8a2 2 0 0 1 4 0c0 1.2-.9 1.6-2 2"/><path d="m8.5 14-2 7 5.5-3 5.5 3-2-7"/></svg>;
+    case 'speaker':   return <svg {...p}><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4M8 21h8"/></svg>;
     case 'social':    return <svg {...p}><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>;
-    case 'grades':    return <svg {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M12 15v4M15 18H9"/></svg>;
-    case 'reimbursements': return <svg {...p}><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><circle cx="12" cy="15" r="2"/><path d="M6 15h1M17 15h1"/></svg>;
-    case 'directory': return <svg {...p}><path d="M4 4h16v16H4z" rx="2"/><path d="M8 10a3 3 0 1 0 6 0 3 3 0 0 0-6 0"/><path d="M6 20c.3-2.2 2.5-4 6-4s5.7 1.8 6 4"/><path d="M16 4v4M8 4v4"/></svg>;
+    case 'grades':    return <svg {...p}><path d="m12 4 10 5-10 5L2 9z"/><path d="M6 11.5V17c0 1.5 2.7 3 6 3s6-1.5 6-3v-5.5"/><path d="M22 9v6"/></svg>;
+    case 'reimbursements': return <svg {...p}><path d="M5 3h14v18l-2.5-1.5L14 21l-2-1.5L10 21l-2.5-1.5L5 21z"/><path d="M9 8h6M9 12h6M13 16h2"/></svg>;
+    case 'directory': return <svg {...p}><rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="12" cy="10" r="2.5"/><path d="M8 17c.4-1.8 2-3 4-3s3.6 1.2 4 3"/><path d="M2 8h2M2 12h2M2 16h2"/></svg>;
     case 'resources': return <svg {...p}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M12 7v6M9 10h6"/></svg>;
-    case 'volunteer': return <svg {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 11l-4 4-2-2"/></svg>;
+    case 'volunteer': return <svg {...p}><path d="M19.5 12.572 12 20l-7.5-7.428A5 5 0 1 1 12 6.006a5 5 0 1 1 7.5 6.566"/><path d="m9 12 2 2 4-4"/></svg>;
     default:          return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
   }
 }
 
 function AppTile({ label, icon, badge, onClick, style }) {
+  const tone = TILE_TONES[icon] || { icon: 'text-cream/60', bg: 'bg-cream/5' };
   return (
     <button onClick={onClick} style={style}
-      className="ca-fade-in group relative bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/30 rounded-2xl p-5 flex flex-col items-center gap-3 transition-all duration-200 active:scale-95 w-full hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/30">
+      className="ca-fade-in group relative bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/40 rounded-2xl p-5 flex flex-col items-center gap-3 transition-all duration-200 active:scale-95 w-full hover:-translate-y-1 hover:shadow-lg hover:shadow-black/30">
       <div className="relative">
-        <div className="w-14 h-14 rounded-xl bg-navy/60 flex items-center justify-center group-hover:bg-navy2 transition-colors duration-150">
-          <AppIcon name={icon} />
+        <div className={`w-14 h-14 rounded-2xl ${tone.bg} flex items-center justify-center transition-transform duration-200 group-hover:scale-110`}>
+          <AppIcon name={icon} className={`${tone.icon} transition-colors duration-150`} />
         </div>
         {badge > 0 && (
           <span className="absolute -top-1 -right-1 bg-red text-cream text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 ca-pulse">{badge}</span>
@@ -5350,37 +5391,59 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
   const canSeeSubmissions = me.role === 'admin' || !!me.grade;
   const canRoster = isManager || !!me.canManageRoster;
 
-  const tiles = [
-    { type: 'mytasks',    label: 'My Page',          icon: 'person'     },
-    { type: 'home',       label: 'Club Home',         icon: 'home'       },
-    ...(canEditSite       ? [{ type: 'website',     label: 'Edit Website',     icon: 'edit'       }] : []),
-    ...(isManager         ? [{ type: 'announce',    label: 'Announcement',     icon: 'megaphone'  }] : []),
-    ...(isManager         ? [{ type: 'myteam',      label: 'My Team',          icon: 'team'       }] : []),
-    ...(isManager         ? [{ type: 'approvals',   label: 'Approvals',        icon: 'check',     badge: approvalsCount   }] : []),
-    ...(canSeeSubmissions ? [{ type: 'submissions', label: 'Get Involved',     icon: 'inbox',     badge: submissionsCount }] : []),
-    ...(canRoster         ? [{ type: 'roster',      label: 'Roster',           icon: 'roster'     }] : []),
-    ...((checkinEnabled || isManager) ? [{ type: 'checkin', label: checkinEnabled ? 'Check-In' : 'Check-In Settings', icon: 'calendar' }] : []),
-    { type: 'funding',    label: 'Funding',            icon: 'funding'    },
-    { type: 'apply',      label: 'Apply',               icon: 'apply'      },
-    ...(isManager         ? [{ type: 'dashboard',   label: 'Dashboard',        icon: 'dashboard'  }] : []),
-    { type: 'attendance',   label: 'Attendance',          icon: 'attendance' },
-    { type: 'polls',       label: 'Polls & Voting',      icon: 'poll'       },
-    { type: 'meetings',    label: 'Meetings',             icon: 'meetings'   },
-    ...(isManager ? [{ type: 'volunteers', label: 'Volunteers',        icon: 'volunteer'  }] : []),
-    ...(isManager ? [{ type: 'speaker',   label: 'Speaker Events',    icon: 'speaker'    }] : []),
-    ...(isManager ? [{ type: 'grants',    label: 'Grant Tracker',     icon: 'grants'     }] : []),
-    ...(isManager || !!me.canManageSocial ? [{ type: 'social', label: 'Social Media', icon: 'social' }] : []),
-    ...(isManager         ? [{ type: 'budget',      label: 'Budget Overview',  icon: 'budget'     }] : []),
-    ...(isManager || !!me.managedGrade ? [{ type: 'grades', label: 'Grade Pipeline', icon: 'grades' }] : []),
-    { type: 'reimbursements', label: 'Reimbursements', icon: 'reimbursements' },
-    { type: 'resources',  label: 'Resources',           icon: 'resources'  },
-    { type: 'directory',  label: 'Directory',           icon: 'directory'  },
-    { type: 'org',        label: 'Org Chart',           icon: 'org'        },
-    ...(me.role === 'admin' ? [{ type: 'admin',     label: 'Admin Panel',      icon: 'admin'      }] : []),
-    ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }] : []),
-    ...(me.role === 'admin' ? [{ type: 'ai',        label: 'AI Assistant',     icon: 'ai'         }] : []),
-    { type: 'ainotes',    label: 'Agent Notes',        icon: 'bell',      badge: aiNotesCount || undefined, onClick: onAiNotes },
-  ];
+  // Tiles grouped into labeled sections so the home screen reads as a few
+  // small clusters instead of one undifferentiated wall.
+  const sections = [
+    {
+      title: 'My Club',
+      tiles: [
+        { type: 'mytasks',    label: 'My Page',        icon: 'person'     },
+        { type: 'home',       label: 'Club Home',      icon: 'home'       },
+        ...((checkinEnabled || isManager) ? [{ type: 'checkin', label: checkinEnabled ? 'Check-In' : 'Check-In Settings', icon: 'calendar' }] : []),
+        { type: 'attendance', label: 'Attendance',     icon: 'attendance' },
+        { type: 'polls',      label: 'Polls & Voting', icon: 'poll'       },
+        { type: 'meetings',   label: 'Meetings',       icon: 'meetings'   },
+        { type: 'funding',    label: 'Funding',        icon: 'funding'    },
+        { type: 'apply',      label: 'Apply',          icon: 'apply'      },
+        { type: 'reimbursements', label: 'Reimbursements', icon: 'reimbursements' },
+        { type: 'resources',  label: 'Resources',      icon: 'resources'  },
+        { type: 'directory',  label: 'Directory',      icon: 'directory'  },
+        { type: 'org',        label: 'Org Chart',      icon: 'org'        },
+        { type: 'ainotes',    label: 'Agent Notes',    icon: 'bell', badge: aiNotesCount || undefined, onClick: onAiNotes },
+      ],
+    },
+    {
+      title: 'Leadership',
+      tiles: [
+        ...(isManager         ? [{ type: 'announce',    label: 'Announcement',    icon: 'megaphone'  }] : []),
+        ...(isManager         ? [{ type: 'myteam',      label: 'My Team',         icon: 'team'       }] : []),
+        ...(isManager         ? [{ type: 'approvals',   label: 'Approvals',       icon: 'check',     badge: approvalsCount   }] : []),
+        ...(canSeeSubmissions ? [{ type: 'submissions', label: 'Get Involved',    icon: 'inbox',     badge: submissionsCount }] : []),
+        ...(canRoster         ? [{ type: 'roster',      label: 'Roster',          icon: 'roster'     }] : []),
+        ...(isManager         ? [{ type: 'dashboard',   label: 'Dashboard',       icon: 'dashboard'  }] : []),
+        ...(isManager         ? [{ type: 'volunteers',  label: 'Volunteers',      icon: 'volunteer'  }] : []),
+        ...(isManager         ? [{ type: 'speaker',     label: 'Speaker Events',  icon: 'speaker'    }] : []),
+        ...(isManager         ? [{ type: 'grants',      label: 'Grant Tracker',   icon: 'grants'     }] : []),
+        ...(isManager || !!me.canManageSocial ? [{ type: 'social', label: 'Social Media',   icon: 'social' }] : []),
+        ...(isManager         ? [{ type: 'budget',      label: 'Budget Overview', icon: 'budget'     }] : []),
+        ...(isManager || !!me.managedGrade    ? [{ type: 'grades', label: 'Grade Pipeline', icon: 'grades' }] : []),
+      ],
+    },
+    {
+      title: 'Site & Admin',
+      tiles: [
+        ...(canEditSite         ? [{ type: 'website',   label: 'Edit Website',   icon: 'edit'     }] : []),
+        ...(me.role === 'admin' ? [{ type: 'admin',     label: 'Admin Panel',    icon: 'admin'    }] : []),
+        ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }] : []),
+        ...(me.role === 'admin' ? [{ type: 'ai',        label: 'AI Assistant',   icon: 'ai'       }] : []),
+      ],
+    },
+  ].filter((s) => s.tiles.length > 0);
+
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const dateLine = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  let tileIndex = 0;
 
   return (
     <div className="min-h-screen flex flex-col ca-fade-in" style={{ background: '#0d1b2e' }}>
@@ -5403,13 +5466,27 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
           </div>
         </div>
       </header>
-      <div className="flex-1 px-4 py-8">
+      <div className="flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 py-8">
+        <div className="mb-6">
+          <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">{greeting}, {me.firstName || me.displayName}</h1>
+          <p className="text-cream/40 text-sm mt-1.5">{dateLine}</p>
+        </div>
         <HomeSummaryCard me={me} onNavigate={onNavigate} />
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {tiles.map((t, i) => (
-            <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge}
-              onClick={t.onClick || (() => onNavigate({ type: t.type }))}
-              style={{ animationDelay: `${i * 32}ms` }} />
+        <div className="space-y-8">
+          {sections.map((section) => (
+            <div key={section.title}>
+              <div className="flex items-center gap-3 mb-3">
+                <span className="text-xs font-semibold text-cream/40 uppercase tracking-widest">{section.title}</span>
+                <div className="flex-1 h-px bg-cream/10" />
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {section.tiles.map((t) => (
+                  <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge}
+                    onClick={t.onClick || (() => onNavigate({ type: t.type }))}
+                    style={{ animationDelay: `${tileIndex++ * 28}ms` }} />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       </div>

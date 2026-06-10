@@ -275,7 +275,7 @@ app.get('/api/home', async (req, res) => {
       (SELECT COUNT(*) FROM volunteer_signups vs WHERE vs.eventId = ve.id AND vs.status = 'confirmed') AS confirmedCount,
       (SELECT COALESCE(SUM(vr2.cap),0) FROM volunteer_roles vr2 WHERE vr2.eventId = ve.id) AS totalCap
     FROM volunteer_events ve
-    WHERE ve.volunteersEnabled = 1 AND ve.startDate >= datetime('now', '-1 hour')
+    WHERE ve.volunteersEnabled = 1 AND ve.startDate >= strftime('%Y-%m-%dT%H:%M', 'now', '-1 hour')
     ORDER BY ve.startDate ASC
   `).all();
   res.json({ home: { ...publicHome, calendarConfigured: !!calendarUrl }, events, volunteerEvents });
@@ -385,36 +385,32 @@ app.post('/api/public/volunteer/:id/signup', volunteerSignupRL, (req, res) => {
   email = String(email || '').trim().slice(0, 200);
   grade = String(grade || '').trim().slice(0, 20);
   if (!name) return res.status(400).json({ error: 'Name is required' });
+  const dup = db.prepare('SELECT id FROM volunteer_signups WHERE eventId = ? AND lower(name) = lower(?)').get(eventId, name);
+  if (dup) return res.status(409).json({ error: "Looks like you're already signed up for this event" });
   roleId = roleId ? Number(roleId) : null;
+  // General sign-ups (no role) are always confirmed; capped roles waitlist once full.
+  let status = 'confirmed';
   if (roleId) {
     const role = db.prepare('SELECT id, cap FROM volunteer_roles WHERE id = ? AND eventId = ?').get(roleId, eventId);
     if (!role) return res.status(400).json({ error: 'Invalid role' });
-    let status = 'confirmed';
     if (role.cap > 0) {
       const confirmed = db.prepare("SELECT COUNT(*) AS n FROM volunteer_signups WHERE roleId = ? AND status = 'confirmed'").get(roleId).n;
       if (confirmed >= role.cap) status = 'waitlisted';
     }
-    // Cross-reference phone against roster.
-    let matchedRosterId = null;
-    if (phone) {
-      const roster = db.prepare('SELECT id FROM roster_members WHERE phone = ? LIMIT 1').get(phone);
-      if (roster) matchedRosterId = roster.id;
-    }
-    const info = db.prepare(
-      'INSERT INTO volunteer_signups (eventId, roleId, name, phone, email, grade, status, matchedRosterId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(eventId, roleId, name, phone, email, grade, status, matchedRosterId);
-    return res.status(201).json({ ok: true, id: info.lastInsertRowid, status });
   }
-  // No role — general sign-up (cap 0 = no limit).
+  // Cross-reference phone against the roster, ignoring formatting differences
+  // like "(555) 111-2222" vs "5551112222".
   let matchedRosterId = null;
-  if (phone) {
-    const roster = db.prepare('SELECT id FROM roster_members WHERE phone = ? LIMIT 1').get(phone);
-    if (roster) matchedRosterId = roster.id;
+  const digits = phone.replace(/\D/g, '').slice(-10);
+  if (digits.length >= 7) {
+    const hit = db.prepare("SELECT id, phone FROM roster_members WHERE phone != ''").all()
+      .find((r) => String(r.phone).replace(/\D/g, '').slice(-10) === digits);
+    if (hit) matchedRosterId = hit.id;
   }
   const info = db.prepare(
-    'INSERT INTO volunteer_signups (eventId, roleId, name, phone, email, grade, status, matchedRosterId) VALUES (?, NULL, ?, ?, ?, ?, ?, ?)'
-  ).run(eventId, name, phone, email, grade, 'confirmed', matchedRosterId);
-  res.status(201).json({ ok: true, id: info.lastInsertRowid, status: 'confirmed' });
+    'INSERT INTO volunteer_signups (eventId, roleId, name, phone, email, grade, status, matchedRosterId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(eventId, roleId, name, phone, email, grade, status, matchedRosterId);
+  res.status(201).json({ ok: true, id: info.lastInsertRowid, status });
 });
 
 // Everything past this point requires a changed password.
