@@ -2609,8 +2609,12 @@ app.get('/api/roster-members/:id/volunteer-history', requireManagerOrAdmin, (req
 // ---- Static frontend --------------------------------------------------------
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-// The SPA handles client-side routes (/, /home, etc.).
+// The SPA handles client-side routes (/, /survey, /volunteer/123, etc.).
+// Paths that look like files (have an extension) get a real 404 instead of
+// index.html, so a broken asset path fails loudly rather than feeding HTML
+// to the script loader.
 app.get('*', (req, res) => {
+  if (path.extname(req.path)) return res.status(404).end();
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
 
