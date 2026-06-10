@@ -121,8 +121,26 @@
       transition: opacity 0.65s ease-out, transform 0.65s cubic-bezier(0.22, 1, 0.36, 1);
     }
     .ca-reveal.is-visible { opacity: 1; transform: translateY(0); }
+
+    /* Waving flag stripes — fades out toward the top of the hero. */
+    @keyframes ca-stripes-wave {
+      from { background-position: 0 0; }
+      to   { background-position: 560px 0; }
+    }
+    .ca-stripes {
+      background-image: repeating-linear-gradient(
+        -3deg,
+        rgba(204,28,46,0.55)   0px  34px,
+        rgba(245,240,232,0.16) 34px 68px
+      );
+      animation: ca-stripes-wave 26s linear infinite;
+      -webkit-mask-image: linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0.5) 45%, transparent 100%);
+      mask-image: linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0.5) 45%, transparent 100%);
+    }
+    @keyframes ca-spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    .ca-spin-slow { animation: ca-spin-slow 90s linear infinite; }
     @media (prefers-reduced-motion: reduce) {
-      .ca-star, .ca-aurora-a, .ca-aurora-b, .ca-scroll-cue { animation: none; }
+      .ca-star, .ca-aurora-a, .ca-aurora-b, .ca-scroll-cue, .ca-stripes, .ca-spin-slow { animation: none; }
       .ca-reveal { opacity: 1; transform: none; transition: none; }
     }
   </style>

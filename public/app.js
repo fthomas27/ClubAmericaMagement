@@ -2458,6 +2458,22 @@ function ParallaxLayer({ speed = 0.2, className = '', children }) {
   return <div ref={ref} className={className} aria-hidden="true">{children}</div>;
 }
 
+// Ring of 13 stars (Betsy Ross flag) — rendered faint and slowly rotating
+// behind the hero headline.
+function StarRing({ size = 540, className = '' }) {
+  const stars = Array.from({ length: 13 }, (_, i) => {
+    const a = (i / 13) * 2 * Math.PI - Math.PI / 2;
+    return { x: 50 + 42 * Math.cos(a), y: 50 + 42 * Math.sin(a) };
+  });
+  return (
+    <svg viewBox="0 0 100 100" width={size} height={size} className={className} aria-hidden="true">
+      {stars.map((s, i) => (
+        <text key={i} x={s.x} y={s.y} textAnchor="middle" dominantBaseline="central" fontSize="6.5" fill="#F5F0E8">★</text>
+      ))}
+    </svg>
+  );
+}
+
 // Fades content up into view the first time it scrolls into the viewport.
 function Reveal({ children, delay = 0, className = '' }) {
   const ref = useRef(null);
@@ -2553,7 +2569,8 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
             <HomeAnnouncementEditor home={home} onSaved={(h) => setHome(h)} />
           </div>
         )}
-        <footer className="border-t border-cream/10 py-10">
+        <footer className="pb-10">
+        <div className="h-[3px] bg-gradient-to-r from-red via-cream/50 to-[#3b5bdb] opacity-60 mb-10" />
           <div className="max-w-5xl mx-auto px-4 sm:px-6">
             <div className="flex flex-col sm:flex-row items-center justify-between gap-6 text-sm text-cream/40">
               <div className="flex flex-col sm:flex-row items-center gap-3">
@@ -2580,14 +2597,16 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
   return (
     <div className="min-h-screen">
       <div className="relative min-h-screen flex flex-col overflow-hidden">
-        {/* Ambient background layers */}
+        {/* Ambient background layers — old-glory red, white, and blue */}
         <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
           <div className="ca-aurora-a absolute -top-1/4 -left-1/4 w-[80%] h-[80%] rounded-full"
-            style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.28), transparent 60%)', filter: 'blur(40px)' }} />
+            style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.30), transparent 60%)', filter: 'blur(40px)' }} />
           <div className="ca-aurora-b absolute -bottom-1/3 -right-1/4 w-[85%] h-[85%] rounded-full"
-            style={{ background: 'radial-gradient(circle, rgba(0,40,104,0.55), transparent 60%)', filter: 'blur(40px)' }} />
+            style={{ background: 'radial-gradient(circle, rgba(0,40,104,0.60), transparent 60%)', filter: 'blur(40px)' }} />
           <div className="ca-aurora-b absolute top-1/4 right-[10%] w-[40%] h-[40%] rounded-full"
-            style={{ background: 'radial-gradient(circle, rgba(201,168,76,0.10), transparent 60%)', filter: 'blur(30px)' }} />
+            style={{ background: 'radial-gradient(circle, rgba(245,240,232,0.08), transparent 60%)', filter: 'blur(30px)' }} />
+          {/* Waving flag stripes rising from the bottom of the hero */}
+          <div className="ca-stripes absolute inset-x-0 bottom-0 h-[42%] opacity-20" />
         </div>
         <ParallaxLayer speed={0.35} className="absolute inset-0 pointer-events-none"><Starfield count={26} /></ParallaxLayer>
         <ParallaxLayer speed={0.15} className="absolute inset-0 pointer-events-none"><Starfield count={26} /></ParallaxLayer>
@@ -2598,17 +2617,21 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         </header>
 
         <section className="relative z-10 flex-1 flex flex-col items-center justify-center text-center px-4 sm:px-6 py-16">
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none" aria-hidden="true">
+            <StarRing className="ca-spin-slow opacity-[0.09] w-[min(85vw,540px)] h-auto" />
+          </div>
           <p className="font-display text-sm tracking-[0.6em] text-gold/70 uppercase mb-4 ca-fade-in" style={{ animationDelay: '500ms', animationDuration: '0.8s' }}>
             Park City High School
           </p>
           <h1 className="ca-hero-title font-display text-[clamp(4.5rem,16vw,11rem)] text-cream leading-[0.9]"
-            style={{ textShadow: '0 0 80px rgba(201,168,76,0.25)' }}>
+            style={{ textShadow: '0 0 60px rgba(204,28,46,0.35), 0 0 120px rgba(0,40,104,0.45)' }}>
             CLUB<br className="sm:hidden" /> AMERICA
           </h1>
+          {/* Tricolor divider */}
           <div className="flex items-center gap-3 mt-5 ca-fade-in" style={{ animationDelay: '650ms', animationDuration: '0.8s' }}>
-            <span className="h-px w-12 bg-gold/40" />
-            <span className="text-gold/80 tracking-[0.4em] text-sm">★ ★ ★</span>
-            <span className="h-px w-12 bg-gold/40" />
+            <span className="h-[3px] w-14 rounded-full bg-red/80" />
+            <span className="text-gold/90 tracking-[0.4em] text-sm">★ ★ ★</span>
+            <span className="h-[3px] w-14 rounded-full" style={{ background: '#3b5bdb' }} />
           </div>
           <p className="text-cream/70 max-w-xl mt-6 text-base sm:text-lg leading-relaxed ca-fade-in" style={{ animationDelay: '800ms', animationDuration: '0.8s' }}>
             Faith, freedom, and community — standing up for America's founding principles at Park City High School.
@@ -2644,7 +2667,8 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         <Reveal><div id="meet-the-board"><MeetTheBoard /></div></Reveal>
         <Reveal><div id="get-involved"><GetInvolved /></div></Reveal>
       </main>
-      <footer className="border-t border-cream/10 py-10">
+      <footer className="pb-10">
+        <div className="h-[3px] bg-gradient-to-r from-red via-cream/50 to-[#3b5bdb] opacity-60 mb-10" />
         <div className="max-w-5xl mx-auto px-4 sm:px-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-6 text-sm">
             <div className="flex flex-col sm:flex-row items-center gap-3 text-cream/40">
