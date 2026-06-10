@@ -74,6 +74,10 @@ app.use((req, res, next) => {
   express.json({ limit })(req, res, next);
 });
 
+// Pre-computed bcrypt hash used to spend ~the same time on logins for unknown
+// usernames as for real ones, so timing can't be used to enumerate accounts.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync('club-america-dummy-password', 10);
+
 const STATUSES = ['Not Started', 'In Progress', 'Complete'];
 const ROLES = ['admin', 'manager', 'member'];
 const GRADES = ['9', '10', '11', '12'];
@@ -221,11 +225,17 @@ app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 40, name:
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(String(username).toLowerCase().trim());
-  if (!user || !bcrypt.compareSync(password, user.passwordHash)) {
+  // Always run a bcrypt comparison, even when the user is unknown, so response
+  // timing doesn't reveal whether a username exists (enumeration defense).
+  const hashToCheck = user ? user.passwordHash : DUMMY_PASSWORD_HASH;
+  const passwordOk = bcrypt.compareSync(String(password), hashToCheck);
+  if (!user || !passwordOk) {
     return res.status(401).json({ error: 'Invalid username or password' });
   }
   try {
-    const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+    // req.ip is derived from the trusted proxy hop; the raw X-Forwarded-For
+    // header is client-controlled and easily spoofed, so don't log it directly.
+    const ip = String(req.ip || '').trim();
     db.prepare('INSERT INTO login_logs (userId, username, ipAddress) VALUES (?, ?, ?)').run(user.id, user.username, ip);
   } catch (_) {}
   res.json({ token: signToken(user), user: publicUser(user) });
@@ -233,8 +243,8 @@ app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 40, name:
 
 app.post('/api/auth/change-password', authenticate, rateLimit({ windowMs: 15 * 60 * 1000, max: 10, name: 'change-password' }), (req, res) => {
   const { newPassword } = req.body || {};
-  if (!newPassword || String(newPassword).length < 4) {
-    return res.status(400).json({ error: 'New password must be at least 4 characters' });
+  if (!newPassword || String(newPassword).length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters' });
   }
   if (newPassword === req.user.username) {
     return res.status(400).json({ error: 'New password cannot be the same as your default (username)' });
@@ -957,7 +967,7 @@ app.post('/api/funding', rateLimit({ windowMs: 60 * 60 * 1000, max: 20, name: 'f
   for (const r of reviewers) {
     if (r.id === req.user.id) continue;
     notify(r.email, 'New funding request', 'Funding request awaiting review',
-      `<b>${req.user.displayName}</b> requested funding: <b>${safeTitle}</b> ($${amt}).`);
+      `<b>${escHtml(req.user.displayName)}</b> requested funding: <b>${escHtml(safeTitle)}</b> ($${amt}).`);
     pushNotification(r.id, `${req.user.displayName} submitted a funding request: "${safeTitle}" ($${amt})`, 'funding', 'funding');
   }
   res.status(201).json({ request: db.prepare('SELECT * FROM funding_requests WHERE id=?').get(info.lastInsertRowid) });
@@ -969,6 +979,10 @@ app.patch('/api/funding/:id', (req, res) => {
   if (!fr) return res.status(404).json({ error: 'Not found' });
   const { action, reviewNotes } = req.body || {};
   if (!isPrivileged) return res.status(403).json({ error: 'Not allowed' });
+  // Reviewers may not approve/deny their own funding requests.
+  if ((action === 'approve' || action === 'deny') && fr.submittedById === req.user.id) {
+    return res.status(403).json({ error: 'You cannot review your own funding request' });
+  }
   if ((action === 'approve' || action === 'deny') && fr.status !== 'pending') {
     return res.status(400).json({ error: 'This request has already been reviewed' });
   }
@@ -1027,7 +1041,7 @@ app.post('/api/board-apps', rateLimit({ windowMs: 60 * 60 * 1000, max: 10, name:
   for (const a of admins) {
     if (a.id === req.user.id) continue;
     notify(a.email, 'New board application', 'Board application awaiting review',
-      `<b>${req.user.displayName}</b> applied for <b>${safePosition}</b>.`);
+      `<b>${escHtml(req.user.displayName)}</b> applied for <b>${escHtml(safePosition)}</b>.`);
     pushNotification(a.id, `${req.user.displayName} applied for "${safePosition}"`, 'board-apps', 'board-app');
   }
   res.status(201).json({ application: db.prepare('SELECT * FROM board_applications WHERE id=?').get(info.lastInsertRowid) });
@@ -1183,14 +1197,14 @@ app.post('/api/tasks', rateLimit({ windowMs: 60 * 60 * 1000, max: 60, name: 'tas
       // Assigned directly (by an admin, or auto-approved) — tell the assignee.
       notify(owner.email, 'New task assigned to you',
         'You have a new task',
-        `<b>${req.user.displayName}</b> assigned you a task: <b>${taskName}</b>.`);
+        `<b>${escHtml(req.user.displayName)}</b> assigned you a task: <b>${escHtml(taskName)}</b>.`);
       pushNotification(owner.id, `${req.user.displayName} assigned you a task: "${taskName}"`, 'tasks', 'task');
     } else if (approverId) {
       // Pending — tell the approver they have something to review.
       const approver = getUser(approverId);
       notify(approver && approver.email, 'A task needs your approval',
         'Task awaiting your approval',
-        `<b>${req.user.displayName}</b> wants to assign <b>${owner.displayName}</b> the task <b>${taskName}</b>. Approve it in Pending Approvals.`);
+        `<b>${escHtml(req.user.displayName)}</b> wants to assign <b>${escHtml(owner.displayName)}</b> the task <b>${escHtml(taskName)}</b>. Approve it in Pending Approvals.`);
       pushNotification(approverId, `${req.user.displayName} wants to assign ${owner.displayName} the task "${taskName}" — needs your approval`, 'approvals', 'approval');
     }
   }
@@ -1287,7 +1301,7 @@ app.post('/api/tasks/:id/approve', (req, res) => {
   const assigner = task.assignedById ? getUser(task.assignedById) : null;
   notify(owner && owner.email, 'New task assigned to you',
     'You have a new task',
-    `${assigner ? '<b>' + assigner.displayName + '</b> assigned' : 'You were assigned'} the task <b>${task.name}</b> (approved by ${req.user.displayName}).`);
+    `${assigner ? '<b>' + escHtml(assigner.displayName) + '</b> assigned' : 'You were assigned'} the task <b>${escHtml(task.name)}</b> (approved by ${escHtml(req.user.displayName)}).`);
   pushNotification(owner && owner.id, `Your task "${task.name}" was approved by ${req.user.displayName}`, 'tasks', 'task');
   // Let the original sender know their assignment went through.
   if (assigner && assigner.id !== owner.id) {
@@ -2120,6 +2134,7 @@ app.get('/api/roster/grade-pipeline', (req, res) => {
   let grade;
   if (gradeParam) {
     grade = Number(gradeParam);
+    if (!Number.isInteger(grade)) return res.status(400).json({ error: 'Invalid grade' });
   } else if (req.user.managedGrade != null) {
     grade = req.user.managedGrade;
   } else if (!isManager) {
@@ -2193,6 +2208,8 @@ app.patch('/api/reimbursements/:id', (req, res) => {
   if (!r) return res.status(404).json({ error: 'Not found' });
   const { action, reviewNotes } = req.body || {};
   if (!['approve', 'deny'].includes(action)) return res.status(400).json({ error: 'action must be approve or deny' });
+  // Reviewers may not approve/deny their own reimbursement requests.
+  if (r.submittedById === req.user.id) return res.status(403).json({ error: 'You cannot review your own reimbursement request' });
   const status = action === 'approve' ? 'approved' : 'denied';
   db.prepare(`UPDATE reimbursements SET status=?, reviewedById=?, reviewedAt=datetime('now'), reviewNotes=? WHERE id=?`)
     .run(status, req.user.id, String(reviewNotes || '').trim(), r.id);
@@ -2384,6 +2401,11 @@ app.get('/api/meetings/:id/action-items', (req, res) => {
 });
 
 app.post('/api/meetings/:id/action-items', (req, res) => {
+  // Creating an action item can auto-create a task assigned to any user, which
+  // would otherwise require manager approval — so gate it to managers/admins.
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
   const meetingId = Number(req.params.id);
   const meeting = db.prepare('SELECT id, title FROM meetings WHERE id = ?').get(meetingId);
   if (!meeting) return res.status(404).json({ error: 'Meeting not found' });
