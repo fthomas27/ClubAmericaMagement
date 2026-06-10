@@ -1930,7 +1930,7 @@ function MeetingCard({ home, events, volunteerEvents = [] }) {
   volunteerEvents.forEach((v) => { volMap[v.icalUid] = v; });
   const origin = window.location.origin;
   return (
-    <section className="bg-navy2 border border-gold/30 rounded-2xl p-6 hover:border-gold/50 hover:shadow-lg hover:shadow-black/20 transition-all duration-200">
+    <section className="h-full bg-navy2 border border-gold/30 rounded-2xl p-6 hover:border-gold/50 hover:shadow-lg hover:shadow-black/20 transition-all duration-200">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-3xl text-gold">{hasEvents ? 'Upcoming Events' : 'Next Meeting'}</h2>
         <span className="text-red text-xl">📅</span>
@@ -1982,7 +1982,7 @@ function MeetingCard({ home, events, volunteerEvents = [] }) {
 function PodcastCard({ home }) {
   const id = ytId(home.podcastUrl);
   return (
-    <section className="bg-navy2 border border-red/30 rounded-2xl p-6 hover:border-red/50 hover:shadow-lg hover:shadow-black/20 transition-all duration-200">
+    <section className="h-full bg-navy2 border border-red/30 rounded-2xl p-6 hover:border-red/50 hover:shadow-lg hover:shadow-black/20 transition-all duration-200">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-3xl text-red">The Podcast</h2>
         <span className="text-xl">🎙️</span>
@@ -2510,6 +2510,74 @@ function Reveal({ children, delay = 0, className = '' }) {
   return <div ref={ref} className={`ca-reveal ${className}`} style={delay ? { transitionDelay: delay + 'ms' } : undefined}>{children}</div>;
 }
 
+// Pointer-driven 3D tilt for the hero. The scene rotates a few degrees toward
+// the cursor; children declare their own translateZ depth so layers shift at
+// different rates. Skipped on touch devices and under prefers-reduced-motion,
+// and paused while the hero is offscreen.
+function TiltScene({ maxTilt = 3, className = '', innerClassName = '', children }) {
+  const outer = useRef(null);
+  const inner = useRef(null);
+  useEffect(() => {
+    const o = outer.current, n = inner.current;
+    if (!o || !n || typeof window.matchMedia !== 'function') return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches ||
+        window.matchMedia('(hover: none)').matches) return;
+    let raf = 0, tx = 0, ty = 0, cx = 0, cy = 0, visible = true;
+    const tick = () => {
+      cx += (tx - cx) * 0.06;
+      cy += (ty - cy) * 0.06;
+      n.style.transform = `rotateX(${(-cy * maxTilt).toFixed(3)}deg) rotateY(${(cx * maxTilt).toFixed(3)}deg)`;
+      raf = (Math.abs(tx - cx) + Math.abs(ty - cy) > 0.002) ? requestAnimationFrame(tick) : 0;
+    };
+    const kick = () => { if (!raf) raf = requestAnimationFrame(tick); };
+    const onMove = (e) => {
+      if (!visible) return;
+      tx = (e.clientX / window.innerWidth) * 2 - 1;
+      ty = (e.clientY / window.innerHeight) * 2 - 1;
+      kick();
+    };
+    const obs = typeof IntersectionObserver !== 'undefined'
+      ? new IntersectionObserver(([entry]) => {
+          visible = entry.isIntersecting;
+          if (!visible) { tx = 0; ty = 0; kick(); }
+        })
+      : null;
+    obs?.observe(o);
+    window.addEventListener('pointermove', onMove, { passive: true });
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      obs?.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [maxTilt]);
+  return (
+    <div ref={outer} className={className} style={{ perspective: '1200px' }}>
+      <div ref={inner} className={innerClassName} style={{ transformStyle: 'preserve-3d', willChange: 'transform' }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// Card wrapper that tips a few degrees toward the cursor on hover.
+function Card3D({ className = '', children }) {
+  const ref = useRef(null);
+  const onMove = (e) => {
+    const el = ref.current;
+    if (!el || typeof window.matchMedia !== 'function' || window.matchMedia('(hover: none)').matches) return;
+    const r = el.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width - 0.5;
+    const y = (e.clientY - r.top) / r.height - 0.5;
+    el.style.transform = `perspective(900px) rotateX(${(-y * 4).toFixed(2)}deg) rotateY(${(x * 4).toFixed(2)}deg)`;
+  };
+  const onLeave = () => { if (ref.current) ref.current.style.transform = ''; };
+  return (
+    <div ref={ref} onPointerMove={onMove} onPointerLeave={onLeave} className={`ca-card3d ${className}`}>
+      {children}
+    </div>
+  );
+}
+
 function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onBack }) {
   const [home, setHome] = useState(null);
   const [events, setEvents] = useState([]);
@@ -2529,8 +2597,8 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
 
   const cards = (
     <div className="grid md:grid-cols-2 gap-6">
-      <MeetingCard home={home} events={events} volunteerEvents={volunteerEvents} />
-      <PodcastCard home={home} />
+      <Card3D><MeetingCard home={home} events={events} volunteerEvents={volunteerEvents} /></Card3D>
+      <Card3D><PodcastCard home={home} /></Card3D>
     </div>
   );
 
@@ -2561,8 +2629,8 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         <section className="relative overflow-hidden max-w-5xl mx-auto px-4 sm:px-6 pt-12 pb-12 text-center">
           <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
             <div className="ca-aurora-a absolute -top-1/2 left-1/4 w-[60%] h-[120%] rounded-full"
-              style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.18), transparent 60%)', filter: 'blur(40px)' }} />
-            <Starfield count={20} />
+              style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.12), transparent 60%)', filter: 'blur(40px)' }} />
+            <Starfield count={14} />
           </div>
           <div className="relative">
             <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3 ca-fade-in">Park City High School</p>
@@ -2619,58 +2687,62 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
   return (
     <div className="min-h-screen">
       <div className="relative min-h-screen flex flex-col overflow-hidden">
-        {/* Ambient background layers — old-glory red, white, and blue */}
+        {/* Ambient background layers — old-glory red and blue, kept quiet */}
         <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
           <div className="ca-aurora-a absolute -top-1/4 -left-1/4 w-[80%] h-[80%] rounded-full"
-            style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.30), transparent 60%)', filter: 'blur(40px)' }} />
+            style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.16), transparent 60%)', filter: 'blur(40px)' }} />
           <div className="ca-aurora-b absolute -bottom-1/3 -right-1/4 w-[85%] h-[85%] rounded-full"
-            style={{ background: 'radial-gradient(circle, rgba(0,40,104,0.60), transparent 60%)', filter: 'blur(40px)' }} />
-          <div className="ca-aurora-b absolute top-1/4 right-[10%] w-[40%] h-[40%] rounded-full"
-            style={{ background: 'radial-gradient(circle, rgba(245,240,232,0.08), transparent 60%)', filter: 'blur(30px)' }} />
+            style={{ background: 'radial-gradient(circle, rgba(0,40,104,0.35), transparent 60%)', filter: 'blur(40px)' }} />
           {/* Waving flag stripes rising from the bottom of the hero */}
-          <div className="ca-stripes absolute inset-x-0 bottom-0 h-[42%] opacity-20" />
+          <div className="ca-stripes absolute inset-x-0 bottom-0 h-[42%] opacity-10" />
         </div>
-        <ParallaxLayer speed={0.35} className="absolute inset-0 pointer-events-none"><Starfield count={26} /></ParallaxLayer>
-        <ParallaxLayer speed={0.15} className="absolute inset-0 pointer-events-none"><Starfield count={26} /></ParallaxLayer>
+        <ParallaxLayer speed={0.25} className="absolute inset-0 pointer-events-none"><Starfield count={16} /></ParallaxLayer>
+        <ParallaxLayer speed={0.12} className="absolute inset-0 pointer-events-none"><Starfield count={12} /></ParallaxLayer>
 
         <header className="relative z-10 max-w-5xl mx-auto w-full px-4 sm:px-6 pt-6 flex items-center justify-between gap-3">
           <Logo size="sidebar" />
           <Button variant="primary" onClick={onEnterPortal}>Board Login →</Button>
         </header>
 
-        <section className="relative z-10 flex-1 flex flex-col items-center justify-center text-center px-4 sm:px-6 py-16">
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none" aria-hidden="true">
-            <StarRing className="ca-spin-slow opacity-[0.09] w-[min(85vw,540px)] h-auto" />
-          </div>
-          <p className="font-display text-sm tracking-[0.6em] text-gold/70 uppercase mb-4 ca-fade-in" style={{ animationDelay: '500ms', animationDuration: '0.8s' }}>
-            Park City High School
-          </p>
-          <h1 className="ca-hero-title font-display text-[clamp(4.5rem,16vw,11rem)] text-cream leading-[0.9]"
-            style={{ textShadow: '0 0 60px rgba(204,28,46,0.35), 0 0 120px rgba(0,40,104,0.45)' }}>
-            CLUB<br className="sm:hidden" /> AMERICA
-          </h1>
-          {/* Tricolor divider */}
-          <div className="flex items-center gap-3 mt-5 ca-fade-in" style={{ animationDelay: '650ms', animationDuration: '0.8s' }}>
-            <span className="h-[3px] w-14 rounded-full bg-red/80" />
-            <span className="text-gold/90 tracking-[0.4em] text-sm">★ ★ ★</span>
-            <span className="h-[3px] w-14 rounded-full" style={{ background: '#3b5bdb' }} />
-          </div>
-          <p className="text-cream/70 max-w-xl mt-6 text-base sm:text-lg leading-relaxed ca-fade-in" style={{ animationDelay: '800ms', animationDuration: '0.8s' }}>
-            Faith, freedom, and community — standing up for America's founding principles at Park City High School.
-          </p>
-          <div className="mt-9 flex flex-wrap gap-3 justify-center items-center ca-fade-in" style={{ animationDelay: '950ms', animationDuration: '0.8s' }}>
-            <button
-              onClick={() => document.getElementById('get-involved')?.scrollIntoView({ behavior: 'smooth' })}
-              className="px-8 py-3.5 bg-red hover:bg-red/85 text-cream font-semibold rounded-lg transition-all shadow-lg shadow-red/25 text-sm active:scale-95 hover:shadow-xl hover:shadow-red/35 hover:-translate-y-0.5">
-              Get Involved →
-            </button>
-            <button
-              onClick={() => document.getElementById('meet-the-board')?.scrollIntoView({ behavior: 'smooth' })}
-              className="px-8 py-3.5 border border-gold/50 text-gold hover:bg-gold/10 rounded-lg transition-all text-sm font-medium active:scale-95 hover:-translate-y-0.5">
-              Meet the Board
-            </button>
-            {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
-          </div>
+        <section className="relative z-10 flex-1 flex flex-col justify-center px-4 sm:px-6 py-16">
+          <TiltScene className="relative w-full" innerClassName="relative flex flex-col items-center text-center">
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none" aria-hidden="true"
+              style={{ transform: 'translateZ(-90px)' }}>
+              <StarRing className="ca-spin-slow opacity-[0.07] w-[min(85vw,540px)] h-auto" />
+            </div>
+            <p className="font-display text-sm tracking-[0.6em] text-gold/70 uppercase mb-4 ca-fade-in"
+              style={{ animationDelay: '500ms', animationDuration: '0.8s', transform: 'translateZ(25px)' }}>
+              Park City High School
+            </p>
+            <h1 className="ca-hero-title font-display text-[clamp(4.5rem,16vw,11rem)] text-cream leading-[0.9]"
+              style={{ '--ca-z': '60px', textShadow: '0 1px 0 #1d2c47, 0 2px 0 #182640, 0 3px 0 #142138, 0 16px 36px rgba(0,0,0,0.55)' }}>
+              CLUB<br className="sm:hidden" /> AMERICA
+            </h1>
+            {/* Tricolor divider */}
+            <div className="flex items-center gap-3 mt-5 ca-fade-in" style={{ animationDelay: '650ms', animationDuration: '0.8s', transform: 'translateZ(40px)' }}>
+              <span className="h-[3px] w-14 rounded-full bg-red/80" />
+              <span className="text-gold/90 tracking-[0.4em] text-sm">★ ★ ★</span>
+              <span className="h-[3px] w-14 rounded-full" style={{ background: '#3b5bdb' }} />
+            </div>
+            <p className="text-cream/70 max-w-xl mt-6 text-base sm:text-lg leading-relaxed ca-fade-in"
+              style={{ animationDelay: '800ms', animationDuration: '0.8s', transform: 'translateZ(30px)' }}>
+              Faith, freedom, and community — standing up for America's founding principles at Park City High School.
+            </p>
+            <div className="mt-9 flex flex-wrap gap-3 justify-center items-center ca-fade-in"
+              style={{ animationDelay: '950ms', animationDuration: '0.8s', transform: 'translateZ(50px)' }}>
+              <button
+                onClick={() => document.getElementById('get-involved')?.scrollIntoView({ behavior: 'smooth' })}
+                className="px-8 py-3.5 bg-red hover:bg-red/85 text-cream font-semibold rounded-lg transition-all shadow-lg shadow-red/25 text-sm active:scale-95 hover:shadow-xl hover:shadow-red/35 hover:-translate-y-0.5">
+                Get Involved →
+              </button>
+              <button
+                onClick={() => document.getElementById('meet-the-board')?.scrollIntoView({ behavior: 'smooth' })}
+                className="px-8 py-3.5 border border-gold/50 text-gold hover:bg-gold/10 rounded-lg transition-all text-sm font-medium active:scale-95 hover:-translate-y-0.5">
+                Meet the Board
+              </button>
+              {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
+            </div>
+          </TiltScene>
         </section>
 
         <button

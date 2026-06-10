@@ -107,8 +107,8 @@
     .ca-aurora-a { animation: ca-aurora-a 16s ease-in-out infinite; }
     .ca-aurora-b { animation: ca-aurora-b 20s ease-in-out infinite; }
     @keyframes ca-hero-title {
-      from { opacity: 0; transform: translateY(28px) scale(0.98); letter-spacing: 0.12em; }
-      to   { opacity: 1; transform: translateY(0) scale(1); letter-spacing: 0.04em; }
+      from { opacity: 0; transform: translateZ(var(--ca-z, 0px)) translateY(28px) scale(0.98); letter-spacing: 0.12em; }
+      to   { opacity: 1; transform: translateZ(var(--ca-z, 0px)) translateY(0) scale(1); letter-spacing: 0.04em; }
     }
     .ca-hero-title { animation: ca-hero-title 0.9s cubic-bezier(0.22, 1, 0.36, 1) both; }
     @keyframes ca-scroll-cue {
@@ -117,10 +117,14 @@
     }
     .ca-scroll-cue { animation: ca-scroll-cue 2s ease-in-out infinite; }
     .ca-reveal {
-      opacity: 0; transform: translateY(26px);
+      opacity: 0; transform: perspective(900px) rotateX(4deg) translateY(26px);
+      transform-origin: top center;
       transition: opacity 0.65s ease-out, transform 0.65s cubic-bezier(0.22, 1, 0.36, 1);
     }
-    .ca-reveal.is-visible { opacity: 1; transform: translateY(0); }
+    .ca-reveal.is-visible { opacity: 1; transform: perspective(900px) rotateX(0deg) translateY(0); }
+
+    /* ── 3D depth (hero tilt + card hover) ── */
+    .ca-card3d { transition: transform 0.18s ease-out; will-change: transform; }
 
     /* Waving flag stripes — fades out toward the top of the hero. */
     @keyframes ca-stripes-wave {
@@ -142,6 +146,7 @@
     @media (prefers-reduced-motion: reduce) {
       .ca-star, .ca-aurora-a, .ca-aurora-b, .ca-scroll-cue, .ca-stripes, .ca-spin-slow { animation: none; }
       .ca-reveal { opacity: 1; transform: none; transition: none; }
+      .ca-card3d { transform: none !important; transition: none; }
     }
   </style>
 </head>
