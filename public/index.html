@@ -117,14 +117,19 @@
     }
     .ca-scroll-cue { animation: ca-scroll-cue 2s ease-in-out infinite; }
     .ca-reveal {
-      opacity: 0; transform: perspective(900px) rotateX(4deg) translateY(26px);
+      opacity: 0; transform: perspective(900px) rotateX(7deg) translateY(34px);
       transform-origin: top center;
-      transition: opacity 0.65s ease-out, transform 0.65s cubic-bezier(0.22, 1, 0.36, 1);
+      transition: opacity 0.7s ease-out, transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
     }
     .ca-reveal.is-visible { opacity: 1; transform: perspective(900px) rotateX(0deg) translateY(0); }
 
     /* ── 3D depth (hero tilt + card hover) ── */
     .ca-card3d { transition: transform 0.18s ease-out; will-change: transform; }
+    @keyframes ca-breathe {
+      0%, 100% { opacity: 0.55; }
+      50%      { opacity: 1; }
+    }
+    .ca-breathe { animation: ca-breathe 9s ease-in-out infinite; }
 
     /* Waving flag stripes — fades out toward the top of the hero. */
     @keyframes ca-stripes-wave {
@@ -144,7 +149,7 @@
     @keyframes ca-spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     .ca-spin-slow { animation: ca-spin-slow 90s linear infinite; }
     @media (prefers-reduced-motion: reduce) {
-      .ca-star, .ca-aurora-a, .ca-aurora-b, .ca-scroll-cue, .ca-stripes, .ca-spin-slow { animation: none; }
+      .ca-star, .ca-aurora-a, .ca-aurora-b, .ca-scroll-cue, .ca-stripes, .ca-spin-slow, .ca-breathe { animation: none; }
       .ca-reveal { opacity: 1; transform: none; transition: none; }
       .ca-card3d { transform: none !important; transition: none; }
     }
