@@ -2614,7 +2614,8 @@ app.delete('/api/volunteer-signups/:id', requireManagerOrAdmin, (req, res) => {
 });
 
 // Roster cross-reference: volunteer events this roster member signed up for.
-app.get('/api/roster-members/:id/volunteer-history', requireManagerOrAdmin, (req, res) => {
+app.get('/api/roster-members/:id/volunteer-history', (req, res) => {
+  if (!canViewRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
   const rosterId = Number(req.params.id);
   const history = db.prepare(`
     SELECT vs.id, vs.name, vs.status, vs.createdAt, ve.title AS eventTitle, ve.startDate,
@@ -2625,6 +2626,27 @@ app.get('/api/roster-members/:id/volunteer-history', requireManagerOrAdmin, (req
     WHERE vs.matchedRosterId = ?
     ORDER BY vs.createdAt DESC
   `).all(rosterId);
+  res.json({ history });
+});
+
+// Roster cross-reference: meeting attendance for this roster member (matched via email).
+app.get('/api/roster-members/:id/attendance-history', (req, res) => {
+  if (!canViewRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const member = db.prepare('SELECT email FROM roster_members WHERE id = ?').get(Number(req.params.id));
+  if (!member) return res.status(404).json({ error: 'Not found' });
+  let history = [];
+  if (member.email) {
+    const linkedUser = db.prepare("SELECT id FROM users WHERE email != '' AND lower(email) = lower(?)").get(member.email);
+    if (linkedUser) {
+      history = db.prepare(`
+        SELECT ae.id, ae.title, ae.eventDate, ae.location, ar.status
+        FROM attendance_records ar
+        JOIN attendance_events ae ON ae.id = ar.eventId
+        WHERE ar.userId = ?
+        ORDER BY ae.eventDate DESC
+      `).all(linkedUser.id);
+    }
+  }
   res.json({ history });
 });
 
