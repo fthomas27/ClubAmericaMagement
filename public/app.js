@@ -5889,6 +5889,159 @@ function NotificationBell({ onNavigate, refreshSignal }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Onboarding intro system
+// ---------------------------------------------------------------------------
+
+const TAB_DESCRIPTIONS = {
+  mytasks:        { headline: 'Your Personal Task Board',       body: 'Everything assigned to you lives here, organized by Not Started, In Progress, and Complete. This is your home base for staying on top of your responsibilities as a board member.' },
+  home:           { headline: 'The Public Club Homepage',       body: 'See the Club América website exactly the way visitors and prospective members see it — right from inside your portal. Great for sharing links or reviewing how we present ourselves to the public.' },
+  checkin:        { headline: 'Weekly Check-In',                body: 'Submit your weekly progress update so leadership can see what you\'ve accomplished, what\'s in progress, and if anything is blocking you. Consistent check-ins keep the entire board aligned.' },
+  attendance:     { headline: 'Your Attendance Record',         body: 'View your attendance history for all club meetings and events. Track your present, absent, and excused marks at a glance — staying engaged in meetings is a core part of your role.' },
+  polls:          { headline: 'Polls & Board Voting',           body: 'When leadership creates polls, you\'ll find them here. Cast your vote on club decisions, initiatives, and questions that shape the direction of Club América. Every voice counts.' },
+  meetings:       { headline: 'Club & Board Meetings',          body: 'Access everything tied to our meetings — agendas, notes, and records for both full club gatherings and board-only sessions. Stay informed whether you attended or are catching up later.' },
+  funding:        { headline: 'Funding Requests',               body: 'Need money for an event, activity, or initiative? Submit a funding request here and track its status through review and approval. Every request is logged so nothing slips through the cracks.' },
+  apply:          { headline: 'Board Position Applications',    body: 'View open positions within Club América and submit your application directly through the portal. Applications go straight to leadership for review — no paperwork or email chains required.' },
+  reimbursements: { headline: 'Expense Reimbursements',         body: 'Paid out of pocket for something club-related? Submit a reimbursement request here, describe the expense, and track it from submission all the way through approval and payout.' },
+  resources:      { headline: 'The Resource Hub',               body: 'A curated library of documents, guides, templates, and materials for board members. Whether you need a form, a policy, or a reference guide — it\'s organized and searchable right here.' },
+  directory:      { headline: 'Board Member Directory',         body: 'The full contact list for every Club América board member — names, titles, and profiles in one place. Use the directory whenever you need to reach someone or learn who\'s on the team.' },
+  org:            { headline: 'Organizational Chart',           body: 'A visual map of Club América\'s full hierarchy. See how the Big Board, Grade Representatives, and board members all connect — and exactly where you fit into the structure.' },
+  ainotes:        { headline: 'AI-Generated Board Notes',       body: 'Your intelligent assistant surfaces highlights from board activity, meeting summaries, and club updates. Unread notes are flagged so you always know when something new is waiting.' },
+  announce:       { headline: 'Team Announcements',             body: 'Send a broadcast to your direct reports or the wider team. Use announcements for time-sensitive updates, reminders, and news that can\'t wait until the next scheduled meeting.' },
+  myteam:         { headline: 'Your Direct Reports',            body: 'See everyone who reports to you in one place. Click any team member to jump straight to their task board, review their progress, and stay connected with what your team is building.' },
+  approvals:      { headline: 'Pending Task Approvals',         body: 'When team members complete tasks that need your sign-off, they queue up here. Review their work and approve or request changes — clearing your queue regularly keeps the whole team unblocked.' },
+  submissions:    { headline: 'Public Interest Submissions',    body: 'People who filled out interest forms on the public site land here. Review club-join requests and board applications, respond to inquiries, and manage the full pipeline for new members.' },
+  roster:         { headline: 'Membership Roster & Pipeline',   body: 'Track everyone in your recruitment pipeline from first contact to fully onboarded member. Move candidates through stages — Prospect, Contacted, Onboarded, or Declined — and keep things organized.' },
+  dashboard:      { headline: 'Leadership Dashboard',           body: 'A bird\'s-eye view of club operations. Pending approvals, funding requests, board applications, and key metrics all in one place — your command center for keeping things running smoothly.' },
+  volunteers:     { headline: 'Volunteer Management',           body: 'Coordinate club event volunteers from here. See who signed up, track event-by-event participation, and manage your volunteer roster without chasing down responses separately.' },
+  speaker:        { headline: 'Speaker Events',                 body: 'Plan and log Club América speaker events. Track upcoming guests, event logistics, scheduling, and status updates so nothing falls through the cracks on the day of the event.' },
+  grants:         { headline: 'Grant Tracker',                  body: 'Stay on top of every grant application in the pipeline. Track submission deadlines, application statuses, and award amounts to ensure Club América never misses a funding opportunity.' },
+  social:         { headline: 'Social Media Tracker',           body: 'Log and track the club\'s social media output across platforms. Plan upcoming content, record what was posted, and keep Club América\'s digital presence organized and consistent.' },
+  budget:         { headline: 'Budget Overview',                body: 'Monitor the club\'s financial health at a glance. Track spending against allocations, review budget categories, and ensure every dollar is working toward Club América\'s goals.' },
+  grades:         { headline: 'Grade-Level Pipeline',           body: 'Manage recruitment and engagement broken down by grade level. See which grades have strong representation, where outreach is needed, and move students through onboarding cohort by cohort.' },
+  website:        { headline: 'Website Editor',                 body: 'Edit the public Club América homepage directly from here. Update content, refresh sections, and ensure the site always reflects the latest accurate information — changes go live immediately.' },
+  admin:          { headline: 'Admin Panel',                    body: 'The full control center for the portal. Add and manage users, assign roles, configure permissions, and handle all technical administration of the Club América board management platform.' },
+  logistics:      { headline: 'Login Activity Log',             body: 'Review board member login history and portal access logs. Spot inactive members, monitor usage patterns, and maintain security awareness across the platform.' },
+  ai:             { headline: 'AI Assistant',                   body: 'A Claude-powered AI interface built for club administration. Ask questions, generate content, analyze data, or get help drafting anything — your AI teammate is ready whenever you need it.' },
+};
+
+const INTRO_SECTION_TYPES = {
+  'My Club':      ['mytasks','home','checkin','attendance','polls','meetings','funding','apply','reimbursements','resources','directory','org','ainotes'],
+  'Leadership':   ['announce','myteam','approvals','submissions','roster','dashboard','volunteers','speaker','grants','social','budget','grades'],
+  'Site & Admin': ['website','admin','logistics','ai'],
+};
+
+function getIntroState(userId) {
+  try { return JSON.parse(localStorage.getItem('ca_intro_v1_' + userId) || '{}'); } catch (_) { return {}; }
+}
+function saveIntroState(userId, s) {
+  try { localStorage.setItem('ca_intro_v1_' + userId, JSON.stringify(s)); } catch (_) {}
+}
+function isWelcomeSeen(userId) { return !!getIntroState(userId).welcome; }
+function markWelcomeSeen(userId) { const s = getIntroState(userId); s.welcome = true; saveIntroState(userId, s); }
+function isTabSeen(userId, tab) { return !!(getIntroState(userId).tabs || {})[tab]; }
+function markTabSeen(userId, tab) { const s = getIntroState(userId); s.tabs = { ...(s.tabs || {}), [tab]: true }; saveIntroState(userId, s); }
+
+function WelcomeIntroModal({ me, navTiles, onDone }) {
+  const tileSet = new Set(navTiles.map(t => t.type));
+  const sectionColors = { 'My Club': 'text-gold', 'Leadership': 'text-sky-300', 'Site & Admin': 'text-red/80' };
+  const sections = Object.entries(INTRO_SECTION_TYPES).map(([title, types]) => ({
+    title,
+    items: types.filter(t => tileSet.has(t) && TAB_DESCRIPTIONS[t]),
+  })).filter(s => s.items.length > 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(8,15,28,0.90)', backdropFilter: 'blur(10px)' }}>
+      <div className="relative bg-navy2 border border-cream/15 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col ca-slide-up">
+
+        <div className="px-6 pt-6 pb-4 border-b border-cream/10 shrink-0">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 rounded-xl bg-gold/15 border border-gold/25 flex items-center justify-center shrink-0">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-gold">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <h2 className="font-display text-3xl text-cream leading-none">Welcome to your portal</h2>
+              <p className="text-cream/50 text-sm mt-1.5 leading-relaxed">
+                Here's a quick look at every section available to you, {me.firstName || me.displayName}. Each page is built to help you stay organized, connected, and on top of your role.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+          {sections.map(section => (
+            <div key={section.title}>
+              <div className="flex items-center gap-2 mb-3">
+                <span className={`text-[11px] font-bold uppercase tracking-widest ${sectionColors[section.title] || 'text-cream/40'}`}>{section.title}</span>
+                <div className="flex-1 h-px bg-cream/10" />
+              </div>
+              <div className="space-y-2">
+                {section.items.map(type => {
+                  const info = TAB_DESCRIPTIONS[type];
+                  const tile = navTiles.find(t => t.type === type);
+                  return (
+                    <div key={type} className="flex gap-3 px-4 py-3 rounded-xl bg-navy/60 border border-cream/8 hover:border-cream/15 transition-colors">
+                      <div className="shrink-0 w-2 h-2 rounded-full bg-gold/50 mt-2" />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-cream text-sm font-semibold">{tile ? tile.label : info.headline}</span>
+                        <span className="text-cream/35 text-xs mx-2">·</span>
+                        <span className="text-cream/55 text-xs leading-relaxed">{info.body}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="px-6 pb-5 pt-4 border-t border-cream/10 shrink-0 flex items-center justify-between gap-4">
+          <p className="text-cream/30 text-xs">Each page also shows a quick tip the first time you visit it.</p>
+          <Button variant="gold" onClick={onDone} className="shrink-0">Let's go →</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TabIntroBanner({ userId, tabType }) {
+  const info = TAB_DESCRIPTIONS[tabType];
+  const [visible, setVisible] = useState(() => !!info && !isTabSeen(userId, tabType));
+
+  useEffect(() => {
+    setVisible(!!info && !isTabSeen(userId, tabType));
+  }, [userId, tabType]);
+
+  function dismiss() {
+    markTabSeen(userId, tabType);
+    setVisible(false);
+  }
+
+  if (!visible || !info) return null;
+
+  return (
+    <div className="mb-5 flex gap-3 items-start rounded-xl border border-gold/30 px-4 py-3.5 ca-slide-down" style={{ background: 'rgba(255,193,7,0.05)' }}>
+      <div className="shrink-0 w-8 h-8 rounded-lg bg-gold/15 border border-gold/25 flex items-center justify-center mt-0.5">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="text-gold">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-gold font-semibold text-sm">{info.headline}</div>
+        <div className="text-cream/60 text-sm mt-0.5 leading-relaxed">{info.body}</div>
+      </div>
+      <button onClick={dismiss}
+        className="shrink-0 w-7 h-7 flex items-center justify-center rounded-md text-cream/30 hover:text-cream/60 hover:bg-cream/8 transition-colors mt-0.5 ml-1"
+        aria-label="Dismiss tip">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+  );
+}
+
 function App() {
   const [me, setMe] = useState(null);
   const [booted, setBooted] = useState(false);
@@ -5903,6 +6056,7 @@ function App() {
   const [aiNotesCount, setAiNotesCount] = useState(0);
   const [aiNotesOpen, setAiNotesOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [showWelcomeIntro, setShowWelcomeIntro] = useState(false);
 
   const isSurveyPath = window.location.pathname === '/survey';
   const volunteerMatch = window.location.pathname.match(/^\/volunteer\/(\d+)$/);
@@ -5947,6 +6101,11 @@ function App() {
   }, [loadShared]);
 
   useEffect(() => { if (me && !me.firstLogin) loadShared(me); }, [me, refreshSignal, loadShared]);
+
+  useEffect(() => {
+    if (!me || me.firstLogin || !me.profileComplete) return;
+    if (!isWelcomeSeen(me.id)) setShowWelcomeIntro(true);
+  }, [me]);
 
   useEffect(() => {
     const handler = () => {
@@ -6010,8 +6169,11 @@ function App() {
   ];
   const navigate = (v) => setView(v);
 
+  const introDismiss = () => { markWelcomeSeen(me.id); setShowWelcomeIntro(false); };
+
   if (view.type === 'apphome') return (
     <>
+      {showWelcomeIntro && <WelcomeIntroModal me={me} navTiles={navTiles} onDone={introDismiss} />}
       {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={() => { setAiNotesOpen(false); bump(); }} />}
       {searchOpen && <SearchModal me={me} tiles={navTiles} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
       <AppHome me={me} reports={reports} approvalsCount={approvalsCount} submissionsCount={submissionsCount}
@@ -6069,6 +6231,7 @@ function App() {
 
   return (
     <>
+      {showWelcomeIntro && <WelcomeIntroModal me={me} navTiles={navTiles} onDone={introDismiss} />}
       {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={() => { setAiNotesOpen(false); bump(); }} />}
       {searchOpen && <SearchModal me={me} tiles={navTiles} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
       <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
@@ -6093,7 +6256,10 @@ function App() {
           </button>
         </header>
         <main className={`flex-1 overflow-x-hidden ${view.type === 'home' ? '' : 'p-4 sm:p-6 lg:p-8'}`}>
-          <div key={view.type + (view.userId || '')} className="ca-slide-up">{content}</div>
+          <div key={view.type + (view.userId || '')} className="ca-slide-up">
+            {view.type !== 'home' && <TabIntroBanner userId={me.id} tabType={view.type} />}
+            {content}
+          </div>
         </main>
       </div>
     </>
