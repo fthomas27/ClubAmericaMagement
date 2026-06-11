@@ -1611,6 +1611,48 @@ function EditMemberModal({ user, onSaved, onClose }) {
   );
 }
 
+const ALL_TABS_BY_SECTION = [
+  { section: 'My Club', tabs: [
+    { type: 'mytasks',        label: 'My Page' },
+    { type: 'home',           label: 'Club Home' },
+    { type: 'checkin',        label: 'Check-In' },
+    { type: 'attendance',     label: 'Attendance' },
+    { type: 'polls',          label: 'Polls & Voting' },
+    { type: 'meetings',       label: 'Meetings' },
+    { type: 'funding',        label: 'Funding' },
+    { type: 'apply',          label: 'Apply' },
+    { type: 'reimbursements', label: 'Reimbursements' },
+    { type: 'resources',      label: 'Resources' },
+    { type: 'directory',      label: 'Directory' },
+    { type: 'org',            label: 'Org Chart' },
+    { type: 'ainotes',        label: 'Agent Notes' },
+  ]},
+  { section: 'Leadership', roles: ['manager','admin'], tabs: [
+    { type: 'announce',    label: 'Announcement' },
+    { type: 'myteam',      label: 'My Team' },
+    { type: 'approvals',   label: 'Approvals' },
+    { type: 'submissions', label: 'Get Involved' },
+    { type: 'roster',      label: 'Roster' },
+    { type: 'dashboard',   label: 'Dashboard' },
+    { type: 'volunteers',  label: 'Volunteers' },
+    { type: 'speaker',     label: 'Speaker Events' },
+    { type: 'grants',      label: 'Grant Tracker' },
+    { type: 'social',      label: 'Social Media' },
+    { type: 'budget',      label: 'Budget Overview' },
+    { type: 'grades',      label: 'Grade Pipeline' },
+  ]},
+  { section: 'Site & Admin', roles: ['admin'], tabs: [
+    { type: 'website',   label: 'Edit Website' },
+    { type: 'admin',     label: 'Admin Panel' },
+    { type: 'logistics', label: 'Login Activity' },
+    { type: 'ai',        label: 'AI Assistant' },
+  ]},
+];
+
+function parseHiddenTabs(raw) {
+  try { return new Set(raw ? JSON.parse(raw) : []); } catch (_) { return new Set(); }
+}
+
 function AdminPanel({ users, reload }) {
   const [first, setFirst] = useState('');
   const [last, setLast] = useState('');
@@ -1661,6 +1703,12 @@ function AdminPanel({ users, reload }) {
       reload();
     } catch (err) { setError(err.message); }
   }
+  async function toggleTab(u, tabType) {
+    const hidden = parseHiddenTabs(u.hiddenTabs);
+    if (hidden.has(tabType)) { hidden.delete(tabType); } else { hidden.add(tabType); }
+    await updateUser(u, { hiddenTabs: [...hidden] });
+  }
+
   async function resetPw(u) {
     if (!(await confirm({ title: `Reset password?`, message: `${u.displayName}'s password will be reset to their default and they'll set a new one at next login.`, confirmLabel: 'Reset password' }))) return;
     setSaving(true);
@@ -1802,6 +1850,39 @@ function AdminPanel({ users, reload }) {
                 ))}
               </div>
             </div>
+            {(() => {
+              const hiddenSet = parseHiddenTabs(u.hiddenTabs);
+              const visibleSections = ALL_TABS_BY_SECTION.filter(s => !s.roles || s.roles.includes(u.role));
+              return (
+                <div className="mt-3 pt-3 border-t border-cream/8">
+                  <div className="text-cream/50 uppercase tracking-wider text-xs mb-2">Tab Visibility</div>
+                  <div className="space-y-2">
+                    {visibleSections.map(({ section, tabs }) => (
+                      <div key={section}>
+                        <div className="text-cream/30 text-[10px] uppercase tracking-wider mb-1">{section}</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {tabs.map(({ type, label }) => {
+                            const isHidden = hiddenSet.has(type);
+                            return (
+                              <button key={type} disabled={saving}
+                                onClick={() => toggleTab(u, type)}
+                                title={isHidden ? `Show "${label}"` : `Hide "${label}"`}
+                                className={`px-2.5 py-0.5 rounded-full text-[11px] border transition-all disabled:opacity-40 ${
+                                  isHidden
+                                    ? 'bg-transparent border-cream/15 text-cream/25 line-through'
+                                    : 'bg-gold/10 border-gold/30 text-gold/80 hover:bg-gold/20'
+                                }`}>
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         ))}
       </div>
@@ -5683,6 +5764,8 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
   const canSeeSubmissions = me.role === 'admin' || !!me.grade;
   const canRoster = isManager || !!me.canManageRoster;
+  const appHiddenTabs = parseHiddenTabs(me.hiddenTabs);
+  const visible = (type) => !appHiddenTabs.has(type);
 
   // Tiles grouped into labeled sections so the home screen reads as a few
   // small clusters instead of one undifferentiated wall.
@@ -5690,45 +5773,45 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
     {
       title: 'My Club',
       tiles: [
-        { type: 'mytasks',    label: 'My Page',        icon: 'person'     },
-        { type: 'home',       label: 'Club Home',      icon: 'home'       },
-        ...((checkinEnabled || isManager) ? [{ type: 'checkin', label: checkinEnabled ? 'Check-In' : 'Check-In Settings', icon: 'calendar' }] : []),
-        { type: 'attendance', label: 'Attendance',     icon: 'attendance' },
-        { type: 'polls',      label: 'Polls & Voting', icon: 'poll'       },
-        { type: 'meetings',   label: 'Meetings',       icon: 'meetings'   },
-        { type: 'funding',    label: 'Funding',        icon: 'funding'    },
-        { type: 'apply',      label: 'Apply',          icon: 'apply'      },
-        { type: 'reimbursements', label: 'Reimbursements', icon: 'reimbursements' },
-        { type: 'resources',  label: 'Resources',      icon: 'resources'  },
-        { type: 'directory',  label: 'Directory',      icon: 'directory'  },
-        { type: 'org',        label: 'Org Chart',      icon: 'org'        },
-        { type: 'ainotes',    label: 'Agent Notes',    icon: 'bell', badge: aiNotesCount || undefined, onClick: onAiNotes },
+        ...(visible('mytasks')    ? [{ type: 'mytasks',    label: 'My Page',        icon: 'person'     }] : []),
+        ...(visible('home')       ? [{ type: 'home',       label: 'Club Home',      icon: 'home'       }] : []),
+        ...((checkinEnabled || isManager) && visible('checkin') ? [{ type: 'checkin', label: checkinEnabled ? 'Check-In' : 'Check-In Settings', icon: 'calendar' }] : []),
+        ...(visible('attendance') ? [{ type: 'attendance', label: 'Attendance',     icon: 'attendance' }] : []),
+        ...(visible('polls')      ? [{ type: 'polls',      label: 'Polls & Voting', icon: 'poll'       }] : []),
+        ...(visible('meetings')   ? [{ type: 'meetings',   label: 'Meetings',       icon: 'meetings'   }] : []),
+        ...(visible('funding')    ? [{ type: 'funding',    label: 'Funding',        icon: 'funding'    }] : []),
+        ...(visible('apply')      ? [{ type: 'apply',      label: 'Apply',          icon: 'apply'      }] : []),
+        ...(visible('reimbursements') ? [{ type: 'reimbursements', label: 'Reimbursements', icon: 'reimbursements' }] : []),
+        ...(visible('resources')  ? [{ type: 'resources',  label: 'Resources',      icon: 'resources'  }] : []),
+        ...(visible('directory')  ? [{ type: 'directory',  label: 'Directory',      icon: 'directory'  }] : []),
+        ...(visible('org')        ? [{ type: 'org',        label: 'Org Chart',      icon: 'org'        }] : []),
+        ...(visible('ainotes')    ? [{ type: 'ainotes',    label: 'Agent Notes',    icon: 'bell', badge: aiNotesCount || undefined, onClick: onAiNotes }] : []),
       ],
     },
     {
       title: 'Leadership',
       tiles: [
-        ...(isManager         ? [{ type: 'announce',    label: 'Announcement',    icon: 'megaphone'  }] : []),
-        ...(isManager         ? [{ type: 'myteam',      label: 'My Team',         icon: 'team'       }] : []),
-        ...(isManager         ? [{ type: 'approvals',   label: 'Approvals',       icon: 'check',     badge: approvalsCount   }] : []),
-        ...(canSeeSubmissions ? [{ type: 'submissions', label: 'Get Involved',    icon: 'inbox',     badge: submissionsCount }] : []),
-        ...(canRoster         ? [{ type: 'roster',      label: 'Roster',          icon: 'roster'     }] : []),
-        ...(isManager         ? [{ type: 'dashboard',   label: 'Dashboard',       icon: 'dashboard'  }] : []),
-        ...(isManager         ? [{ type: 'volunteers',  label: 'Volunteers',      icon: 'volunteer'  }] : []),
-        ...(isManager         ? [{ type: 'speaker',     label: 'Speaker Events',  icon: 'speaker'    }] : []),
-        ...(isManager         ? [{ type: 'grants',      label: 'Grant Tracker',   icon: 'grants'     }] : []),
-        ...(isManager || !!me.canManageSocial ? [{ type: 'social', label: 'Social Media',   icon: 'social' }] : []),
-        ...(isManager         ? [{ type: 'budget',      label: 'Budget Overview', icon: 'budget'     }] : []),
-        ...(isManager || !!me.managedGrade    ? [{ type: 'grades', label: 'Grade Pipeline', icon: 'grades' }] : []),
+        ...(isManager && visible('announce')    ? [{ type: 'announce',    label: 'Announcement',    icon: 'megaphone'  }] : []),
+        ...(isManager && visible('myteam')      ? [{ type: 'myteam',      label: 'My Team',         icon: 'team'       }] : []),
+        ...(isManager && visible('approvals')   ? [{ type: 'approvals',   label: 'Approvals',       icon: 'check',     badge: approvalsCount   }] : []),
+        ...(canSeeSubmissions && visible('submissions') ? [{ type: 'submissions', label: 'Get Involved', icon: 'inbox', badge: submissionsCount }] : []),
+        ...(canRoster && visible('roster')      ? [{ type: 'roster',      label: 'Roster',          icon: 'roster'     }] : []),
+        ...(isManager && visible('dashboard')   ? [{ type: 'dashboard',   label: 'Dashboard',       icon: 'dashboard'  }] : []),
+        ...(isManager && visible('volunteers')  ? [{ type: 'volunteers',  label: 'Volunteers',      icon: 'volunteer'  }] : []),
+        ...(isManager && visible('speaker')     ? [{ type: 'speaker',     label: 'Speaker Events',  icon: 'speaker'    }] : []),
+        ...(isManager && visible('grants')      ? [{ type: 'grants',      label: 'Grant Tracker',   icon: 'grants'     }] : []),
+        ...((isManager || !!me.canManageSocial) && visible('social') ? [{ type: 'social', label: 'Social Media', icon: 'social' }] : []),
+        ...(isManager && visible('budget')      ? [{ type: 'budget',      label: 'Budget Overview', icon: 'budget'     }] : []),
+        ...((isManager || !!me.managedGrade) && visible('grades') ? [{ type: 'grades', label: 'Grade Pipeline', icon: 'grades' }] : []),
       ],
     },
     {
       title: 'Site & Admin',
       tiles: [
-        ...(canEditSite         ? [{ type: 'website',   label: 'Edit Website',   icon: 'edit'     }] : []),
-        ...(me.role === 'admin' ? [{ type: 'admin',     label: 'Admin Panel',    icon: 'admin'    }] : []),
-        ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }] : []),
-        ...(me.role === 'admin' ? [{ type: 'ai',        label: 'AI Assistant',   icon: 'ai'       }] : []),
+        ...(canEditSite && visible('website')         ? [{ type: 'website',   label: 'Edit Website',   icon: 'edit'     }] : []),
+        ...(me.role === 'admin' && visible('admin')   ? [{ type: 'admin',     label: 'Admin Panel',    icon: 'admin'    }] : []),
+        ...((me.role === 'admin' || !!me.canViewLogistics) && visible('logistics') ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }] : []),
+        ...(me.role === 'admin' && visible('ai')      ? [{ type: 'ai',        label: 'AI Assistant',   icon: 'ai'       }] : []),
       ],
     },
   ].filter((s) => s.tiles.length > 0);
@@ -6136,6 +6219,7 @@ function App() {
 
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
   const isMgrOrAdmin = me.role === 'admin' || me.role === 'manager';
+  const meHiddenTabs = parseHiddenTabs(me.hiddenTabs);
   const navTiles = [
     { type: 'mytasks',        label: 'My Page' },
     { type: 'home',           label: 'Club Home' },
@@ -6166,7 +6250,7 @@ function App() {
     ...(me.role === 'admin'                   ? [{ type: 'admin',       label: 'Admin Panel' }] : []),
     ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity' }] : []),
     ...(me.role === 'admin'                   ? [{ type: 'ai',          label: 'AI Assistant' }] : []),
-  ];
+  ].filter(t => !meHiddenTabs.has(t.type));
   const navigate = (v) => setView(v);
 
   const introDismiss = () => { markWelcomeSeen(me.id); setShowWelcomeIntro(false); };
