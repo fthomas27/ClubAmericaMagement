@@ -451,8 +451,10 @@ app.put('/api/me/profile', (req, res) => {
   }
   if (photo.length > 6 * 1024 * 1024) return res.status(400).json({ error: 'Photo is too large' });
   if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'Please enter a valid email' });
+  // An empty photo means "no new photo chosen" — keep the existing one rather
+  // than wiping it (there is no remove-photo flow; users replace instead).
   db.prepare('UPDATE users SET photo = COALESCE(?, photo), bio = ?, email = ?, phone = ?, profileComplete = 1 WHERE id = ?')
-    .run(photo === undefined ? null : photo, bio, email, phone, req.user.id);
+    .run(photo || null, bio, email, phone, req.user.id);
   res.json({ user: publicUser(getUser(req.user.id)) });
 });
 
@@ -1248,9 +1250,11 @@ app.patch('/api/tasks/:id', (req, res) => {
      WHERE id = ?`)
     .run(status || null, name || null, description ?? null, hasDueDate, dueDate ?? null, safeDocUrl, task.id);
 
-  // When a recurring task is marked complete, automatically spawn the next instance.
+  // When a recurring task is newly marked complete, automatically spawn the
+  // next instance. Guard on the previous status so re-saving an already
+  // completed task doesn't spawn duplicates.
   const updatedTask = getTask(task.id);
-  if (status === 'Complete' && updatedTask.isRecurring && updatedTask.recurringDays) {
+  if (status === 'Complete' && task.status !== 'Complete' && updatedTask.isRecurring && updatedTask.recurringDays) {
     const nextDate = nextOccurrenceDate(updatedTask.recurringDays);
     db.prepare(`INSERT INTO tasks (userId, name, description, dueDate, status, assignedById, approvalStatus, approverId, docUrl, isRecurring, recurringDays)
                 VALUES (?, ?, ?, ?, 'Not Started', ?, 'approved', ?, ?, 1, ?)`)
@@ -2268,7 +2272,10 @@ app.get('/api/team/tasks', (req, res) => {
 
 // ---- Directory --------------------------------------------------------------
 app.get('/api/directory', (req, res) => {
-  const users = db.prepare(`SELECT id, displayName, title, email, phone, photo
+  // Return hasPhoto instead of the base64 blob — the client loads photos
+  // lazily from /api/users/:id/photo, keeping this payload small.
+  const users = db.prepare(`SELECT id, displayName, title, email, phone,
+    CASE WHEN photo != '' THEN 1 ELSE 0 END AS hasPhoto
     FROM users ORDER BY displayName ASC`).all();
   res.json({ users });
 });
