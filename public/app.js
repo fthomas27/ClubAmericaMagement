@@ -18,7 +18,10 @@ async function api(path, { method = 'GET', body } = {}) {
   let data = null;
   try { data = await res.json(); } catch (_) {}
   if (!res.ok) {
-    if (res.status === 401) {
+    // A failed login is also a 401 — only treat it as an expired session when
+    // the request was actually authenticated, so a wrong password shows its
+    // error instead of bouncing the user back to the public homepage.
+    if (res.status === 401 && token && path !== '/auth/login') {
       localStorage.removeItem(TOKEN_KEY);
       window.dispatchEvent(new Event('ca:session-expired'));
     }
@@ -356,7 +359,7 @@ function ChangePassword({ user, onDone, forced }) {
   async function submit(e) {
     e.preventDefault();
     setError('');
-    if (pw.length < 4) return setError('Password must be at least 4 characters');
+    if (pw.length < 8) return setError('Password must be at least 8 characters');
     if (pw !== confirm) return setError('Passwords do not match');
     setLoading(true);
     try {
@@ -3536,6 +3539,7 @@ function RosterPage({ me }) {
           <Field label="Grade">
             <select className="bg-navy border border-cream/20 rounded-md px-3 py-2 text-sm text-cream"
               value={gradeFilter} onChange={(e) => setGradeFilter(e.target.value)}>
+              <option value="">All Grades</option>
               {[9,10,11,12].map((g) => <option key={g} value={g}>{g}th Grade</option>)}
             </select>
           </Field>
@@ -4005,7 +4009,7 @@ function AdminDashboardPage({ me }) {
   }
 
   async function taskAction(task, action) {
-    if (action === 'reject' && !(await confirm({ title: 'Reject task?', message: `”${task.name}” will be rejected and the sender notified.`, confirmLabel: 'Reject', danger: true }))) return;
+    if (action === 'reject' && !(await confirm({ title: 'Reject task?', message: `“${task.name}” will be rejected and the sender notified.`, confirmLabel: 'Reject', danger: true }))) return;
     setBusy(`task:${task.id}:${action}`);
     try { await api(`/tasks/${task.id}/${action}`, { method: 'POST' }); load(); }
     catch (err) { setError(err.message); }
@@ -5776,7 +5780,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
         ...(visible('mytasks')    ? [{ type: 'mytasks',    label: 'My Page',        icon: 'person'     }] : []),
         ...(visible('home')       ? [{ type: 'home',       label: 'Club Home',      icon: 'home'       }] : []),
         ...((checkinEnabled || isManager) && visible('checkin') ? [{ type: 'checkin', label: checkinEnabled ? 'Check-In' : 'Check-In Settings', icon: 'calendar' }] : []),
-        ...(visible('attendance') ? [{ type: 'attendance', label: 'Attendance',     icon: 'attendance' }] : []),
+        ...(isManager && visible('attendance') ? [{ type: 'attendance', label: 'Attendance', icon: 'attendance' }] : []),
         ...(visible('polls')      ? [{ type: 'polls',      label: 'Polls & Voting', icon: 'poll'       }] : []),
         ...(visible('meetings')   ? [{ type: 'meetings',   label: 'Meetings',       icon: 'meetings'   }] : []),
         ...(visible('funding')    ? [{ type: 'funding',    label: 'Funding',        icon: 'funding'    }] : []),
@@ -5903,6 +5907,10 @@ const NOTIF_LINK_VIEWS = {
   submissions: { type: 'submissions' },
   funding: { type: 'funding' },
   'board-apps': { type: 'apply' },
+  polls: { type: 'polls' },
+  reimbursements: { type: 'reimbursements' },
+  checkin: { type: 'checkin' },
+  social: { type: 'social' },
 };
 function NotificationBell({ onNavigate, refreshSignal }) {
   const [open, setOpen] = useState(false);
@@ -5978,17 +5986,17 @@ function NotificationBell({ onNavigate, refreshSignal }) {
 
 const TAB_DESCRIPTIONS = {
   mytasks:        { headline: 'Your Personal Task Board',       body: 'Everything assigned to you lives here, organized by Not Started, In Progress, and Complete. This is your home base for staying on top of your responsibilities as a board member.' },
-  home:           { headline: 'The Public Club Homepage',       body: 'See the Club América website exactly the way visitors and prospective members see it — right from inside your portal. Great for sharing links or reviewing how we present ourselves to the public.' },
+  home:           { headline: 'The Public Club Homepage',       body: 'See the Club America website exactly the way visitors and prospective members see it — right from inside your portal. Great for sharing links or reviewing how we present ourselves to the public.' },
   checkin:        { headline: 'Weekly Check-In',                body: 'Submit your weekly progress update so leadership can see what you\'ve accomplished, what\'s in progress, and if anything is blocking you. Consistent check-ins keep the entire board aligned.' },
-  attendance:     { headline: 'Your Attendance Record',         body: 'View your attendance history for all club meetings and events. Track your present, absent, and excused marks at a glance — staying engaged in meetings is a core part of your role.' },
-  polls:          { headline: 'Polls & Board Voting',           body: 'When leadership creates polls, you\'ll find them here. Cast your vote on club decisions, initiatives, and questions that shape the direction of Club América. Every voice counts.' },
+  attendance:     { headline: 'Attendance Tracker',             body: 'Create events and record who was present, absent, or excused at each club meeting and event. Use Roll Call mode to mark the whole board quickly during a meeting.' },
+  polls:          { headline: 'Polls & Board Voting',           body: 'When leadership creates polls, you\'ll find them here. Cast your vote on club decisions, initiatives, and questions that shape the direction of Club America. Every voice counts.' },
   meetings:       { headline: 'Club & Board Meetings',          body: 'Access everything tied to our meetings — agendas, notes, and records for both full club gatherings and board-only sessions. Stay informed whether you attended or are catching up later.' },
   funding:        { headline: 'Funding Requests',               body: 'Need money for an event, activity, or initiative? Submit a funding request here and track its status through review and approval. Every request is logged so nothing slips through the cracks.' },
-  apply:          { headline: 'Board Position Applications',    body: 'View open positions within Club América and submit your application directly through the portal. Applications go straight to leadership for review — no paperwork or email chains required.' },
+  apply:          { headline: 'Board Position Applications',    body: 'View open positions within Club America and submit your application directly through the portal. Applications go straight to leadership for review — no paperwork or email chains required.' },
   reimbursements: { headline: 'Expense Reimbursements',         body: 'Paid out of pocket for something club-related? Submit a reimbursement request here, describe the expense, and track it from submission all the way through approval and payout.' },
   resources:      { headline: 'The Resource Hub',               body: 'A curated library of documents, guides, templates, and materials for board members. Whether you need a form, a policy, or a reference guide — it\'s organized and searchable right here.' },
-  directory:      { headline: 'Board Member Directory',         body: 'The full contact list for every Club América board member — names, titles, and profiles in one place. Use the directory whenever you need to reach someone or learn who\'s on the team.' },
-  org:            { headline: 'Organizational Chart',           body: 'A visual map of Club América\'s full hierarchy. See how the Big Board, Grade Representatives, and board members all connect — and exactly where you fit into the structure.' },
+  directory:      { headline: 'Board Member Directory',         body: 'The full contact list for every Club America board member — names, titles, and profiles in one place. Use the directory whenever you need to reach someone or learn who\'s on the team.' },
+  org:            { headline: 'Organizational Chart',           body: 'A visual map of Club America\'s full hierarchy. See how the Big Board, Grade Representatives, and board members all connect — and exactly where you fit into the structure.' },
   ainotes:        { headline: 'AI-Generated Board Notes',       body: 'Your intelligent assistant surfaces highlights from board activity, meeting summaries, and club updates. Unread notes are flagged so you always know when something new is waiting.' },
   announce:       { headline: 'Team Announcements',             body: 'Send a broadcast to your direct reports or the wider team. Use announcements for time-sensitive updates, reminders, and news that can\'t wait until the next scheduled meeting.' },
   myteam:         { headline: 'Your Direct Reports',            body: 'See everyone who reports to you in one place. Click any team member to jump straight to their task board, review their progress, and stay connected with what your team is building.' },
@@ -5997,13 +6005,13 @@ const TAB_DESCRIPTIONS = {
   roster:         { headline: 'Membership Roster & Pipeline',   body: 'Track everyone in your recruitment pipeline from first contact to fully onboarded member. Move candidates through stages — Prospect, Contacted, Onboarded, or Declined — and keep things organized.' },
   dashboard:      { headline: 'Leadership Dashboard',           body: 'A bird\'s-eye view of club operations. Pending approvals, funding requests, board applications, and key metrics all in one place — your command center for keeping things running smoothly.' },
   volunteers:     { headline: 'Volunteer Management',           body: 'Coordinate club event volunteers from here. See who signed up, track event-by-event participation, and manage your volunteer roster without chasing down responses separately.' },
-  speaker:        { headline: 'Speaker Events',                 body: 'Plan and log Club América speaker events. Track upcoming guests, event logistics, scheduling, and status updates so nothing falls through the cracks on the day of the event.' },
-  grants:         { headline: 'Grant Tracker',                  body: 'Stay on top of every grant application in the pipeline. Track submission deadlines, application statuses, and award amounts to ensure Club América never misses a funding opportunity.' },
-  social:         { headline: 'Social Media Tracker',           body: 'Log and track the club\'s social media output across platforms. Plan upcoming content, record what was posted, and keep Club América\'s digital presence organized and consistent.' },
-  budget:         { headline: 'Budget Overview',                body: 'Monitor the club\'s financial health at a glance. Track spending against allocations, review budget categories, and ensure every dollar is working toward Club América\'s goals.' },
+  speaker:        { headline: 'Speaker Events',                 body: 'Plan and log Club America speaker events. Track upcoming guests, event logistics, scheduling, and status updates so nothing falls through the cracks on the day of the event.' },
+  grants:         { headline: 'Grant Tracker',                  body: 'Stay on top of every grant application in the pipeline. Track submission deadlines, application statuses, and award amounts to ensure Club America never misses a funding opportunity.' },
+  social:         { headline: 'Social Media Tracker',           body: 'Log and track the club\'s social media output across platforms. Plan upcoming content, record what was posted, and keep Club America\'s digital presence organized and consistent.' },
+  budget:         { headline: 'Budget Overview',                body: 'Monitor the club\'s financial health at a glance. Track spending against allocations, review budget categories, and ensure every dollar is working toward Club America\'s goals.' },
   grades:         { headline: 'Grade-Level Pipeline',           body: 'Manage recruitment and engagement broken down by grade level. See which grades have strong representation, where outreach is needed, and move students through onboarding cohort by cohort.' },
-  website:        { headline: 'Website Editor',                 body: 'Edit the public Club América homepage directly from here. Update content, refresh sections, and ensure the site always reflects the latest accurate information — changes go live immediately.' },
-  admin:          { headline: 'Admin Panel',                    body: 'The full control center for the portal. Add and manage users, assign roles, configure permissions, and handle all technical administration of the Club América board management platform.' },
+  website:        { headline: 'Website Editor',                 body: 'Edit the public Club America homepage directly from here. Update content, refresh sections, and ensure the site always reflects the latest accurate information — changes go live immediately.' },
+  admin:          { headline: 'Admin Panel',                    body: 'The full control center for the portal. Add and manage users, assign roles, configure permissions, and handle all technical administration of the Club America board management platform.' },
   logistics:      { headline: 'Login Activity Log',             body: 'Review board member login history and portal access logs. Spot inactive members, monitor usage patterns, and maintain security awareness across the platform.' },
   ai:             { headline: 'AI Assistant',                   body: 'A Claude-powered AI interface built for club administration. Ask questions, generate content, analyze data, or get help drafting anything — your AI teammate is ready whenever you need it.' },
 };
@@ -6224,7 +6232,7 @@ function App() {
     { type: 'mytasks',        label: 'My Page' },
     { type: 'home',           label: 'Club Home' },
     { type: 'checkin',        label: 'Check-In' },
-    { type: 'attendance',     label: 'Attendance' },
+    ...(isMgrOrAdmin                          ? [{ type: 'attendance', label: 'Attendance' }] : []),
     { type: 'polls',          label: 'Polls & Voting' },
     { type: 'meetings',       label: 'Meetings' },
     { type: 'funding',        label: 'Funding' },
@@ -6237,7 +6245,7 @@ function App() {
     ...(isMgrOrAdmin                          ? [{ type: 'announce',    label: 'Announcement' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'myteam',      label: 'My Team' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'approvals',   label: 'Approvals' }] : []),
-    ...(isMgrOrAdmin || !!me.canAnnounce      ? [{ type: 'submissions', label: 'Get Involved' }] : []),
+    ...(me.role === 'admin' || !!me.grade     ? [{ type: 'submissions', label: 'Get Involved' }] : []),
     ...(isMgrOrAdmin || !!me.canManageRoster  ? [{ type: 'roster',      label: 'Roster' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'dashboard',   label: 'Dashboard' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'volunteers',  label: 'Volunteers' }] : []),
@@ -6258,8 +6266,8 @@ function App() {
   if (view.type === 'apphome') return (
     <>
       {showWelcomeIntro && <WelcomeIntroModal me={me} navTiles={navTiles} onDone={introDismiss} />}
-      {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={() => { setAiNotesOpen(false); bump(); }} />}
-      {searchOpen && <SearchModal me={me} tiles={navTiles} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
+      {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={bump} />}
+      {searchOpen && <SearchModal me={me} reports={reports} tiles={navTiles} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
       <AppHome me={me} reports={reports} approvalsCount={approvalsCount} submissionsCount={submissionsCount}
         checkinEnabled={checkinEnabled} aiNotesCount={aiNotesCount} onAiNotes={() => setAiNotesOpen(true)}
         onNavigate={navigate} onLogout={logout} onSearch={() => setSearchOpen(true)} />
@@ -6316,8 +6324,8 @@ function App() {
   return (
     <>
       {showWelcomeIntro && <WelcomeIntroModal me={me} navTiles={navTiles} onDone={introDismiss} />}
-      {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={() => { setAiNotesOpen(false); bump(); }} />}
-      {searchOpen && <SearchModal me={me} tiles={navTiles} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
+      {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={bump} />}
+      {searchOpen && <SearchModal me={me} reports={reports} tiles={navTiles} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
       <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
         <header className="sticky top-0 z-20 flex items-center gap-3 bg-navy2/95 backdrop-blur border-b border-cream/10 px-4 py-3">
           <button onClick={() => navigate({ type: 'apphome' })} aria-label="Back to home"
@@ -7217,7 +7225,7 @@ function TaskComments({ taskId, me }) {
 // ---------------------------------------------------------------------------
 // Search Modal
 // ---------------------------------------------------------------------------
-function SearchModal({ me, tiles = [], onNavigate, onClose }) {
+function SearchModal({ me, reports = [], tiles = [], onNavigate, onClose }) {
   const [q, setQ] = useState('');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -7297,7 +7305,14 @@ function SearchModal({ me, tiles = [], onNavigate, onClose }) {
               <div className="py-2">
                 <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-cream/40 font-semibold">Members</div>
                 {results.members.map((u) => (
-                  <button key={u.id} onClick={() => go({ type: u.id === me.id ? 'mytasks' : 'person', userId: u.id })}
+                  <button key={u.id} onClick={() => {
+                      // Only admins and direct managers can open someone's task
+                      // page — everyone else lands on the directory instead of a
+                      // "Not allowed" error.
+                      if (u.id === me.id) return go({ type: 'mytasks' });
+                      const canOpen = me.role === 'admin' || reports.some((r) => r.id === u.id);
+                      go(canOpen ? { type: 'person', userId: u.id } : { type: 'directory' });
+                    }}
                     className="w-full text-left px-4 py-2.5 hover:bg-navy3 transition-colors flex items-center gap-3">
                     <div className="w-7 h-7 rounded-full bg-navy border border-gold/30 flex items-center justify-center text-gold text-xs font-display shrink-0">
                       {(u.displayName || '?').charAt(0).toUpperCase()}
@@ -7415,7 +7430,7 @@ function GradePipelinePage({ me }) {
   return (
     <div className="max-w-3xl space-y-6">
       <div>
-        <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Grade {currentGrade} Pipeline</h1>
+        <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">{currentGrade ? `Grade ${currentGrade} Pipeline` : 'Recruitment Pipeline'}</h1>
         <p className="text-cream/50 mt-1">Recruitment funnel and prospect status.</p>
       </div>
       {error && <div className="text-red text-sm">{error}</div>}
@@ -7726,8 +7741,8 @@ function DirectoryPage({ me }) {
           return (
             <div key={u.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 flex items-start gap-3 hover:border-cream/20 transition-colors">
               <div className="w-12 h-12 rounded-full bg-navy3 border border-gold/20 overflow-hidden flex items-center justify-center shrink-0">
-                {u.photo
-                  ? <img src={u.photo} alt={u.displayName} className="w-full h-full object-cover" />
+                {u.hasPhoto
+                  ? <img src={`/api/users/${u.id}/photo`} alt={u.displayName} loading="lazy" className="w-full h-full object-cover" />
                   : <span className="text-gold font-display text-lg">{initials}</span>}
               </div>
               <div className="min-w-0 flex-1">
@@ -8050,7 +8065,7 @@ function BudgetDashboardPage({ me }) {
   const spent = Number(totals.approvedAmount) + Number(totals.purchasedAmount);
 
   const StatCard = ({ label, value, tone = 'slate' }) => {
-    const tones = { gold: 'border-gold/40 text-gold', green: 'border-emerald-500/40 text-emerald-300', red: 'border-red/40 text-red', slate: 'border-cream/15 text-cream' };
+    const tones = { gold: 'border-gold/40 text-gold', green: 'border-emerald-500/40 text-emerald-300', blue: 'border-sky-500/40 text-sky-300', red: 'border-red/40 text-red', slate: 'border-cream/15 text-cream' };
     return (
       <div className={`bg-navy2 border rounded-xl p-4 ${tones[tone]}`}>
         <div className="text-2xl font-display">{value}</div>
@@ -8184,8 +8199,6 @@ function PollsPage({ me }) {
 
   function setOption(i, val) { setOptions((prev) => { const n = [...prev]; n[i] = val; return n; }); }
 
-  const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
   return (
     <div className="max-w-3xl">
       {confirmEl}
@@ -8252,7 +8265,6 @@ function PollsPage({ me }) {
 
               <div className="space-y-2">
                 {poll.options.map((opt, i) => {
-                  const count = showResults ? (totalVotes > 0 ? (/* we need real counts */ 0) : 0) : 0;
                   const isMyVote = poll.myVote === i;
                   return (
                     <button key={i}
