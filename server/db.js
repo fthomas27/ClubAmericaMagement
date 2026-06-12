@@ -510,6 +510,7 @@ function init() {
   // Additional user column migrations.
   if (!cols.includes('canManageSocial')) db.exec("ALTER TABLE users ADD COLUMN canManageSocial INTEGER NOT NULL DEFAULT 0");
   if (!cols.includes('phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('hiddenTabs')) db.exec("ALTER TABLE users ADD COLUMN hiddenTabs TEXT NOT NULL DEFAULT ''");
 
   // Remove the old dedicated logistics observer account — the dashboard is now
   // accessible to admins directly and via the canViewLogistics permission.

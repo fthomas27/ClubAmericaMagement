@@ -1833,7 +1833,7 @@ app.post('/api/admin/users', requireAdmin, rateLimit({ windowMs: 60 * 60 * 1000,
 app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
   const user = getUser(Number(req.params.id));
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { role, title, managerId, grade, email, canManageRoster, managedGrade, canAnnounce, canEditHome, bigBoard, canViewLogistics, canManageSocial, username, firstName, lastName } = req.body || {};
+  const { role, title, managerId, grade, email, canManageRoster, managedGrade, canAnnounce, canEditHome, bigBoard, canViewLogistics, canManageSocial, username, firstName, lastName, hiddenTabs } = req.body || {};
   const prevManager = user.managerId;
 
   // Validate and normalize username if provided.
@@ -1875,6 +1875,10 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     ? [newFirst ?? user.firstName, newLast ?? user.lastName].filter(Boolean).join(' ')
     : null;
 
+  const newHiddenTabs = hiddenTabs !== undefined
+    ? JSON.stringify(Array.isArray(hiddenTabs) ? hiddenTabs : [])
+    : null;
+
   db.prepare(`UPDATE users SET
     role = ?,
     title = COALESCE(?, title),
@@ -1891,7 +1895,8 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     username        = COALESCE(?, username),
     firstName       = COALESCE(?, firstName),
     lastName        = COALESCE(?, lastName),
-    displayName     = COALESCE(?, displayName)
+    displayName     = COALESCE(?, displayName),
+    hiddenTabs      = COALESCE(?, hiddenTabs)
   WHERE id = ?`).run(
     newRole,
     title ?? null,
@@ -1909,6 +1914,7 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     newFirst,
     newLast,
     newDisplayName,
+    newHiddenTabs,
     user.id,
   );
 
