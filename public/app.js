@@ -302,15 +302,20 @@ function Logo({ size = 'sidebar' }) {
 function Login({ onLogin, onBack }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   async function submit(e) {
     e.preventDefault();
     setError('');
+    // Usernames are always lowercase with no spaces (first initial + last name),
+    // so normalize here — a stray capital or trailing space shouldn't fail a login.
+    const cleanUser = username.trim().toLowerCase();
+    if (!cleanUser || !password) { setError('Enter your username and password.'); return; }
     setLoading(true);
     try {
-      const data = await api('/auth/login', { method: 'POST', body: { username, password } });
+      const data = await api('/auth/login', { method: 'POST', body: { username: cleanUser, password } });
       localStorage.setItem(TOKEN_KEY, data.token);
       onLogin(data.user);
     } catch (err) {
@@ -327,18 +332,35 @@ function Login({ onLogin, onBack }) {
           <Logo size="login" />
         </div>
         <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-slide-up" style={{ animationDelay: '60ms' }}>
+          <div className="text-center">
+            <div className="font-display text-2xl text-gold">Board Portal</div>
+            <p className="text-cream/50 text-sm mt-1">Sign in with your board account. This area is for board members only.</p>
+          </div>
           <Field label="Username">
             <input className={inputCls} value={username} autoFocus
+              name="username" autoComplete="username" autoCapitalize="none"
+              autoCorrect="off" spellCheck="false"
               onChange={(e) => setUsername(e.target.value)} placeholder="e.g. fthomas" />
           </Field>
           <Field label="Password">
-            <input className={inputCls} type="password" value={password}
-              onChange={(e) => setPassword(e.target.value)} placeholder="Password" />
+            <div className="relative">
+              <input className={inputCls + ' pr-16'} type={showPw ? 'text' : 'password'} value={password}
+                name="password" autoComplete="current-password"
+                onChange={(e) => setPassword(e.target.value)} placeholder="Password" />
+              <button type="button" onClick={() => setShowPw((v) => !v)}
+                className="absolute inset-y-0 right-0 px-3 flex items-center text-xs text-cream/50 hover:text-gold transition-colors"
+                aria-label={showPw ? 'Hide password' : 'Show password'} tabIndex={-1}>
+                {showPw ? 'Hide' : 'Show'}
+              </button>
+            </div>
           </Field>
           {error && <div className="text-red text-sm">{error}</div>}
           <Button type="submit" variant="gold" className="w-full" disabled={loading}>
             {loading ? 'Signing in…' : 'Sign In'}
           </Button>
+          <p className="text-center text-xs text-cream/40">
+            First time? Your password is your username — you'll set a new one after signing in.
+          </p>
           {onBack && (
             <button type="button" onClick={onBack} className="block mx-auto text-xs text-cream/50 hover:text-gold">
               ← Back to homepage
@@ -2438,8 +2460,10 @@ function HomeAnnouncementEditor({ home, onSaved }) {
 
 // ---- Meet the Board (public, data-driven org chart with click-for-bio) ------
 function Avatar({ member, size = 56 }) {
-  if (member.hasPhoto) {
+  const [imgFailed, setImgFailed] = useState(false);
+  if (member.hasPhoto && !imgFailed) {
     return <img src={`/api/users/${member.id}/photo`} alt={member.displayName}
+      onError={() => setImgFailed(true)}
       style={{ width: size, height: size }} className="rounded-full object-cover border-2 border-gold/40" />;
   }
   const initials = (member.displayName || '?').split(/\s+/).map((s) => s[0]).slice(0, 2).join('').toUpperCase();
