@@ -2092,6 +2092,11 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
 
   if (role !== undefined && !ROLES.includes(role)) return res.status(400).json({ error: 'Invalid role' });
   const newRole = ROLES.includes(role) ? role : user.role;
+  // Never demote the last admin — that would lock everyone out of the Admin Panel.
+  if (user.role === 'admin' && newRole !== 'admin') {
+    const otherAdmins = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND id != ?").get(user.id).n;
+    if (otherAdmins === 0) return res.status(400).json({ error: 'Cannot remove the last remaining admin.' });
+  }
   const newManagerId = managerId === undefined ? user.managerId : (managerId || null);
   if (newManagerId === user.id) return res.status(400).json({ error: 'A user cannot manage themselves' });
   if (grade !== undefined && grade !== '' && !GRADES.includes(String(grade).trim())) {
@@ -2380,17 +2385,22 @@ app.get('/api/logistics/stats', (req, res) => {
 
 // ---- Grade Pipeline ---------------------------------------------------------
 app.get('/api/roster/grade-pipeline', (req, res) => {
-  const isManager = req.user.role === 'admin' || req.user.role === 'manager';
+  const canViewAll = canViewRoster(req.user); // admin / manager / canManageRoster
+  const myGrade = req.user.managedGrade != null ? Number(req.user.managedGrade) : null;
+  // Only roster viewers or assigned grade reps may see pipeline PII at all.
+  if (!canViewAll && myGrade == null) return res.status(403).json({ error: 'Not allowed' });
+
   const gradeParam = req.query.grade;
   let grade;
-  if (gradeParam) {
+  if (gradeParam !== undefined && gradeParam !== '') {
     grade = Number(gradeParam);
     if (!Number.isInteger(grade)) return res.status(400).json({ error: 'Invalid grade' });
-  } else if (req.user.managedGrade != null) {
-    grade = req.user.managedGrade;
-  } else if (!isManager) {
-    return res.status(403).json({ error: 'No grade assigned' });
+    // A grade rep (not a manager/admin) may only view their own grade.
+    if (!canViewAll && grade !== myGrade) return res.status(403).json({ error: 'Not allowed' });
+  } else if (!canViewAll) {
+    grade = myGrade;
   }
+  // Managers/admins with no grade param fall through to all grades (grade undefined).
   const gradeFilter = grade != null ? 'WHERE rm.grade = ' + Number(grade) : '';
   const statusFilter = grade != null
     ? 'WHERE rm.grade = ' + Number(grade) + " AND rm.status IN ('Prospect','Contacted')"

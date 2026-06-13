@@ -6859,7 +6859,9 @@ function App() {
     ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity' }] : []),
     ...(me.role === 'admin'                   ? [{ type: 'ai',          label: 'AI Assistant' }] : []),
   ].filter(t => !meHiddenTabs.has(t.type));
-  const navigate = (v) => setView(v);
+  // "Agent Notes" is a modal, not a routed view — open it instead of navigating
+  // to a blank page (it's reachable from search and the welcome intro).
+  const navigate = (v) => { if (v && v.type === 'ainotes') { setAiNotesOpen(true); return; } setView(v); };
 
   const introDismiss = () => { markWelcomeSeen(me.id); setShowWelcomeIntro(false); };
 
