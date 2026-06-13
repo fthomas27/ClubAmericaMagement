@@ -72,7 +72,8 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
   const isProfilePhoto = req.method === 'PUT' && req.path === '/api/me/profile';
   const isEventPhoto = req.method === 'POST' && req.path === '/api/event-photos';
-  const limit = isProfilePhoto || isEventPhoto ? '6mb' : '50kb';
+  const isIgHighlight = req.method === 'POST' && req.path === '/api/instagram-highlights';
+  const limit = isProfilePhoto || isEventPhoto || isIgHighlight ? '6mb' : '50kb';
   express.json({ limit })(req, res, next);
 });
 
@@ -416,6 +417,24 @@ app.get('/api/event-photos/:id/image', (req, res) => {
   res.send(Buffer.from(m[2], 'base64'));
 });
 
+// ---- Instagram highlights (public slideshow) --------------------------------
+app.get('/api/instagram-highlights', (req, res) => {
+  const items = db.prepare(
+    'SELECT id, link, caption FROM instagram_highlights ORDER BY sortOrder ASC, createdAt DESC LIMIT 30'
+  ).all();
+  res.json({ items });
+});
+
+app.get('/api/instagram-highlights/:id/image', (req, res) => {
+  const row = db.prepare('SELECT image FROM instagram_highlights WHERE id = ?').get(Number(req.params.id));
+  if (!row || !row.image) return res.status(404).end();
+  const m = String(row.image).match(/^data:(image\/[a-z+]+);base64,(.+)$/s);
+  if (!m) return res.status(404).end();
+  res.set('Content-Type', m[1]);
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.send(Buffer.from(m[2], 'base64'));
+});
+
 // ---- Public volunteer sign-up routes (NO auth required) ----------------------
 const volunteerSignupRL = rateLimit({ windowMs: 60 * 1000, max: 30, name: 'vsignup' });
 
@@ -721,6 +740,34 @@ app.delete('/api/event-photos/:id', (req, res) => {
   if (!row) return res.status(404).json({ error: 'Not found' });
   db.prepare('DELETE FROM event_photos WHERE id = ?').run(row.id);
   logApproval('event_photo', row.id, 'removed', req.user);
+  res.json({ ok: true });
+});
+
+// ---- Instagram highlights management (Edit Website permission) --------------
+app.get('/api/instagram-highlights/manage', (req, res) => {
+  if (!canEditHome(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const items = db.prepare('SELECT id, link, caption, sortOrder, createdAt FROM instagram_highlights ORDER BY sortOrder ASC, createdAt DESC').all();
+  res.json({ items });
+});
+
+app.post('/api/instagram-highlights', (req, res) => {
+  if (!canEditHome(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  let { image, link, caption } = req.body || {};
+  image = typeof image === 'string' ? image : '';
+  link = String(link || '').trim().slice(0, 500);
+  caption = String(caption || '').trim().slice(0, 280);
+  if (!/^data:image\/(png|jpe?g|webp);base64,/.test(image)) return res.status(400).json({ error: 'Please choose an image (JPG, PNG, or WEBP).' });
+  if (image.length > 6 * 1024 * 1024) return res.status(400).json({ error: 'That image is too large — pick a smaller one.' });
+  if (link && !/^https?:\/\//i.test(link)) link = 'https://' + link;
+  const max = db.prepare('SELECT COALESCE(MAX(sortOrder), 0) AS m FROM instagram_highlights').get().m;
+  const info = db.prepare('INSERT INTO instagram_highlights (image, link, caption, sortOrder, createdById) VALUES (?, ?, ?, ?, ?)')
+    .run(image, link, caption, max + 1, req.user.id);
+  res.status(201).json({ ok: true, id: info.lastInsertRowid });
+});
+
+app.delete('/api/instagram-highlights/:id', (req, res) => {
+  if (!canEditHome(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  db.prepare('DELETE FROM instagram_highlights WHERE id = ?').run(Number(req.params.id));
   res.json({ ok: true });
 });
 

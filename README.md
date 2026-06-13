@@ -195,10 +195,11 @@ report in the Admin Panel, and drops back to **Member** when they have none.
   once a board member approves them (no unvetted images ever go live). Board
   members with the **Photo Approvals** tab — admins, the Digital Presence
   Manager, and the Social Media manager — approve or remove photos.
-- **From Our Instagram:** a grid of hand-picked Instagram posts shown via
-  Instagram's official embed (one per row on phones, more on wider screens, each
-  post fully visible). The board pastes any public post/reel link in **Edit
-  Website** (up to 12) and they render live.
+- **From Our Instagram:** a one-at-a-time fading slideshow of board-curated
+  posts. Instagram blocks live embeds for signed-out visitors, so in **Edit
+  Website** the board **uploads each photo and links it to its post**; the
+  homepage shows them one at a time (auto-advancing, pause on hover, arrows +
+  dots) and tapping opens that post on Instagram.
 - **Controlled by the Digital Presence Manager** (`dhays`) — they (and the
   President/VP) get an edit panel on the in-portal **Home** view to set the
   calendar feed, meeting fallback, and podcast link. Everyone else sees it
