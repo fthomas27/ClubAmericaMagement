@@ -1667,10 +1667,12 @@ const ALL_TABS_BY_SECTION = [
     { type: 'grades',      label: 'Grade Pipeline' },
   ]},
   { section: 'Site & Admin', roles: ['admin'], tabs: [
-    { type: 'website',   label: 'Edit Website' },
-    { type: 'admin',     label: 'Admin Panel' },
-    { type: 'logistics', label: 'Login Activity' },
-    { type: 'ai',        label: 'AI Assistant' },
+    { type: 'website',      label: 'Edit Website' },
+    { type: 'testimonials', label: 'Testimonials' },
+    { type: 'newsletter',   label: 'Newsletter' },
+    { type: 'admin',        label: 'Admin Panel' },
+    { type: 'logistics',    label: 'Login Activity' },
+    { type: 'ai',           label: 'AI Assistant' },
   ]},
 ];
 
@@ -3171,6 +3173,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         </section>
         <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 space-y-8">
           <HomeAnnouncementBanner home={home} />
+          {home.memberCount > 0 && <MemberStatsBar memberCount={home.memberCount} testimonialCount={home.testimonialCount || 0} />}
           {cards}
           <AboutSection home={home} />
           <ValuesSection />
@@ -3178,6 +3181,8 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
           <div id="photos"><EventPhotos /></div>
           <InstagramFeed home={home} />
           <div id="meet-the-board"><MeetTheBoard /></div>
+          <div id="testimonials"><TestimonialsSection /></div>
+          <NewsletterSignup />
           <div id="get-involved"><GetInvolved /></div>
         </main>
         {canAnnounce && (
@@ -3291,6 +3296,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         </div>
       <main id="club-content" className="relative max-w-5xl mx-auto px-4 sm:px-6 pb-20 pt-10 space-y-8">
         {home.homeAnnouncementEnabled && home.homeAnnouncement && <Reveal><HomeAnnouncementBanner home={home} /></Reveal>}
+        {home.memberCount > 0 && <Reveal><MemberStatsBar memberCount={home.memberCount} testimonialCount={home.testimonialCount || 0} /></Reveal>}
         <Reveal>{cards}</Reveal>
         {home.aboutText && <Reveal><AboutSection home={home} /></Reveal>}
         <ValuesSection />
@@ -3298,6 +3304,8 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         <Reveal><div id="photos"><EventPhotos /></div></Reveal>
         <Reveal><InstagramFeed home={home} /></Reveal>
         <Reveal><div id="meet-the-board"><MeetTheBoard /></div></Reveal>
+        <Reveal><div id="testimonials"><TestimonialsSection /></div></Reveal>
+        <Reveal><NewsletterSignup /></Reveal>
         <Reveal><div id="get-involved"><GetInvolved /></div></Reveal>
       </main>
       <footer className="relative pb-10">
@@ -6157,8 +6165,10 @@ function AppIcon({ name, className }) {
     case 'reimbursements': return <svg {...p}><path d="M5 3h14v18l-2.5-1.5L14 21l-2-1.5L10 21l-2.5-1.5L5 21z"/><path d="M9 8h6M9 12h6M13 16h2"/></svg>;
     case 'directory': return <svg {...p}><rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="12" cy="10" r="2.5"/><path d="M8 17c.4-1.8 2-3 4-3s3.6 1.2 4 3"/><path d="M2 8h2M2 12h2M2 16h2"/></svg>;
     case 'resources': return <svg {...p}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M12 7v6M9 10h6"/></svg>;
-    case 'volunteer': return <svg {...p}><path d="M19.5 12.572 12 20l-7.5-7.428A5 5 0 1 1 12 6.006a5 5 0 1 1 7.5 6.566"/><path d="m9 12 2 2 4-4"/></svg>;
-    default:          return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
+    case 'volunteer':    return <svg {...p}><path d="M19.5 12.572 12 20l-7.5-7.428A5 5 0 1 1 12 6.006a5 5 0 1 1 7.5 6.566"/><path d="m9 12 2 2 4-4"/></svg>;
+    case 'testimonial':  return <svg {...p}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg>;
+    case 'newsletter':   return <svg {...p}><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>;
+    default:             return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
   }
 }
 
@@ -6180,7 +6190,7 @@ function AppTile({ label, icon, badge, onClick, style }) {
   );
 }
 
-function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, aiNotesCount, onAiNotes, onNavigate, onLogout, onSearch }) {
+function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, aiNotesCount, pendingTestimonialsCount, onAiNotes, onNavigate, onLogout, onSearch }) {
   const isManager = me.role === 'manager' || me.role === 'admin';
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
   const canSeeSubmissions = me.role === 'admin' || !!me.grade;
@@ -6229,10 +6239,12 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
     {
       title: 'Site & Admin',
       tiles: [
-        ...(canEditSite && visible('website')         ? [{ type: 'website',   label: 'Edit Website',   icon: 'edit'     }] : []),
-        ...(me.role === 'admin' && visible('admin')   ? [{ type: 'admin',     label: 'Admin Panel',    icon: 'admin'    }] : []),
+        ...(canEditSite && visible('website')              ? [{ type: 'website',      label: 'Edit Website',   icon: 'edit'        }] : []),
+        ...(me.role === 'admin' && visible('testimonials') ? [{ type: 'testimonials', label: 'Testimonials', icon: 'testimonial', badge: pendingTestimonialsCount || undefined }] : []),
+        ...(me.role === 'admin' && visible('newsletter')   ? [{ type: 'newsletter',   label: 'Newsletter',     icon: 'newsletter'  }] : []),
+        ...(me.role === 'admin' && visible('admin')        ? [{ type: 'admin',        label: 'Admin Panel',    icon: 'admin'       }] : []),
         ...((me.role === 'admin' || !!me.canViewLogistics) && visible('logistics') ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }] : []),
-        ...(me.role === 'admin' && visible('ai')      ? [{ type: 'ai',        label: 'AI Assistant',   icon: 'ai'       }] : []),
+        ...(me.role === 'admin' && visible('ai')           ? [{ type: 'ai',           label: 'AI Assistant',   icon: 'ai'          }] : []),
       ],
     },
   ].filter((s) => s.tiles.length > 0);
@@ -6562,12 +6574,15 @@ function App() {
   const [checkinEnabled, setCheckinEnabled] = useState(false);
   const [refreshSignal, setRefreshSignal] = useState(0);
   const [aiNotesCount, setAiNotesCount] = useState(0);
+  const [pendingTestimonialsCount, setPendingTestimonialsCount] = useState(0);
   const [aiNotesOpen, setAiNotesOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [showWelcomeIntro, setShowWelcomeIntro] = useState(false);
 
   const isSurveyPath = window.location.pathname === '/survey';
   const volunteerMatch = window.location.pathname.match(/^\/volunteer\/(\d+)$/);
+  // Match both /testimonial-submit (universal) and /testimonial-submit/:token (pre-filled)
+  const testimonialSubmitMatch = window.location.pathname.match(/^\/testimonial-submit(?:\/([a-zA-Z0-9]*))?$/);
   const bump = () => setRefreshSignal((n) => n + 1);
 
   const loadShared = useCallback(async (user) => {
@@ -6591,6 +6606,10 @@ function App() {
       }
       const noteData = await api('/ai/notes').catch(() => ({ notes: [] }));
       setAiNotesCount((noteData.notes || []).filter((n) => !n.isRead).length);
+      if (user.role === 'admin') {
+        const tc = await api('/admin/testimonials/pending-count').catch(() => ({ count: 0 }));
+        setPendingTestimonialsCount(tc.count || 0);
+      }
     } catch (_) {}
   }, []);
 
@@ -6635,6 +6654,7 @@ function App() {
   if (!booted) return <div className="min-h-screen flex items-center justify-center gap-2 text-cream/40"><Spinner className="w-5 h-5" /> Loading…</div>;
   if (isSurveyPath) return <InterestSurvey onBack={() => { window.history.pushState(null, '', '/'); window.location.reload(); }} />;
   if (volunteerMatch) return <VolunteerSignUpPage eventId={Number(volunteerMatch[1])} />;
+  if (testimonialSubmitMatch) return <TestimonialSubmitPage token={testimonialSubmitMatch[1] || null} />;
   if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;
   if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); }} onBack={() => setEnterPortal(false)} />;
   if (me.firstLogin) return <ChangePassword user={me} forced onDone={(u) => { setMe(u); loadShared(u); }} />;
@@ -6687,8 +6707,8 @@ function App() {
       {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={bump} />}
       {searchOpen && <SearchModal me={me} reports={reports} tiles={navTiles} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
       <AppHome me={me} reports={reports} approvalsCount={approvalsCount} submissionsCount={submissionsCount}
-        checkinEnabled={checkinEnabled} aiNotesCount={aiNotesCount} onAiNotes={() => setAiNotesOpen(true)}
-        onNavigate={navigate} onLogout={logout} onSearch={() => setSearchOpen(true)} />
+        checkinEnabled={checkinEnabled} aiNotesCount={aiNotesCount} pendingTestimonialsCount={pendingTestimonialsCount}
+        onAiNotes={() => setAiNotesOpen(true)} onNavigate={navigate} onLogout={logout} onSearch={() => setSearchOpen(true)} />
     </>
   );
 
@@ -6705,6 +6725,7 @@ function App() {
     photos: 'Photo Approvals',
     org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity',
     ai: 'AI Assistant', password: 'Change Password', profile: 'Edit Profile',
+    testimonials: 'Testimonials', newsletter: 'Newsletter',
   };
 
   let content;
@@ -6740,6 +6761,8 @@ function App() {
   else if (view.type === 'directory') content = <DirectoryPage me={me} />;
   else if (view.type === 'resources') content = <ResourceHubPage me={me} />;
   else if (view.type === 'volunteers') content = (me.role === 'admin' || me.role === 'manager') ? <VolunteerManagerPage me={me} /> : null;
+  else if (view.type === 'testimonials') content = me.role === 'admin' ? <TestimonialsAdminPage me={me} /> : null;
+  else if (view.type === 'newsletter') content = me.role === 'admin' ? <NewsletterAdminPage me={me} /> : null;
 
   return (
     <>
@@ -8744,6 +8767,787 @@ function PollResults({ pollId }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Member Stats Bar — shows active member count on the public homepage
+// ---------------------------------------------------------------------------
+function AnimatedCount({ to }) {
+  const [val, setVal] = useState(0);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!to) return;
+    let start = null;
+    const duration = 900;
+    const step = (ts) => {
+      if (!start) start = ts;
+      const progress = Math.min((ts - start) / duration, 1);
+      const ease = 1 - Math.pow(1 - progress, 3);
+      setVal(Math.round(ease * to));
+      if (progress < 1) ref.current = requestAnimationFrame(step);
+    };
+    ref.current = requestAnimationFrame(step);
+    return () => { if (ref.current) cancelAnimationFrame(ref.current); };
+  }, [to]);
+  return <span>{val}</span>;
+}
+
+function MemberStatsBar({ memberCount, testimonialCount }) {
+  if (!memberCount) return null;
+  const stats = [
+    { value: memberCount, label: 'Board Members' },
+    ...(testimonialCount > 0 ? [{ value: testimonialCount, label: 'Member Stories' }] : []),
+    { value: null, label: 'Park City, UT' },
+  ];
+  return (
+    <div className="flex flex-wrap justify-center gap-6 sm:gap-10 py-4 px-4 border-y border-cream/8">
+      {stats.map((s, i) => (
+        <React.Fragment key={i}>
+          {i > 0 && <div className="w-px bg-cream/10 self-stretch hidden sm:block" />}
+          <div className="flex flex-col items-center gap-0.5">
+            <span className="font-display text-4xl sm:text-5xl text-gold leading-none">
+              {s.value !== null ? <AnimatedCount to={s.value} /> : '★'}
+            </span>
+            <span className="text-cream/50 text-[10px] tracking-widest uppercase">{s.label}</span>
+          </div>
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Testimonials Section — public display of approved testimonials
+// ---------------------------------------------------------------------------
+function TestimonialsSection() {
+  const [items, setItems] = useState(null);
+
+  useEffect(() => {
+    fetch('/api/testimonials')
+      .then((r) => r.json())
+      .then((d) => setItems(d.testimonials || []))
+      .catch(() => setItems([]));
+  }, []);
+
+  if (!items || items.length === 0) return null;
+
+  return (
+    <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6">
+      <h2 className="font-display text-3xl text-gold mb-1">What Members Say</h2>
+      <p className="text-cream/60 text-sm mb-6">Hear from the people who make Club America what it is.</p>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        {items.map((t) => (
+          <div key={t.id} className="bg-navy border border-cream/10 rounded-xl p-5 flex flex-col gap-3 hover:border-gold/30 transition-colors">
+            <div className="text-cream/80 text-sm leading-relaxed italic flex-1">"{t.text}"</div>
+            <div className="flex items-center gap-3 mt-2 pt-3 border-t border-cream/10">
+              {t.photo ? (
+                <img src={t.photo} alt={t.name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+              ) : (
+                <div className="w-10 h-10 rounded-full bg-gold/20 flex items-center justify-center flex-shrink-0">
+                  <span className="text-gold font-display text-lg">{(t.name || '?')[0]}</span>
+                </div>
+              )}
+              <div>
+                <div className="text-cream font-medium text-sm">{t.name}</div>
+                {t.role && <div className="text-gold/70 text-xs">{t.role}</div>}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Newsletter Signup — public email signup on homepage
+// ---------------------------------------------------------------------------
+function NewsletterSignup() {
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [done, setDone] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function subscribe(e) {
+    e.preventDefault();
+    setError(''); setBusy(true);
+    try {
+      const r = await fetch('/api/newsletter/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim(), name: name.trim() }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Something went wrong');
+      setDone(true);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  if (done) {
+    return (
+      <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6 text-center">
+        <div className="text-3xl mb-2">✉️</div>
+        <div className="font-display text-2xl text-gold mb-1">You're subscribed!</div>
+        <p className="text-cream/60 text-sm">We'll keep you in the loop on Club America news and events.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6">
+      <h2 className="font-display text-3xl text-gold mb-1">Stay in the Loop</h2>
+      <p className="text-cream/60 text-sm mb-5">Get Club America updates, event announcements, and news straight to your inbox.</p>
+      <form onSubmit={subscribe} className="flex flex-col sm:flex-row gap-3 max-w-lg">
+        <input
+          className="flex-1 bg-navy border border-cream/20 rounded-lg px-4 py-2.5 text-cream placeholder-cream/30 text-sm focus:outline-none focus:border-gold/50"
+          type="text" placeholder="Your name (optional)" value={name}
+          onChange={(e) => setName(e.target.value)} />
+        <input
+          className="flex-1 bg-navy border border-cream/20 rounded-lg px-4 py-2.5 text-cream placeholder-cream/30 text-sm focus:outline-none focus:border-gold/50"
+          type="email" placeholder="Email address" value={email} required
+          onChange={(e) => setEmail(e.target.value)} />
+        <button type="submit" disabled={busy || !email.trim()}
+          className="px-6 py-2.5 bg-gold text-navy font-semibold rounded-lg text-sm hover:bg-gold/90 transition-colors disabled:opacity-50 whitespace-nowrap">
+          {busy ? 'Subscribing…' : 'Subscribe →'}
+        </button>
+      </form>
+      {error && <p className="text-red text-sm mt-2">{error}</p>}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Testimonial Submit Page — universal at /testimonial-submit OR pre-filled at /testimonial-submit/:token
+// ---------------------------------------------------------------------------
+function TestimonialSubmitPage({ token }) {
+  // token=null → universal open form; token=string → pre-filled personal link
+  const [prefill, setPrefill] = useState(null);       // { name, role } from token lookup
+  const [tokenError, setTokenError] = useState('');   // only set when token is invalid
+  const [ready, setReady] = useState(!token);          // universal form is immediately ready
+  const [form, setForm] = useState({ name: '', role: '', photo: '', text: '' });
+  const [done, setDone] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+
+  useEffect(() => {
+    if (!token) return;
+    fetch(`/api/public/testimonial-submit/${token}`)
+      .then(async (r) => {
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Invalid link');
+        setPrefill(d);
+        setForm((f) => ({ ...f, name: d.name || '', role: d.role || '' }));
+        setReady(true);
+      })
+      .catch((err) => setTokenError(err.message));
+  }, [token]);
+
+  function handlePhoto(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => setForm((f) => ({ ...f, photo: ev.target.result }));
+    reader.readAsDataURL(file);
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    setSubmitError(''); setBusy(true);
+    try {
+      const url = token ? `/api/public/testimonial-submit/${token}` : '/api/public/testimonial-submit';
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Submission failed');
+      setDone(true);
+    } catch (err) { setSubmitError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  if (tokenError) return (
+    <div className="min-h-screen flex items-center justify-center p-6 text-center" style={{ background: '#0d1b2e' }}>
+      <div>
+        <div className="text-5xl mb-4">🔗</div>
+        <div className="font-display text-3xl text-gold mb-2">Link Not Valid</div>
+        <p className="text-cream/60 max-w-sm">{tokenError}</p>
+      </div>
+    </div>
+  );
+
+  if (!ready) return (
+    <div className="min-h-screen flex items-center justify-center text-cream/50 gap-2" style={{ background: '#0d1b2e' }}>
+      <Spinner /> Loading…
+    </div>
+  );
+
+  if (done) return (
+    <div className="min-h-screen flex items-center justify-center p-6 text-center" style={{ background: '#0d1b2e' }}>
+      <div>
+        <div className="text-5xl mb-4">🎉</div>
+        <div className="font-display text-3xl text-gold mb-2">Thanks{form.name ? `, ${form.name}` : ''}!</div>
+        <p className="text-cream/60 max-w-sm">Your testimonial has been submitted and is under review. We'll publish it once approved.</p>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-6" style={{ background: '#0d1b2e' }}>
+      <div className="w-full max-w-lg">
+        <div className="text-center mb-8">
+          <Logo size="sidebar" className="mb-4 mx-auto" />
+          <h1 className="font-display text-3xl text-gold">Share Your Story</h1>
+          <p className="text-cream/60 text-sm mt-1">
+            {token && prefill
+              ? `Hi ${prefill.name}! Tell the world what Club America means to you.`
+              : 'Tell the world what Club America means to you.'}
+          </p>
+        </div>
+        <form onSubmit={submit} className="bg-navy2 border border-cream/15 rounded-2xl p-6 space-y-4">
+          <Field label="Your Name">
+            <input className={inputCls} value={form.name} required placeholder="Full name"
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+          </Field>
+          <Field label="Your Role / Title (optional)">
+            <input className={inputCls} value={form.role} placeholder="e.g. Grade Rep, Secretary…"
+              onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))} />
+          </Field>
+          <Field label="Your Testimonial">
+            <textarea className={inputCls} rows="5" required value={form.text}
+              placeholder="Tell us what Club America means to you…"
+              onChange={(e) => setForm((f) => ({ ...f, text: e.target.value }))} />
+          </Field>
+          <Field label="Photo (optional)">
+            <input type="file" accept="image/*" onChange={handlePhoto}
+              className="text-cream/60 text-sm file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-gold/20 file:text-gold file:text-xs cursor-pointer" />
+            {form.photo && <img src={form.photo} alt="preview" className="mt-2 w-16 h-16 rounded-full object-cover" />}
+          </Field>
+          {submitError && <p className="text-red text-sm">{submitError}</p>}
+          <Button type="submit" variant="gold" disabled={busy || !form.name.trim() || !form.text.trim()}>
+            {busy ? <span className="flex items-center gap-2"><Spinner /> Submitting…</span> : 'Submit Testimonial →'}
+          </Button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Testimonials Admin Page — admin tab for managing testimonials
+// ---------------------------------------------------------------------------
+function TestimonialsAdminPage({ me }) {
+  const [items, setItems] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ name: '', role: '', photo: '', text: '', status: 'approved' });
+  const [adding, setAdding] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  const [showPersonalLink, setShowPersonalLink] = useState(false);
+  const [linkUserId, setLinkUserId] = useState('');
+  const [users, setUsers] = useState([]);
+  const [generatedLink, setGeneratedLink] = useState('');
+  const [confirmEl, confirm] = useConfirm();
+
+  const universalLink = `${window.location.origin}/testimonial-submit`;
+
+  const load = useCallback(async () => {
+    try {
+      const [d, u] = await Promise.all([api('/admin/testimonials'), api('/users')]);
+      setItems(d.testimonials || []);
+      setUsers(u.users || []);
+    } catch (err) { setError(err.message); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  function handlePhoto(e, target) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      if (target === 'form') setForm((f) => ({ ...f, photo: ev.target.result }));
+      else setEditing((prev) => ({ ...prev, photo: ev.target.result }));
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function createTestimonial(e) {
+    e.preventDefault();
+    setError(''); setAdding(true);
+    try {
+      await api('/admin/testimonials', { method: 'POST', body: form });
+      setNotice('Testimonial created.');
+      setForm({ name: '', role: '', photo: '', text: '', status: 'approved' });
+      load();
+    } catch (err) { setError(err.message); }
+    finally { setAdding(false); }
+  }
+
+  async function saveEdit(e) {
+    e.preventDefault();
+    setSaving(true); setError('');
+    try {
+      await api(`/admin/testimonials/${editing.id}`, { method: 'PATCH', body: editing });
+      setNotice('Saved.'); setEditing(null); load();
+    } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
+  }
+
+  async function approve(id) {
+    setSaving(true);
+    try { await api(`/admin/testimonials/${id}/approve`, { method: 'POST' }); load(); }
+    catch (err) { setError(err.message); }
+    finally { setSaving(false); }
+  }
+
+  async function reject(id) {
+    setSaving(true);
+    try { await api(`/admin/testimonials/${id}/reject`, { method: 'POST' }); load(); }
+    catch (err) { setError(err.message); }
+    finally { setSaving(false); }
+  }
+
+  async function remove(t) {
+    if (!(await confirm({ title: `Delete testimonial?`, message: `Remove "${t.name}"'s testimonial? This cannot be undone.`, confirmLabel: 'Delete', danger: true }))) return;
+    try { await api(`/admin/testimonials/${t.id}`, { method: 'DELETE' }); load(); }
+    catch (err) { setError(err.message); }
+  }
+
+  async function moveOrder(t, direction) {
+    const approved = (items || []).filter((x) => x.status === 'approved').sort((a, b) => (a.sortOrder - b.sortOrder) || (a.id - b.id));
+    const idx = approved.findIndex((x) => x.id === t.id);
+    const swapIdx = idx + direction;
+    if (swapIdx < 0 || swapIdx >= approved.length) return;
+    const other = approved[swapIdx];
+    setSaving(true);
+    try {
+      await Promise.all([
+        api(`/admin/testimonials/${t.id}`, { method: 'PATCH', body: { sortOrder: other.sortOrder || swapIdx } }),
+        api(`/admin/testimonials/${other.id}`, { method: 'PATCH', body: { sortOrder: t.sortOrder || idx } }),
+      ]);
+      load();
+    } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
+  }
+
+  async function generatePersonalLink() {
+    if (!linkUserId) return;
+    setError(''); setSaving(true);
+    try {
+      const d = await api('/admin/testimonials/generate-link', { method: 'POST', body: { userId: Number(linkUserId) } });
+      setGeneratedLink(d.link);
+      load();
+    } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
+  }
+
+  // Separate "awaiting member" (token set, no text) from actual pending submissions
+  const awaitingSubmission = (items || []).filter((t) => t.status === 'pending' && t.submitToken);
+  const pendingReview      = (items || []).filter((t) => t.status === 'pending' && !t.submitToken);
+  const approved           = (items || []).filter((t) => t.status === 'approved').sort((a, b) => (a.sortOrder - b.sortOrder) || (a.id - b.id));
+
+  return (
+    <div className="max-w-5xl">
+      {confirmEl}
+      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Testimonials</h1>
+      <p className="text-cream/50 mb-6">Collect stories from your members and display them on the public homepage.</p>
+
+      {notice && <p className="text-emerald-300 text-sm mb-4">{notice}</p>}
+      {error  && <p className="text-red text-sm mb-4">{error}</p>}
+
+      {/* Universal submit link — the main flow */}
+      <div className="bg-navy2 border border-gold/40 rounded-xl p-5 mb-6">
+        <div className="flex items-center gap-2 mb-1">
+          <div className="font-display text-2xl text-gold">Public Submit Link</div>
+          <Badge tone="green">Share this</Badge>
+        </div>
+        <p className="text-cream/60 text-sm mb-3">Post this one link anywhere — group chat, Instagram, emails. Anyone can click it and submit their own testimonial. You review before publishing.</p>
+        <div className="flex items-center gap-3 flex-wrap bg-navy rounded-lg px-4 py-3 border border-gold/20">
+          <code className="text-gold text-sm flex-1 break-all">{universalLink}</code>
+          <Button variant="gold" onClick={() => { navigator.clipboard.writeText(universalLink); setNotice('Universal link copied!'); }}>
+            Copy Link
+          </Button>
+        </div>
+      </div>
+
+      {/* Personal pre-filled links — secondary */}
+      <div className="bg-navy2 border border-cream/10 rounded-xl p-5 mb-8">
+        <button
+          onClick={() => setShowPersonalLink((v) => !v)}
+          className="flex items-center gap-2 w-full text-left">
+          <div className="font-display text-lg text-cream/70">Pre-filled Personal Links (optional)</div>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+            className={`text-cream/40 transition-transform ${showPersonalLink ? 'rotate-180' : ''}`}>
+            <path d="M6 9l6 6 6-6"/>
+          </svg>
+        </button>
+        {showPersonalLink && (
+          <div className="mt-4 space-y-3">
+            <p className="text-cream/50 text-sm">Generate a link pre-filled with a specific member's name and title. Useful for targeted outreach. Works the same as the universal link.</p>
+            <div className="flex flex-wrap gap-3 items-end">
+              <Field label="Select Member">
+                <select className={inputCls} value={linkUserId} onChange={(e) => { setLinkUserId(e.target.value); setGeneratedLink(''); }}>
+                  <option value="">— choose a member —</option>
+                  {users.map((u) => <option key={u.id} value={u.id}>{u.displayName} ({u.title || u.role})</option>)}
+                </select>
+              </Field>
+              <Button variant="ghost" disabled={!linkUserId || saving} onClick={generatePersonalLink}>Generate Pre-filled Link</Button>
+            </div>
+            {generatedLink && (
+              <div className="p-3 bg-navy border border-cream/15 rounded-lg">
+                <div className="text-cream/50 text-xs mb-1">Pre-filled link for this member:</div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <code className="text-gold/80 text-xs break-all flex-1">{generatedLink}</code>
+                  <Button variant="ghost" onClick={() => { navigator.clipboard.writeText(generatedLink); setNotice('Personal link copied!'); }}>Copy</Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* New submissions awaiting review */}
+      {pendingReview.length > 0 && (
+        <div className="mb-8">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="font-display text-2xl text-gold">Awaiting Your Review</div>
+            <span className="bg-red/20 text-red border border-red/40 text-xs px-2 py-0.5 rounded-full font-medium">{pendingReview.length}</span>
+          </div>
+          <div className="space-y-3">
+            {pendingReview.map((t) => (
+              <div key={t.id} className="bg-navy2 border border-yellow-500/30 rounded-xl p-4">
+                {editing?.id === t.id ? (
+                  <EditTestimonialInline t={editing} onChange={setEditing} onSave={saveEdit} onCancel={() => setEditing(null)} saving={saving} onPhoto={(e) => handlePhoto(e, 'edit')} />
+                ) : (
+                  <div>
+                    <div className="flex items-start gap-3 mb-3">
+                      {t.photo ? (
+                        <img src={t.photo} alt={t.name} className="w-12 h-12 rounded-full object-cover flex-shrink-0" />
+                      ) : (
+                        <div className="w-12 h-12 rounded-full bg-gold/20 flex items-center justify-center flex-shrink-0">
+                          <span className="text-gold font-display text-lg">{(t.name || '?')[0]}</span>
+                        </div>
+                      )}
+                      <div className="flex-1">
+                        <div className="text-cream font-medium">{t.name}</div>
+                        {t.role && <div className="text-gold/70 text-xs">{t.role}</div>}
+                        <div className="text-cream/40 text-xs">{new Date(t.createdAt).toLocaleDateString()}</div>
+                        <p className="text-cream/80 text-sm mt-2 italic">"{t.text}"</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-cream/8">
+                      <Button variant="gold" onClick={() => approve(t.id)} disabled={saving}>✓ Publish</Button>
+                      <Button variant="ghost" onClick={() => setEditing({ ...t })}>Edit</Button>
+                      <button onClick={() => remove(t)} className="text-xs text-red/80 hover:text-red ml-auto">Delete</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Awaiting member submission (personal links sent but not yet filled out) */}
+      {awaitingSubmission.length > 0 && (
+        <div className="mb-8">
+          <div className="font-display text-lg text-cream/50 mb-2">Awaiting Member Response ({awaitingSubmission.length})</div>
+          <div className="space-y-2">
+            {awaitingSubmission.map((t) => (
+              <div key={t.id} className="bg-navy2 border border-cream/8 rounded-xl px-4 py-3 flex items-center justify-between gap-3 opacity-60">
+                <div>
+                  <div className="text-cream/80 text-sm">{t.name}</div>
+                  {t.role && <div className="text-cream/40 text-xs">{t.role}</div>}
+                  <div className="text-cream/30 text-xs">Link sent, waiting for them to fill it out</div>
+                </div>
+                <button onClick={() => remove(t)} className="text-xs text-red/60 hover:text-red">Cancel</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Create directly */}
+      <form onSubmit={createTestimonial} className="bg-navy2 border border-cream/10 rounded-xl p-5 mb-8 space-y-4">
+        <div className="font-display text-xl text-cream/80">Add Testimonial Yourself</div>
+        <div className="grid sm:grid-cols-2 gap-4">
+          <Field label="Name"><input className={inputCls} required value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} /></Field>
+          <Field label="Role / Title"><input className={inputCls} value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))} /></Field>
+        </div>
+        <Field label="Testimonial Text">
+          <textarea className={inputCls} rows="3" required value={form.text} onChange={(e) => setForm((f) => ({ ...f, text: e.target.value }))} placeholder="Their testimonial…" />
+        </Field>
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label="Photo (optional)">
+            <input type="file" accept="image/*" onChange={(e) => handlePhoto(e, 'form')}
+              className="text-cream/60 text-sm file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-gold/20 file:text-gold file:text-xs cursor-pointer" />
+            {form.photo && <img src={form.photo} alt="preview" className="mt-1 w-12 h-12 rounded-full object-cover" />}
+          </Field>
+          <Field label="Status">
+            <select className={inputCls} value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}>
+              <option value="approved">Publish immediately</option>
+              <option value="pending">Save as pending</option>
+            </select>
+          </Field>
+          <Button type="submit" variant="gold" disabled={adding || !form.name.trim() || !form.text.trim()}>
+            {adding ? <span className="flex items-center gap-2"><Spinner /> Adding…</span> : 'Add'}
+          </Button>
+        </div>
+      </form>
+
+      {/* Published */}
+      <div>
+        <div className="font-display text-2xl text-gold mb-3">Published ({approved.length})</div>
+        {approved.length === 0 ? (
+          <EmptyState icon="💬" title="No published testimonials yet" hint="Approve a submission above, or add one directly." />
+        ) : (
+          <div className="space-y-2">
+            {approved.map((t, idx) => (
+              <div key={t.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors">
+                {editing?.id === t.id ? (
+                  <EditTestimonialInline t={editing} onChange={setEditing} onSave={saveEdit} onCancel={() => setEditing(null)} saving={saving} onPhoto={(e) => handlePhoto(e, 'edit')} />
+                ) : (
+                  <div className="flex items-start gap-3">
+                    <div className="flex flex-col gap-1 mr-1">
+                      <button onClick={() => moveOrder(t, -1)} disabled={saving || idx === 0}
+                        className="text-cream/25 hover:text-cream/60 disabled:opacity-20 transition-colors text-xs leading-none" title="Move up">▲</button>
+                      <button onClick={() => moveOrder(t, 1)} disabled={saving || idx === approved.length - 1}
+                        className="text-cream/25 hover:text-cream/60 disabled:opacity-20 transition-colors text-xs leading-none" title="Move down">▼</button>
+                    </div>
+                    {t.photo ? (
+                      <img src={t.photo} alt={t.name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                    ) : (
+                      <div className="w-10 h-10 rounded-full bg-gold/20 flex items-center justify-center flex-shrink-0">
+                        <span className="text-gold font-display">{(t.name || '?')[0]}</span>
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-cream font-medium text-sm">{t.name}</div>
+                      {t.role && <div className="text-gold/70 text-xs">{t.role}</div>}
+                      <p className="text-cream/60 text-sm mt-1 italic line-clamp-2">"{t.text}"</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <Button variant="ghost" onClick={() => setEditing({ ...t })}>Edit</Button>
+                      <button onClick={() => reject(t.id)} disabled={saving} className="text-xs text-yellow-500/70 hover:text-yellow-400">Unpublish</button>
+                      <button onClick={() => remove(t)} className="text-xs text-red/70 hover:text-red">Delete</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EditTestimonialInline({ t, onChange, onSave, onCancel, saving, onPhoto }) {
+  return (
+    <form onSubmit={onSave} className="space-y-3">
+      <div className="grid sm:grid-cols-2 gap-3">
+        <Field label="Name"><input className={inputCls} required value={t.name} onChange={(e) => onChange((p) => ({ ...p, name: e.target.value }))} /></Field>
+        <Field label="Role"><input className={inputCls} value={t.role} onChange={(e) => onChange((p) => ({ ...p, role: e.target.value }))} /></Field>
+      </div>
+      <Field label="Text"><textarea className={inputCls} rows="4" required value={t.text} onChange={(e) => onChange((p) => ({ ...p, text: e.target.value }))} /></Field>
+      <Field label="Photo">
+        <input type="file" accept="image/*" onChange={onPhoto}
+          className="text-cream/60 text-sm file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-gold/20 file:text-gold file:text-xs cursor-pointer" />
+        {t.photo && <img src={t.photo} alt="preview" className="mt-2 w-14 h-14 rounded-full object-cover" />}
+      </Field>
+      <Field label="Status">
+        <select className={inputCls} value={t.status} onChange={(e) => onChange((p) => ({ ...p, status: e.target.value }))}>
+          <option value="approved">Published</option>
+          <option value="pending">Pending</option>
+        </select>
+      </Field>
+      <div className="flex gap-2">
+        <Button type="submit" variant="gold" disabled={saving}>{saving ? <span className="flex items-center gap-1"><Spinner className="w-3 h-3" /> Saving…</span> : 'Save'}</Button>
+        <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+      </div>
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Newsletter Admin Page — admin tab for managing newsletter subscribers
+// ---------------------------------------------------------------------------
+function NewsletterAdminPage({ me }) {
+  const [subscribers, setSubscribers] = useState(null);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [search, setSearch] = useState('');
+  const [addEmail, setAddEmail] = useState('');
+  const [addName, setAddName] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [confirmEl, confirm] = useConfirm();
+
+  const load = useCallback(async () => {
+    try {
+      const d = await api('/admin/newsletter');
+      setSubscribers(d.subscribers || []);
+    } catch (err) { setError(err.message); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const q = search.trim().toLowerCase();
+  const visibleList = subscribers
+    ? (q ? subscribers.filter((s) => s.email.toLowerCase().includes(q) || (s.name || '').toLowerCase().includes(q)) : subscribers)
+    : [];
+
+  // Copy ALL active subscribers — always ignores the search filter
+  const allActive = (subscribers || []).filter((s) => s.active);
+
+  function copyEmails() {
+    const emails = allActive.map((s) => s.email).join(', ');
+    navigator.clipboard.writeText(emails)
+      .then(() => setNotice(`✓ Copied ${allActive.length} email${allActive.length !== 1 ? 's' : ''}. Paste into Gmail's BCC field.`));
+  }
+
+  function exportCSV() {
+    const rows = ['Email,Name,Source,Subscribed'].concat(
+      allActive.map((s) => `${s.email},${(s.name || '').replace(/,/g, ' ')},${s.source},${s.subscribedAt.slice(0, 10)}`)
+    );
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'newsletter-subscribers.csv'; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function manualAdd(e) {
+    e.preventDefault();
+    setError(''); setAdding(true);
+    try {
+      const d = await api('/admin/newsletter', { method: 'POST', body: { email: addEmail.trim(), name: addName.trim() } });
+      setNotice(`Added ${addEmail}.`);
+      setAddEmail(''); setAddName('');
+      load();
+    } catch (err) { setError(err.message); }
+    finally { setAdding(false); }
+  }
+
+  async function toggleActive(s) {
+    setSaving(true);
+    try {
+      await api(`/admin/newsletter/${s.id}`, { method: 'PATCH', body: { active: !s.active } });
+      setSubscribers((prev) => prev.map((x) => x.id === s.id ? { ...x, active: !s.active } : x));
+    } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
+  }
+
+  async function remove(s) {
+    if (!(await confirm({ title: 'Remove subscriber?', message: `Remove ${s.email} from the newsletter list?`, confirmLabel: 'Remove', danger: true }))) return;
+    setSaving(true);
+    try {
+      await api(`/admin/newsletter/${s.id}`, { method: 'DELETE' });
+      setSubscribers((prev) => prev.filter((x) => x.id !== s.id));
+    } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
+  }
+
+  const totalAll    = (subscribers || []).length;
+  const totalActive = allActive.length;
+  const totalInactive = totalAll - totalActive;
+
+  const sourceBadge = (s) => ({
+    auto: { tone: 'blue', label: 'Auto' },
+    manual: { tone: 'slate', label: 'Manual' },
+    signup: { tone: 'green', label: 'Signed up' },
+  }[s.source] || { tone: 'slate', label: s.source });
+
+  return (
+    <div className="max-w-5xl">
+      {confirmEl}
+      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Newsletter</h1>
+      <p className="text-cream/50 mb-6">Board members with email addresses are automatically enrolled. Public visitors can sign up on the homepage.</p>
+
+      {error  && <p className="text-red text-sm mb-4">{error}</p>}
+      {notice && <p className="text-emerald-300 text-sm mb-4">{notice}</p>}
+
+      {/* Stats + export actions */}
+      <div className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6">
+        <div className="flex flex-wrap gap-6 mb-5">
+          <div><div className="font-display text-4xl text-gold">{totalActive}</div><div className="text-cream/50 text-xs tracking-wider uppercase">Active</div></div>
+          {totalInactive > 0 && <div><div className="font-display text-4xl text-cream/30">{totalInactive}</div><div className="text-cream/30 text-xs tracking-wider uppercase">Unsubscribed</div></div>}
+          <div><div className="font-display text-4xl text-cream/50">{totalAll}</div><div className="text-cream/40 text-xs tracking-wider uppercase">Total</div></div>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <Button variant="gold" onClick={copyEmails} disabled={allActive.length === 0}>
+            📋 Copy All Emails ({allActive.length})
+          </Button>
+          <Button variant="ghost" onClick={exportCSV} disabled={allActive.length === 0}>
+            ↓ Export CSV
+          </Button>
+          <p className="self-center text-cream/35 text-xs">Copy all emails → paste into Gmail BCC.</p>
+        </div>
+      </div>
+
+      {/* Manually add subscriber */}
+      <form onSubmit={manualAdd} className="bg-navy2 border border-cream/10 rounded-xl p-5 mb-6">
+        <div className="font-display text-lg text-cream/80 mb-3">Add Subscriber Manually</div>
+        <div className="flex flex-wrap gap-3 items-end">
+          <Field label="Email">
+            <input type="email" className={inputCls} value={addEmail} required placeholder="email@example.com"
+              onChange={(e) => setAddEmail(e.target.value)} />
+          </Field>
+          <Field label="Name (optional)">
+            <input className={inputCls} value={addName} placeholder="Full name"
+              onChange={(e) => setAddName(e.target.value)} />
+          </Field>
+          <Button type="submit" variant="ghost" disabled={adding || !addEmail.trim()}>
+            {adding ? <span className="flex items-center gap-1"><Spinner className="w-3 h-3" /> Adding…</span> : 'Add'}
+          </Button>
+        </div>
+      </form>
+
+      {/* List */}
+      <div className="flex items-center gap-3 mb-3 flex-wrap">
+        <div className="font-display text-xl text-gold">
+          {q ? `${visibleList.length} of ${totalAll} subscribers` : `All Subscribers (${totalAll})`}
+        </div>
+        <input className={inputCls + ' max-w-xs sm:ml-auto'} placeholder="Search by email or name…"
+          value={search} onChange={(e) => setSearch(e.target.value)} />
+      </div>
+
+      {!subscribers && <div className="flex items-center gap-2 text-cream/50"><Spinner /> Loading…</div>}
+
+      <div className="space-y-1.5">
+        {visibleList.map((s) => {
+          const sb = sourceBadge(s);
+          return (
+            <div key={s.id} className={`bg-navy2 border rounded-xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap transition-opacity ${s.active ? 'border-cream/10' : 'border-cream/5 opacity-40'}`}>
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${s.active ? 'bg-emerald-400' : 'bg-cream/20'}`} />
+                <div className="min-w-0">
+                  <div className="text-cream text-sm truncate">{s.email}</div>
+                  {s.name && <div className="text-cream/50 text-xs">{s.name}</div>}
+                </div>
+              </div>
+              <div className="flex items-center gap-2.5 text-xs flex-shrink-0">
+                <Badge tone={sb.tone}>{sb.label}</Badge>
+                <span className="text-cream/30 hidden sm:inline">{new Date(s.subscribedAt).toLocaleDateString()}</span>
+                <button onClick={() => toggleActive(s)} disabled={saving}
+                  className={`${s.active ? 'text-cream/40 hover:text-gold' : 'text-cream/30 hover:text-cream/60'} transition-colors`}>
+                  {s.active ? 'Unsubscribe' : 'Re-subscribe'}
+                </button>
+                <button onClick={() => remove(s)} disabled={saving} className="text-red/60 hover:text-red transition-colors">Remove</button>
+              </div>
+            </div>
+          );
+        })}
+        {visibleList.length === 0 && subscribers && (
+          <EmptyState icon="✉️" title="No subscribers yet" hint="Subscribers appear here once members or visitors sign up." />
+        )}
+      </div>
     </div>
   );
 }
