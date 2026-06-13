@@ -3173,7 +3173,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         </section>
         <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 space-y-8">
           <HomeAnnouncementBanner home={home} />
-          {home.memberCount > 0 && <MemberStatsBar memberCount={home.memberCount} />}
+          {home.memberCount > 0 && <MemberStatsBar memberCount={home.memberCount} testimonialCount={home.testimonialCount || 0} />}
           {cards}
           <AboutSection home={home} />
           <ValuesSection />
@@ -3296,7 +3296,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         </div>
       <main id="club-content" className="relative max-w-5xl mx-auto px-4 sm:px-6 pb-20 pt-10 space-y-8">
         {home.homeAnnouncementEnabled && home.homeAnnouncement && <Reveal><HomeAnnouncementBanner home={home} /></Reveal>}
-        {home.memberCount > 0 && <Reveal><MemberStatsBar memberCount={home.memberCount} /></Reveal>}
+        {home.memberCount > 0 && <Reveal><MemberStatsBar memberCount={home.memberCount} testimonialCount={home.testimonialCount || 0} /></Reveal>}
         <Reveal>{cards}</Reveal>
         {home.aboutText && <Reveal><AboutSection home={home} /></Reveal>}
         <ValuesSection />
@@ -6190,7 +6190,7 @@ function AppTile({ label, icon, badge, onClick, style }) {
   );
 }
 
-function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, aiNotesCount, onAiNotes, onNavigate, onLogout, onSearch }) {
+function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, aiNotesCount, pendingTestimonialsCount, onAiNotes, onNavigate, onLogout, onSearch }) {
   const isManager = me.role === 'manager' || me.role === 'admin';
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
   const canSeeSubmissions = me.role === 'admin' || !!me.grade;
@@ -6240,7 +6240,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
       title: 'Site & Admin',
       tiles: [
         ...(canEditSite && visible('website')              ? [{ type: 'website',      label: 'Edit Website',   icon: 'edit'        }] : []),
-        ...(me.role === 'admin' && visible('testimonials') ? [{ type: 'testimonials', label: 'Testimonials',   icon: 'testimonial' }] : []),
+        ...(me.role === 'admin' && visible('testimonials') ? [{ type: 'testimonials', label: 'Testimonials', icon: 'testimonial', badge: pendingTestimonialsCount || undefined }] : []),
         ...(me.role === 'admin' && visible('newsletter')   ? [{ type: 'newsletter',   label: 'Newsletter',     icon: 'newsletter'  }] : []),
         ...(me.role === 'admin' && visible('admin')        ? [{ type: 'admin',        label: 'Admin Panel',    icon: 'admin'       }] : []),
         ...((me.role === 'admin' || !!me.canViewLogistics) && visible('logistics') ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }] : []),
@@ -6574,13 +6574,15 @@ function App() {
   const [checkinEnabled, setCheckinEnabled] = useState(false);
   const [refreshSignal, setRefreshSignal] = useState(0);
   const [aiNotesCount, setAiNotesCount] = useState(0);
+  const [pendingTestimonialsCount, setPendingTestimonialsCount] = useState(0);
   const [aiNotesOpen, setAiNotesOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [showWelcomeIntro, setShowWelcomeIntro] = useState(false);
 
   const isSurveyPath = window.location.pathname === '/survey';
   const volunteerMatch = window.location.pathname.match(/^\/volunteer\/(\d+)$/);
-  const testimonialSubmitMatch = window.location.pathname.match(/^\/testimonial-submit\/([a-zA-Z0-9]+)$/);
+  // Match both /testimonial-submit (universal) and /testimonial-submit/:token (pre-filled)
+  const testimonialSubmitMatch = window.location.pathname.match(/^\/testimonial-submit(?:\/([a-zA-Z0-9]*))?$/);
   const bump = () => setRefreshSignal((n) => n + 1);
 
   const loadShared = useCallback(async (user) => {
@@ -6604,6 +6606,10 @@ function App() {
       }
       const noteData = await api('/ai/notes').catch(() => ({ notes: [] }));
       setAiNotesCount((noteData.notes || []).filter((n) => !n.isRead).length);
+      if (user.role === 'admin') {
+        const tc = await api('/admin/testimonials/pending-count').catch(() => ({ count: 0 }));
+        setPendingTestimonialsCount(tc.count || 0);
+      }
     } catch (_) {}
   }, []);
 
@@ -6648,7 +6654,7 @@ function App() {
   if (!booted) return <div className="min-h-screen flex items-center justify-center gap-2 text-cream/40"><Spinner className="w-5 h-5" /> Loading…</div>;
   if (isSurveyPath) return <InterestSurvey onBack={() => { window.history.pushState(null, '', '/'); window.location.reload(); }} />;
   if (volunteerMatch) return <VolunteerSignUpPage eventId={Number(volunteerMatch[1])} />;
-  if (testimonialSubmitMatch) return <TestimonialSubmitPage token={testimonialSubmitMatch[1]} />;
+  if (testimonialSubmitMatch) return <TestimonialSubmitPage token={testimonialSubmitMatch[1] || null} />;
   if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;
   if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); }} onBack={() => setEnterPortal(false)} />;
   if (me.firstLogin) return <ChangePassword user={me} forced onDone={(u) => { setMe(u); loadShared(u); }} />;
@@ -6701,8 +6707,8 @@ function App() {
       {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={bump} />}
       {searchOpen && <SearchModal me={me} reports={reports} tiles={navTiles} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
       <AppHome me={me} reports={reports} approvalsCount={approvalsCount} submissionsCount={submissionsCount}
-        checkinEnabled={checkinEnabled} aiNotesCount={aiNotesCount} onAiNotes={() => setAiNotesOpen(true)}
-        onNavigate={navigate} onLogout={logout} onSearch={() => setSearchOpen(true)} />
+        checkinEnabled={checkinEnabled} aiNotesCount={aiNotesCount} pendingTestimonialsCount={pendingTestimonialsCount}
+        onAiNotes={() => setAiNotesOpen(true)} onNavigate={navigate} onLogout={logout} onSearch={() => setSearchOpen(true)} />
     </>
   );
 
@@ -8768,24 +8774,46 @@ function PollResults({ pollId }) {
 // ---------------------------------------------------------------------------
 // Member Stats Bar — shows active member count on the public homepage
 // ---------------------------------------------------------------------------
-function MemberStatsBar({ memberCount }) {
+function AnimatedCount({ to }) {
+  const [val, setVal] = useState(0);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!to) return;
+    let start = null;
+    const duration = 900;
+    const step = (ts) => {
+      if (!start) start = ts;
+      const progress = Math.min((ts - start) / duration, 1);
+      const ease = 1 - Math.pow(1 - progress, 3);
+      setVal(Math.round(ease * to));
+      if (progress < 1) ref.current = requestAnimationFrame(step);
+    };
+    ref.current = requestAnimationFrame(step);
+    return () => { if (ref.current) cancelAnimationFrame(ref.current); };
+  }, [to]);
+  return <span>{val}</span>;
+}
+
+function MemberStatsBar({ memberCount, testimonialCount }) {
   if (!memberCount) return null;
+  const stats = [
+    { value: memberCount, label: 'Board Members' },
+    ...(testimonialCount > 0 ? [{ value: testimonialCount, label: 'Member Stories' }] : []),
+    { value: null, label: 'Park City, UT' },
+  ];
   return (
-    <div className="flex flex-wrap justify-center gap-8 py-5 px-4">
-      <div className="flex flex-col items-center gap-1">
-        <span className="font-display text-4xl sm:text-5xl text-gold leading-none">{memberCount}</span>
-        <span className="text-cream/55 text-xs tracking-widest uppercase">Board Members</span>
-      </div>
-      <div className="w-px bg-cream/10 self-stretch hidden sm:block" />
-      <div className="flex flex-col items-center gap-1">
-        <span className="font-display text-4xl sm:text-5xl text-gold leading-none">1</span>
-        <span className="text-cream/55 text-xs tracking-widest uppercase">School</span>
-      </div>
-      <div className="w-px bg-cream/10 self-stretch hidden sm:block" />
-      <div className="flex flex-col items-center gap-1">
-        <span className="font-display text-4xl sm:text-5xl text-gold leading-none">★</span>
-        <span className="text-cream/55 text-xs tracking-widest uppercase">Strong Community</span>
-      </div>
+    <div className="flex flex-wrap justify-center gap-6 sm:gap-10 py-4 px-4 border-y border-cream/8">
+      {stats.map((s, i) => (
+        <React.Fragment key={i}>
+          {i > 0 && <div className="w-px bg-cream/10 self-stretch hidden sm:block" />}
+          <div className="flex flex-col items-center gap-0.5">
+            <span className="font-display text-4xl sm:text-5xl text-gold leading-none">
+              {s.value !== null ? <AnimatedCount to={s.value} /> : '★'}
+            </span>
+            <span className="text-cream/50 text-[10px] tracking-widest uppercase">{s.label}</span>
+          </div>
+        </React.Fragment>
+      ))}
     </div>
   );
 }
@@ -8893,25 +8921,29 @@ function NewsletterSignup() {
 }
 
 // ---------------------------------------------------------------------------
-// Testimonial Submit Page — shown at /testimonial-submit/:token
+// Testimonial Submit Page — universal at /testimonial-submit OR pre-filled at /testimonial-submit/:token
 // ---------------------------------------------------------------------------
 function TestimonialSubmitPage({ token }) {
-  const [info, setInfo] = useState(null);
-  const [error, setError] = useState('');
+  // token=null → universal open form; token=string → pre-filled personal link
+  const [prefill, setPrefill] = useState(null);       // { name, role } from token lookup
+  const [tokenError, setTokenError] = useState('');   // only set when token is invalid
+  const [ready, setReady] = useState(!token);          // universal form is immediately ready
   const [form, setForm] = useState({ name: '', role: '', photo: '', text: '' });
   const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
   const [submitError, setSubmitError] = useState('');
 
   useEffect(() => {
+    if (!token) return;
     fetch(`/api/public/testimonial-submit/${token}`)
       .then(async (r) => {
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || 'Invalid link');
-        setInfo(d);
+        setPrefill(d);
         setForm((f) => ({ ...f, name: d.name || '', role: d.role || '' }));
+        setReady(true);
       })
-      .catch((err) => setError(err.message));
+      .catch((err) => setTokenError(err.message));
   }, [token]);
 
   function handlePhoto(e) {
@@ -8926,7 +8958,8 @@ function TestimonialSubmitPage({ token }) {
     e.preventDefault();
     setSubmitError(''); setBusy(true);
     try {
-      const r = await fetch(`/api/public/testimonial-submit/${token}`, {
+      const url = token ? `/api/public/testimonial-submit/${token}` : '/api/public/testimonial-submit';
+      const r = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
@@ -8938,43 +8971,51 @@ function TestimonialSubmitPage({ token }) {
     finally { setBusy(false); }
   }
 
-  if (error) return (
-    <div className="min-h-screen flex items-center justify-center p-6 text-center">
+  if (tokenError) return (
+    <div className="min-h-screen flex items-center justify-center p-6 text-center" style={{ background: '#0d1b2e' }}>
       <div>
         <div className="text-5xl mb-4">🔗</div>
         <div className="font-display text-3xl text-gold mb-2">Link Not Valid</div>
-        <p className="text-cream/60 max-w-sm">{error}</p>
+        <p className="text-cream/60 max-w-sm">{tokenError}</p>
       </div>
     </div>
   );
 
-  if (!info) return <div className="min-h-screen flex items-center justify-center text-cream/50 gap-2"><Spinner /> Loading…</div>;
+  if (!ready) return (
+    <div className="min-h-screen flex items-center justify-center text-cream/50 gap-2" style={{ background: '#0d1b2e' }}>
+      <Spinner /> Loading…
+    </div>
+  );
 
   if (done) return (
-    <div className="min-h-screen flex items-center justify-center p-6 text-center">
+    <div className="min-h-screen flex items-center justify-center p-6 text-center" style={{ background: '#0d1b2e' }}>
       <div>
         <div className="text-5xl mb-4">🎉</div>
-        <div className="font-display text-3xl text-gold mb-2">Thanks, {form.name}!</div>
+        <div className="font-display text-3xl text-gold mb-2">Thanks{form.name ? `, ${form.name}` : ''}!</div>
         <p className="text-cream/60 max-w-sm">Your testimonial has been submitted and is under review. We'll publish it once approved.</p>
       </div>
     </div>
   );
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6">
+    <div className="min-h-screen flex items-center justify-center p-6" style={{ background: '#0d1b2e' }}>
       <div className="w-full max-w-lg">
         <div className="text-center mb-8">
           <Logo size="sidebar" className="mb-4 mx-auto" />
           <h1 className="font-display text-3xl text-gold">Share Your Story</h1>
-          <p className="text-cream/60 text-sm mt-1">Tell the world what Club America means to you.</p>
+          <p className="text-cream/60 text-sm mt-1">
+            {token && prefill
+              ? `Hi ${prefill.name}! Tell the world what Club America means to you.`
+              : 'Tell the world what Club America means to you.'}
+          </p>
         </div>
         <form onSubmit={submit} className="bg-navy2 border border-cream/15 rounded-2xl p-6 space-y-4">
           <Field label="Your Name">
-            <input className={inputCls} value={form.name} required
+            <input className={inputCls} value={form.name} required placeholder="Full name"
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
           </Field>
           <Field label="Your Role / Title (optional)">
-            <input className={inputCls} value={form.role}
+            <input className={inputCls} value={form.role} placeholder="e.g. Grade Rep, Secretary…"
               onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))} />
           </Field>
           <Field label="Your Testimonial">
@@ -8989,7 +9030,7 @@ function TestimonialSubmitPage({ token }) {
           </Field>
           {submitError && <p className="text-red text-sm">{submitError}</p>}
           <Button type="submit" variant="gold" disabled={busy || !form.name.trim() || !form.text.trim()}>
-            {busy ? <span className="flex items-center gap-2"><Spinner /> Submitting…</span> : 'Submit Testimonial'}
+            {busy ? <span className="flex items-center gap-2"><Spinner /> Submitting…</span> : 'Submit Testimonial →'}
           </Button>
         </form>
       </div>
@@ -9008,10 +9049,13 @@ function TestimonialsAdminPage({ me }) {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [showPersonalLink, setShowPersonalLink] = useState(false);
   const [linkUserId, setLinkUserId] = useState('');
   const [users, setUsers] = useState([]);
   const [generatedLink, setGeneratedLink] = useState('');
   const [confirmEl, confirm] = useConfirm();
+
+  const universalLink = `${window.location.origin}/testimonial-submit`;
 
   const load = useCallback(async () => {
     try {
@@ -9063,13 +9107,37 @@ function TestimonialsAdminPage({ me }) {
     finally { setSaving(false); }
   }
 
+  async function reject(id) {
+    setSaving(true);
+    try { await api(`/admin/testimonials/${id}/reject`, { method: 'POST' }); load(); }
+    catch (err) { setError(err.message); }
+    finally { setSaving(false); }
+  }
+
   async function remove(t) {
     if (!(await confirm({ title: `Delete testimonial?`, message: `Remove "${t.name}"'s testimonial? This cannot be undone.`, confirmLabel: 'Delete', danger: true }))) return;
     try { await api(`/admin/testimonials/${t.id}`, { method: 'DELETE' }); load(); }
     catch (err) { setError(err.message); }
   }
 
-  async function generateLink() {
+  async function moveOrder(t, direction) {
+    const approved = (items || []).filter((x) => x.status === 'approved').sort((a, b) => (a.sortOrder - b.sortOrder) || (a.id - b.id));
+    const idx = approved.findIndex((x) => x.id === t.id);
+    const swapIdx = idx + direction;
+    if (swapIdx < 0 || swapIdx >= approved.length) return;
+    const other = approved[swapIdx];
+    setSaving(true);
+    try {
+      await Promise.all([
+        api(`/admin/testimonials/${t.id}`, { method: 'PATCH', body: { sortOrder: other.sortOrder || swapIdx } }),
+        api(`/admin/testimonials/${other.id}`, { method: 'PATCH', body: { sortOrder: t.sortOrder || idx } }),
+      ]);
+      load();
+    } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
+  }
+
+  async function generatePersonalLink() {
     if (!linkUserId) return;
     setError(''); setSaving(true);
     try {
@@ -9080,93 +9148,105 @@ function TestimonialsAdminPage({ me }) {
     finally { setSaving(false); }
   }
 
-  const pending  = (items || []).filter((t) => t.status === 'pending');
-  const approved = (items || []).filter((t) => t.status === 'approved');
+  // Separate "awaiting member" (token set, no text) from actual pending submissions
+  const awaitingSubmission = (items || []).filter((t) => t.status === 'pending' && t.submitToken);
+  const pendingReview      = (items || []).filter((t) => t.status === 'pending' && !t.submitToken);
+  const approved           = (items || []).filter((t) => t.status === 'approved').sort((a, b) => (a.sortOrder - b.sortOrder) || (a.id - b.id));
 
   return (
     <div className="max-w-5xl">
       {confirmEl}
-      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-6">Testimonials</h1>
+      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Testimonials</h1>
+      <p className="text-cream/50 mb-6">Collect stories from your members and display them on the public homepage.</p>
 
-      {/* Generate submit link */}
-      <div className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-8">
-        <div className="font-display text-2xl text-gold mb-3">Generate Member Submit Link</div>
-        <p className="text-cream/60 text-sm mb-4">Send a member a private link so they can write their own testimonial. You'll review it before it goes live.</p>
-        <div className="flex flex-wrap gap-3 items-end">
-          <Field label="Select Member">
-            <select className={inputCls} value={linkUserId} onChange={(e) => { setLinkUserId(e.target.value); setGeneratedLink(''); }}>
-              <option value="">— choose a member —</option>
-              {users.map((u) => <option key={u.id} value={u.id}>{u.displayName} ({u.title || u.role})</option>)}
-            </select>
-          </Field>
-          <Button variant="gold" disabled={!linkUserId || saving} onClick={generateLink}>Generate Link</Button>
+      {notice && <p className="text-emerald-300 text-sm mb-4">{notice}</p>}
+      {error  && <p className="text-red text-sm mb-4">{error}</p>}
+
+      {/* Universal submit link — the main flow */}
+      <div className="bg-navy2 border border-gold/40 rounded-xl p-5 mb-6">
+        <div className="flex items-center gap-2 mb-1">
+          <div className="font-display text-2xl text-gold">Public Submit Link</div>
+          <Badge tone="green">Share this</Badge>
         </div>
-        {generatedLink && (
-          <div className="mt-4 p-3 bg-navy border border-gold/30 rounded-lg">
-            <div className="text-cream/60 text-xs mb-1">Private submit link (share only with this member):</div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <code className="text-gold text-sm break-all flex-1">{generatedLink}</code>
-              <Button variant="ghost" onClick={() => { navigator.clipboard.writeText(generatedLink); setNotice('Link copied!'); }}>Copy</Button>
+        <p className="text-cream/60 text-sm mb-3">Post this one link anywhere — group chat, Instagram, emails. Anyone can click it and submit their own testimonial. You review before publishing.</p>
+        <div className="flex items-center gap-3 flex-wrap bg-navy rounded-lg px-4 py-3 border border-gold/20">
+          <code className="text-gold text-sm flex-1 break-all">{universalLink}</code>
+          <Button variant="gold" onClick={() => { navigator.clipboard.writeText(universalLink); setNotice('Universal link copied!'); }}>
+            Copy Link
+          </Button>
+        </div>
+      </div>
+
+      {/* Personal pre-filled links — secondary */}
+      <div className="bg-navy2 border border-cream/10 rounded-xl p-5 mb-8">
+        <button
+          onClick={() => setShowPersonalLink((v) => !v)}
+          className="flex items-center gap-2 w-full text-left">
+          <div className="font-display text-lg text-cream/70">Pre-filled Personal Links (optional)</div>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+            className={`text-cream/40 transition-transform ${showPersonalLink ? 'rotate-180' : ''}`}>
+            <path d="M6 9l6 6 6-6"/>
+          </svg>
+        </button>
+        {showPersonalLink && (
+          <div className="mt-4 space-y-3">
+            <p className="text-cream/50 text-sm">Generate a link pre-filled with a specific member's name and title. Useful for targeted outreach. Works the same as the universal link.</p>
+            <div className="flex flex-wrap gap-3 items-end">
+              <Field label="Select Member">
+                <select className={inputCls} value={linkUserId} onChange={(e) => { setLinkUserId(e.target.value); setGeneratedLink(''); }}>
+                  <option value="">— choose a member —</option>
+                  {users.map((u) => <option key={u.id} value={u.id}>{u.displayName} ({u.title || u.role})</option>)}
+                </select>
+              </Field>
+              <Button variant="ghost" disabled={!linkUserId || saving} onClick={generatePersonalLink}>Generate Pre-filled Link</Button>
             </div>
+            {generatedLink && (
+              <div className="p-3 bg-navy border border-cream/15 rounded-lg">
+                <div className="text-cream/50 text-xs mb-1">Pre-filled link for this member:</div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <code className="text-gold/80 text-xs break-all flex-1">{generatedLink}</code>
+                  <Button variant="ghost" onClick={() => { navigator.clipboard.writeText(generatedLink); setNotice('Personal link copied!'); }}>Copy</Button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      {/* Create directly */}
-      <form onSubmit={createTestimonial} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-8 space-y-4">
-        <div className="font-display text-2xl text-gold">Add Testimonial Directly</div>
-        <div className="grid sm:grid-cols-2 gap-4">
-          <Field label="Member Name"><input className={inputCls} required value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} /></Field>
-          <Field label="Role / Title"><input className={inputCls} value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))} /></Field>
-        </div>
-        <Field label="Testimonial Text">
-          <textarea className={inputCls} rows="4" required value={form.text} onChange={(e) => setForm((f) => ({ ...f, text: e.target.value }))} placeholder="Their testimonial…" />
-        </Field>
-        <Field label="Photo (optional)">
-          <input type="file" accept="image/*" onChange={(e) => handlePhoto(e, 'form')}
-            className="text-cream/60 text-sm file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-gold/20 file:text-gold file:text-xs cursor-pointer" />
-          {form.photo && <img src={form.photo} alt="preview" className="mt-2 w-14 h-14 rounded-full object-cover" />}
-        </Field>
-        <div className="flex items-center gap-3">
-          <Field label="Status">
-            <select className={inputCls} value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}>
-              <option value="approved">Published (approved)</option>
-              <option value="pending">Pending review</option>
-            </select>
-          </Field>
-          <Button type="submit" variant="gold" disabled={adding || !form.name.trim() || !form.text.trim()}>
-            {adding ? <span className="flex items-center gap-2"><Spinner /> Adding…</span> : 'Add Testimonial'}
-          </Button>
-        </div>
-        {notice && <p className="text-emerald-300 text-sm">{notice}</p>}
-        {error && <p className="text-red text-sm">{error}</p>}
-      </form>
-
-      {/* Pending reviews */}
-      {pending.length > 0 && (
+      {/* New submissions awaiting review */}
+      {pendingReview.length > 0 && (
         <div className="mb-8">
-          <div className="font-display text-2xl text-gold mb-3">Pending Review ({pending.length})</div>
+          <div className="flex items-center gap-2 mb-3">
+            <div className="font-display text-2xl text-gold">Awaiting Your Review</div>
+            <span className="bg-red/20 text-red border border-red/40 text-xs px-2 py-0.5 rounded-full font-medium">{pendingReview.length}</span>
+          </div>
           <div className="space-y-3">
-            {pending.map((t) => (
+            {pendingReview.map((t) => (
               <div key={t.id} className="bg-navy2 border border-yellow-500/30 rounded-xl p-4">
                 {editing?.id === t.id ? (
                   <EditTestimonialInline t={editing} onChange={setEditing} onSave={saveEdit} onCancel={() => setEditing(null)} saving={saving} onPhoto={(e) => handlePhoto(e, 'edit')} />
                 ) : (
                   <div>
-                    <div className="flex items-start justify-between gap-3 mb-2">
-                      <div>
+                    <div className="flex items-start gap-3 mb-3">
+                      {t.photo ? (
+                        <img src={t.photo} alt={t.name} className="w-12 h-12 rounded-full object-cover flex-shrink-0" />
+                      ) : (
+                        <div className="w-12 h-12 rounded-full bg-gold/20 flex items-center justify-center flex-shrink-0">
+                          <span className="text-gold font-display text-lg">{(t.name || '?')[0]}</span>
+                        </div>
+                      )}
+                      <div className="flex-1">
                         <div className="text-cream font-medium">{t.name}</div>
                         {t.role && <div className="text-gold/70 text-xs">{t.role}</div>}
-                        <div className="text-cream/50 text-xs mt-0.5">{t.submitToken ? 'Pending member submission' : `Submitted ${new Date(t.createdAt).toLocaleDateString()}`}</div>
-                      </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {!t.submitToken && <Button variant="ghost" onClick={() => approve(t.id)}>Approve</Button>}
-                        <Button variant="ghost" onClick={() => setEditing({ ...t })}>Edit</Button>
-                        <button onClick={() => remove(t)} className="text-xs text-red/80 hover:text-red">Delete</button>
+                        <div className="text-cream/40 text-xs">{new Date(t.createdAt).toLocaleDateString()}</div>
+                        <p className="text-cream/80 text-sm mt-2 italic">"{t.text}"</p>
                       </div>
                     </div>
-                    {t.text && <p className="text-cream/70 text-sm italic">"{t.text}"</p>}
-                    {t.submitToken && <p className="text-cream/40 text-xs mt-1">Waiting for member to submit via their link.</p>}
+                    <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-cream/8">
+                      <Button variant="gold" onClick={() => approve(t.id)} disabled={saving}>✓ Publish</Button>
+                      <Button variant="ghost" onClick={() => setEditing({ ...t })}>Edit</Button>
+                      <button onClick={() => remove(t)} className="text-xs text-red/80 hover:text-red ml-auto">Delete</button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -9175,18 +9255,72 @@ function TestimonialsAdminPage({ me }) {
         </div>
       )}
 
-      {/* Approved / published */}
+      {/* Awaiting member submission (personal links sent but not yet filled out) */}
+      {awaitingSubmission.length > 0 && (
+        <div className="mb-8">
+          <div className="font-display text-lg text-cream/50 mb-2">Awaiting Member Response ({awaitingSubmission.length})</div>
+          <div className="space-y-2">
+            {awaitingSubmission.map((t) => (
+              <div key={t.id} className="bg-navy2 border border-cream/8 rounded-xl px-4 py-3 flex items-center justify-between gap-3 opacity-60">
+                <div>
+                  <div className="text-cream/80 text-sm">{t.name}</div>
+                  {t.role && <div className="text-cream/40 text-xs">{t.role}</div>}
+                  <div className="text-cream/30 text-xs">Link sent, waiting for them to fill it out</div>
+                </div>
+                <button onClick={() => remove(t)} className="text-xs text-red/60 hover:text-red">Cancel</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Create directly */}
+      <form onSubmit={createTestimonial} className="bg-navy2 border border-cream/10 rounded-xl p-5 mb-8 space-y-4">
+        <div className="font-display text-xl text-cream/80">Add Testimonial Yourself</div>
+        <div className="grid sm:grid-cols-2 gap-4">
+          <Field label="Name"><input className={inputCls} required value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} /></Field>
+          <Field label="Role / Title"><input className={inputCls} value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))} /></Field>
+        </div>
+        <Field label="Testimonial Text">
+          <textarea className={inputCls} rows="3" required value={form.text} onChange={(e) => setForm((f) => ({ ...f, text: e.target.value }))} placeholder="Their testimonial…" />
+        </Field>
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label="Photo (optional)">
+            <input type="file" accept="image/*" onChange={(e) => handlePhoto(e, 'form')}
+              className="text-cream/60 text-sm file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-gold/20 file:text-gold file:text-xs cursor-pointer" />
+            {form.photo && <img src={form.photo} alt="preview" className="mt-1 w-12 h-12 rounded-full object-cover" />}
+          </Field>
+          <Field label="Status">
+            <select className={inputCls} value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}>
+              <option value="approved">Publish immediately</option>
+              <option value="pending">Save as pending</option>
+            </select>
+          </Field>
+          <Button type="submit" variant="gold" disabled={adding || !form.name.trim() || !form.text.trim()}>
+            {adding ? <span className="flex items-center gap-2"><Spinner /> Adding…</span> : 'Add'}
+          </Button>
+        </div>
+      </form>
+
+      {/* Published */}
       <div>
         <div className="font-display text-2xl text-gold mb-3">Published ({approved.length})</div>
-        {approved.length === 0 && <EmptyState icon="💬" title="No published testimonials yet" hint="Add one above or approve a pending submission." />}
-        <div className="space-y-3">
-          {approved.map((t) => (
-            <div key={t.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors">
-              {editing?.id === t.id ? (
-                <EditTestimonialInline t={editing} onChange={setEditing} onSave={saveEdit} onCancel={() => setEditing(null)} saving={saving} onPhoto={(e) => handlePhoto(e, 'edit')} />
-              ) : (
-                <div className="flex items-start justify-between gap-3">
+        {approved.length === 0 ? (
+          <EmptyState icon="💬" title="No published testimonials yet" hint="Approve a submission above, or add one directly." />
+        ) : (
+          <div className="space-y-2">
+            {approved.map((t, idx) => (
+              <div key={t.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors">
+                {editing?.id === t.id ? (
+                  <EditTestimonialInline t={editing} onChange={setEditing} onSave={saveEdit} onCancel={() => setEditing(null)} saving={saving} onPhoto={(e) => handlePhoto(e, 'edit')} />
+                ) : (
                   <div className="flex items-start gap-3">
+                    <div className="flex flex-col gap-1 mr-1">
+                      <button onClick={() => moveOrder(t, -1)} disabled={saving || idx === 0}
+                        className="text-cream/25 hover:text-cream/60 disabled:opacity-20 transition-colors text-xs leading-none" title="Move up">▲</button>
+                      <button onClick={() => moveOrder(t, 1)} disabled={saving || idx === approved.length - 1}
+                        className="text-cream/25 hover:text-cream/60 disabled:opacity-20 transition-colors text-xs leading-none" title="Move down">▼</button>
+                    </div>
                     {t.photo ? (
                       <img src={t.photo} alt={t.name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
                     ) : (
@@ -9194,21 +9328,22 @@ function TestimonialsAdminPage({ me }) {
                         <span className="text-gold font-display">{(t.name || '?')[0]}</span>
                       </div>
                     )}
-                    <div>
-                      <div className="text-cream font-medium">{t.name}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-cream font-medium text-sm">{t.name}</div>
                       {t.role && <div className="text-gold/70 text-xs">{t.role}</div>}
-                      <p className="text-cream/60 text-sm mt-1 italic">"{t.text}"</p>
+                      <p className="text-cream/60 text-sm mt-1 italic line-clamp-2">"{t.text}"</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <Button variant="ghost" onClick={() => setEditing({ ...t })}>Edit</Button>
+                      <button onClick={() => reject(t.id)} disabled={saving} className="text-xs text-yellow-500/70 hover:text-yellow-400">Unpublish</button>
+                      <button onClick={() => remove(t)} className="text-xs text-red/70 hover:text-red">Delete</button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <Button variant="ghost" onClick={() => setEditing({ ...t })}>Edit</Button>
-                    <button onClick={() => remove(t)} className="text-xs text-red/80 hover:text-red">Delete</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -9250,6 +9385,9 @@ function NewsletterAdminPage({ me }) {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
   const [search, setSearch] = useState('');
+  const [addEmail, setAddEmail] = useState('');
+  const [addName, setAddName] = useState('');
+  const [adding, setAdding] = useState(false);
   const [confirmEl, confirm] = useConfirm();
 
   const load = useCallback(async () => {
@@ -9262,12 +9400,39 @@ function NewsletterAdminPage({ me }) {
   useEffect(() => { load(); }, [load]);
 
   const q = search.trim().toLowerCase();
-  const visible = subscribers ? (q ? subscribers.filter((s) => s.email.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)) : subscribers) : [];
-  const activeOnes = visible.filter((s) => s.active);
+  const visibleList = subscribers
+    ? (q ? subscribers.filter((s) => s.email.toLowerCase().includes(q) || (s.name || '').toLowerCase().includes(q)) : subscribers)
+    : [];
+
+  // Copy ALL active subscribers — always ignores the search filter
+  const allActive = (subscribers || []).filter((s) => s.active);
 
   function copyEmails() {
-    const emails = activeOnes.map((s) => s.email).join(', ');
-    navigator.clipboard.writeText(emails).then(() => setNotice(`Copied ${activeOnes.length} email${activeOnes.length !== 1 ? 's' : ''} to clipboard!`));
+    const emails = allActive.map((s) => s.email).join(', ');
+    navigator.clipboard.writeText(emails)
+      .then(() => setNotice(`✓ Copied ${allActive.length} email${allActive.length !== 1 ? 's' : ''}. Paste into Gmail's BCC field.`));
+  }
+
+  function exportCSV() {
+    const rows = ['Email,Name,Source,Subscribed'].concat(
+      allActive.map((s) => `${s.email},${(s.name || '').replace(/,/g, ' ')},${s.source},${s.subscribedAt.slice(0, 10)}`)
+    );
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'newsletter-subscribers.csv'; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function manualAdd(e) {
+    e.preventDefault();
+    setError(''); setAdding(true);
+    try {
+      const d = await api('/admin/newsletter', { method: 'POST', body: { email: addEmail.trim(), name: addName.trim() } });
+      setNotice(`Added ${addEmail}.`);
+      setAddEmail(''); setAddName('');
+      load();
+    } catch (err) { setError(err.message); }
+    finally { setAdding(false); }
   }
 
   async function toggleActive(s) {
@@ -9289,35 +9454,65 @@ function NewsletterAdminPage({ me }) {
     finally { setSaving(false); }
   }
 
-  const totalActive = (subscribers || []).filter((s) => s.active).length;
+  const totalAll    = (subscribers || []).length;
+  const totalActive = allActive.length;
+  const totalInactive = totalAll - totalActive;
+
+  const sourceBadge = (s) => ({
+    auto: { tone: 'blue', label: 'Auto' },
+    manual: { tone: 'slate', label: 'Manual' },
+    signup: { tone: 'green', label: 'Signed up' },
+  }[s.source] || { tone: 'slate', label: s.source });
 
   return (
     <div className="max-w-5xl">
       {confirmEl}
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Newsletter</h1>
-      <p className="text-cream/50 mb-6">Manage your newsletter subscriber list. All active members with email addresses are automatically enrolled.</p>
+      <p className="text-cream/50 mb-6">Board members with email addresses are automatically enrolled. Public visitors can sign up on the homepage.</p>
 
-      {error && <p className="text-red text-sm mb-4">{error}</p>}
+      {error  && <p className="text-red text-sm mb-4">{error}</p>}
       {notice && <p className="text-emerald-300 text-sm mb-4">{notice}</p>}
 
-      {/* Stats + export */}
-      <div className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 flex flex-wrap items-center gap-4">
-        <div className="flex-1 min-w-[160px]">
-          <div className="font-display text-4xl text-gold">{totalActive}</div>
-          <div className="text-cream/50 text-xs tracking-wider uppercase">Active Subscribers</div>
+      {/* Stats + export actions */}
+      <div className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6">
+        <div className="flex flex-wrap gap-6 mb-5">
+          <div><div className="font-display text-4xl text-gold">{totalActive}</div><div className="text-cream/50 text-xs tracking-wider uppercase">Active</div></div>
+          {totalInactive > 0 && <div><div className="font-display text-4xl text-cream/30">{totalInactive}</div><div className="text-cream/30 text-xs tracking-wider uppercase">Unsubscribed</div></div>}
+          <div><div className="font-display text-4xl text-cream/50">{totalAll}</div><div className="text-cream/40 text-xs tracking-wider uppercase">Total</div></div>
         </div>
-        <div className="flex flex-col gap-2 flex-shrink-0">
-          <Button variant="gold" onClick={copyEmails} disabled={activeOnes.length === 0}>
-            📋 Copy All Emails ({activeOnes.length})
+        <div className="flex flex-wrap gap-3">
+          <Button variant="gold" onClick={copyEmails} disabled={allActive.length === 0}>
+            📋 Copy All Emails ({allActive.length})
           </Button>
-          <p className="text-cream/40 text-xs">Paste directly into Gmail's BCC field.</p>
+          <Button variant="ghost" onClick={exportCSV} disabled={allActive.length === 0}>
+            ↓ Export CSV
+          </Button>
+          <p className="self-center text-cream/35 text-xs">Copy all emails → paste into Gmail BCC.</p>
         </div>
       </div>
 
-      {/* Search */}
+      {/* Manually add subscriber */}
+      <form onSubmit={manualAdd} className="bg-navy2 border border-cream/10 rounded-xl p-5 mb-6">
+        <div className="font-display text-lg text-cream/80 mb-3">Add Subscriber Manually</div>
+        <div className="flex flex-wrap gap-3 items-end">
+          <Field label="Email">
+            <input type="email" className={inputCls} value={addEmail} required placeholder="email@example.com"
+              onChange={(e) => setAddEmail(e.target.value)} />
+          </Field>
+          <Field label="Name (optional)">
+            <input className={inputCls} value={addName} placeholder="Full name"
+              onChange={(e) => setAddName(e.target.value)} />
+          </Field>
+          <Button type="submit" variant="ghost" disabled={adding || !addEmail.trim()}>
+            {adding ? <span className="flex items-center gap-1"><Spinner className="w-3 h-3" /> Adding…</span> : 'Add'}
+          </Button>
+        </div>
+      </form>
+
+      {/* List */}
       <div className="flex items-center gap-3 mb-3 flex-wrap">
         <div className="font-display text-xl text-gold">
-          Subscribers {q ? `(${visible.length} of ${(subscribers || []).length})` : `(${(subscribers || []).length})`}
+          {q ? `${visibleList.length} of ${totalAll} subscribers` : `All Subscribers (${totalAll})`}
         </div>
         <input className={inputCls + ' max-w-xs sm:ml-auto'} placeholder="Search by email or name…"
           value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -9325,29 +9520,32 @@ function NewsletterAdminPage({ me }) {
 
       {!subscribers && <div className="flex items-center gap-2 text-cream/50"><Spinner /> Loading…</div>}
 
-      <div className="space-y-2">
-        {visible.map((s) => (
-          <div key={s.id} className={`bg-navy2 border rounded-xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap ${s.active ? 'border-cream/10' : 'border-cream/5 opacity-50'}`}>
-            <div className="flex items-center gap-3">
-              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${s.active ? 'bg-emerald-400' : 'bg-cream/20'}`} />
-              <div>
-                <div className="text-cream text-sm">{s.email}</div>
-                {s.name && <div className="text-cream/50 text-xs">{s.name}</div>}
+      <div className="space-y-1.5">
+        {visibleList.map((s) => {
+          const sb = sourceBadge(s);
+          return (
+            <div key={s.id} className={`bg-navy2 border rounded-xl px-4 py-3 flex items-center justify-between gap-3 flex-wrap transition-opacity ${s.active ? 'border-cream/10' : 'border-cream/5 opacity-40'}`}>
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${s.active ? 'bg-emerald-400' : 'bg-cream/20'}`} />
+                <div className="min-w-0">
+                  <div className="text-cream text-sm truncate">{s.email}</div>
+                  {s.name && <div className="text-cream/50 text-xs">{s.name}</div>}
+                </div>
+              </div>
+              <div className="flex items-center gap-2.5 text-xs flex-shrink-0">
+                <Badge tone={sb.tone}>{sb.label}</Badge>
+                <span className="text-cream/30 hidden sm:inline">{new Date(s.subscribedAt).toLocaleDateString()}</span>
+                <button onClick={() => toggleActive(s)} disabled={saving}
+                  className={`${s.active ? 'text-cream/40 hover:text-gold' : 'text-cream/30 hover:text-cream/60'} transition-colors`}>
+                  {s.active ? 'Unsubscribe' : 'Re-subscribe'}
+                </button>
+                <button onClick={() => remove(s)} disabled={saving} className="text-red/60 hover:text-red transition-colors">Remove</button>
               </div>
             </div>
-            <div className="flex items-center gap-3 text-xs">
-              <Badge tone={s.source === 'auto' ? 'blue' : 'green'}>{s.source === 'auto' ? 'Auto-enrolled' : 'Signed up'}</Badge>
-              <span className="text-cream/30">{new Date(s.subscribedAt).toLocaleDateString()}</span>
-              <button onClick={() => toggleActive(s)} disabled={saving}
-                className={`${s.active ? 'text-cream/50 hover:text-gold' : 'text-cream/30 hover:text-cream'} transition-colors`}>
-                {s.active ? 'Unsubscribe' : 'Re-subscribe'}
-              </button>
-              <button onClick={() => remove(s)} disabled={saving} className="text-red/70 hover:text-red transition-colors">Remove</button>
-            </div>
-          </div>
-        ))}
-        {visible.length === 0 && subscribers && (
-          <EmptyState icon="✉️" title="No subscribers yet" hint="Subscribers will appear here once members or visitors sign up." />
+          );
+        })}
+        {visibleList.length === 0 && subscribers && (
+          <EmptyState icon="✉️" title="No subscribers yet" hint="Subscribers appear here once members or visitors sign up." />
         )}
       </div>
     </div>
