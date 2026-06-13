@@ -503,6 +503,91 @@ app.post('/api/public/volunteer/:id/signup', volunteerSignupRL, (req, res) => {
   res.status(201).json({ ok: true, id: info.lastInsertRowid, status });
 });
 
+// ---- Public testimonials & newsletter ---------------------------------------
+// These must stay above the auth gate below so anonymous homepage visitors can
+// read approved testimonials, submit their own, and sign up for the newsletter.
+// (notifyAdmins / newsletterEnroll are hoisted function declarations defined
+// alongside the admin routes further down.)
+
+// Public: approved testimonials only.
+app.get('/api/testimonials', (req, res) => {
+  const rows = db.prepare(
+    "SELECT id, name, role, photo, text, sortOrder FROM testimonials WHERE status = 'approved' ORDER BY sortOrder ASC, createdAt DESC"
+  ).all();
+  res.json({ testimonials: rows });
+});
+
+// Public: universal submit form — anyone can go to /testimonial-submit and submit.
+// No token required; all submissions go to pending for admin review.
+app.post('/api/public/testimonial-submit',
+  rateLimit({ windowMs: 60 * 60 * 1000, max: 15, name: 'testimonial-submit-universal' }),
+  (req, res) => {
+    let { name, role, photo, text } = req.body || {};
+    name  = String(name  || '').trim().slice(0, 120);
+    role  = String(role  || '').trim().slice(0, 120);
+    photo = String(photo || '').trim().slice(0, 8 * 1024 * 1024);
+    text  = String(text  || '').trim().slice(0, 5000);
+    if (!name || !text) return res.status(400).json({ error: 'Name and testimonial text are required.' });
+    db.prepare(
+      "INSERT INTO testimonials (name, role, photo, text, status) VALUES (?, ?, ?, ?, 'pending')"
+    ).run(name, role, photo, text);
+    notifyAdmins(`New testimonial submitted by ${name}`, '', 'info');
+    res.json({ ok: true });
+  }
+);
+
+// Public: get pre-fill info for a token-based (pre-assigned) submit link.
+app.get('/api/public/testimonial-submit/:token', (req, res) => {
+  const token = String(req.params.token).replace(/[^a-zA-Z0-9]/g, '');
+  const row = db.prepare("SELECT id, name, role FROM testimonials WHERE submitToken = ? AND status = 'pending'").get(token);
+  if (!row) return res.status(404).json({ error: 'This link is no longer valid or has already been used.' });
+  res.json({ name: row.name, role: row.role });
+});
+
+// Public: submit via a pre-assigned token link (clears the token on use).
+app.post('/api/public/testimonial-submit/:token',
+  rateLimit({ windowMs: 60 * 60 * 1000, max: 10, name: 'testimonial-submit-token' }),
+  (req, res) => {
+    const token = String(req.params.token).replace(/[^a-zA-Z0-9]/g, '');
+    const row = db.prepare("SELECT id FROM testimonials WHERE submitToken = ? AND status = 'pending'").get(token);
+    if (!row) return res.status(404).json({ error: 'This link is no longer valid or has already been used.' });
+    let { name, role, photo, text } = req.body || {};
+    name  = String(name  || '').trim().slice(0, 120);
+    role  = String(role  || '').trim().slice(0, 120);
+    photo = String(photo || '').trim().slice(0, 8 * 1024 * 1024);
+    text  = String(text  || '').trim().slice(0, 5000);
+    if (!name || !text) return res.status(400).json({ error: 'Name and testimonial text are required.' });
+    db.prepare(
+      "UPDATE testimonials SET name=?, role=?, photo=?, text=?, submitToken=NULL, updatedAt=datetime('now') WHERE id=?"
+    ).run(name, role, photo, text, row.id);
+    notifyAdmins(`New testimonial submitted by ${name}`, '', 'info');
+    res.json({ ok: true });
+  }
+);
+
+// Public: sign up for the newsletter.
+app.post('/api/newsletter/subscribe',
+  rateLimit({ windowMs: 60 * 60 * 1000, max: 20, name: 'newsletter' }),
+  (req, res) => {
+    let { email, name } = req.body || {};
+    email = String(email || '').trim().toLowerCase();
+    name  = String(name  || '').trim().slice(0, 120);
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      return res.status(400).json({ error: 'A valid email address is required.' });
+    }
+    const existing = db.prepare("SELECT id, active FROM newsletter_subscribers WHERE lower(email) = ?").get(email);
+    if (existing) {
+      if (!existing.active) {
+        db.prepare("UPDATE newsletter_subscribers SET active=1, name=?, subscribedAt=datetime('now') WHERE id=?")
+          .run(name || existing.name, existing.id);
+      }
+      return res.json({ ok: true, alreadySubscribed: !existing.active });
+    }
+    db.prepare("INSERT INTO newsletter_subscribers (email, name, source) VALUES (?, ?, 'signup')").run(email, name);
+    res.json({ ok: true });
+  }
+);
+
 // Everything past this point requires a changed password.
 app.use('/api', authenticate, requirePasswordChanged);
 
@@ -2854,13 +2939,8 @@ function notifyAdmins(message, link = '', type = 'info') {
   } catch (_) {}
 }
 
-// Public: approved testimonials only.
-app.get('/api/testimonials', (req, res) => {
-  const rows = db.prepare(
-    "SELECT id, name, role, photo, text, sortOrder FROM testimonials WHERE status = 'approved' ORDER BY sortOrder ASC, createdAt DESC"
-  ).all();
-  res.json({ testimonials: rows });
-});
+// NOTE: public testimonial routes (GET /api/testimonials and the
+// /api/public/testimonial-submit endpoints) live above the auth gate.
 
 // Admin: all testimonials (any status).
 app.get('/api/admin/testimonials', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
@@ -2950,54 +3030,6 @@ app.post('/api/admin/testimonials/generate-link', authenticate, requirePasswordC
   res.json({ link });
 });
 
-// Public: universal submit form — anyone can go to /testimonial-submit and submit.
-// No token required; all submissions go to pending for admin review.
-app.post('/api/public/testimonial-submit',
-  rateLimit({ windowMs: 60 * 60 * 1000, max: 15, name: 'testimonial-submit-universal' }),
-  (req, res) => {
-    let { name, role, photo, text } = req.body || {};
-    name  = String(name  || '').trim().slice(0, 120);
-    role  = String(role  || '').trim().slice(0, 120);
-    photo = String(photo || '').trim().slice(0, 8 * 1024 * 1024);
-    text  = String(text  || '').trim().slice(0, 5000);
-    if (!name || !text) return res.status(400).json({ error: 'Name and testimonial text are required.' });
-    db.prepare(
-      "INSERT INTO testimonials (name, role, photo, text, status) VALUES (?, ?, ?, ?, 'pending')"
-    ).run(name, role, photo, text);
-    notifyAdmins(`New testimonial submitted by ${name}`, '', 'info');
-    res.json({ ok: true });
-  }
-);
-
-// Public: get pre-fill info for a token-based (pre-assigned) submit link.
-app.get('/api/public/testimonial-submit/:token', (req, res) => {
-  const token = String(req.params.token).replace(/[^a-zA-Z0-9]/g, '');
-  const row = db.prepare("SELECT id, name, role FROM testimonials WHERE submitToken = ? AND status = 'pending'").get(token);
-  if (!row) return res.status(404).json({ error: 'This link is no longer valid or has already been used.' });
-  res.json({ name: row.name, role: row.role });
-});
-
-// Public: submit via a pre-assigned token link (clears the token on use).
-app.post('/api/public/testimonial-submit/:token',
-  rateLimit({ windowMs: 60 * 60 * 1000, max: 10, name: 'testimonial-submit-token' }),
-  (req, res) => {
-    const token = String(req.params.token).replace(/[^a-zA-Z0-9]/g, '');
-    const row = db.prepare("SELECT id FROM testimonials WHERE submitToken = ? AND status = 'pending'").get(token);
-    if (!row) return res.status(404).json({ error: 'This link is no longer valid or has already been used.' });
-    let { name, role, photo, text } = req.body || {};
-    name  = String(name  || '').trim().slice(0, 120);
-    role  = String(role  || '').trim().slice(0, 120);
-    photo = String(photo || '').trim().slice(0, 8 * 1024 * 1024);
-    text  = String(text  || '').trim().slice(0, 5000);
-    if (!name || !text) return res.status(400).json({ error: 'Name and testimonial text are required.' });
-    db.prepare(
-      "UPDATE testimonials SET name=?, role=?, photo=?, text=?, submitToken=NULL, updatedAt=datetime('now') WHERE id=?"
-    ).run(name, role, photo, text, row.id);
-    notifyAdmins(`New testimonial submitted by ${name}`, '', 'info');
-    res.json({ ok: true });
-  }
-);
-
 // ---- Newsletter -------------------------------------------------------------
 
 function newsletterEnroll(email, name, source = 'auto') {
@@ -3011,28 +3043,8 @@ function newsletterEnroll(email, name, source = 'auto') {
   } catch (_) {}
 }
 
-// Public: sign up for the newsletter.
-app.post('/api/newsletter/subscribe',
-  rateLimit({ windowMs: 60 * 60 * 1000, max: 20, name: 'newsletter' }),
-  (req, res) => {
-    let { email, name } = req.body || {};
-    email = String(email || '').trim().toLowerCase();
-    name  = String(name  || '').trim().slice(0, 120);
-    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-      return res.status(400).json({ error: 'A valid email address is required.' });
-    }
-    const existing = db.prepare("SELECT id, active FROM newsletter_subscribers WHERE lower(email) = ?").get(email);
-    if (existing) {
-      if (!existing.active) {
-        db.prepare("UPDATE newsletter_subscribers SET active=1, name=?, subscribedAt=datetime('now') WHERE id=?")
-          .run(name || existing.name, existing.id);
-      }
-      return res.json({ ok: true, alreadySubscribed: !existing.active });
-    }
-    db.prepare("INSERT INTO newsletter_subscribers (email, name, source) VALUES (?, ?, 'signup')").run(email, name);
-    res.json({ ok: true });
-  }
-);
+// NOTE: the public newsletter signup route (POST /api/newsletter/subscribe)
+// lives above the auth gate.
 
 // Admin: manually add a subscriber.
 app.post('/api/admin/newsletter', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
