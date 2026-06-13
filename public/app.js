@@ -3173,7 +3173,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         </section>
         <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 space-y-8">
           <HomeAnnouncementBanner home={home} />
-          {home.memberCount > 0 && <MemberStatsBar memberCount={home.memberCount} testimonialCount={home.testimonialCount || 0} />}
+          {home.memberCount > 0 && <MemberStatsBar memberCount={home.memberCount} />}
           {cards}
           <AboutSection home={home} />
           <ValuesSection />
@@ -3212,28 +3212,194 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
     );
   }
 
-  // Public landing page — the whole club's site. A full-viewport immersive
-  // hero (twinkling stars, drifting glows, parallax — all CSS, no 3D libs),
-  // then the practical content: announcement, next meeting, volunteer links.
+  // Public site — broken into separate pages (Home, About Us, Meet the Board,
+  // What People Are Saying, Get Involved) reachable from a top dropdown menu,
+  // so the landing page no longer scrolls through everything at once.
   return (
-    <div className="min-h-screen">
-      <div className="relative min-h-screen flex flex-col overflow-hidden">
+    <PublicSite
+      home={home} events={events} volunteerEvents={volunteerEvents}
+      onEnterPortal={onEnterPortal} />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Public site shell — a top bar with a dropdown menu, then one page at a time.
+// Pages are real paths (/, /about, /board, /testimonials, /get-involved) so
+// they survive a refresh and the browser back button (the server's SPA
+// fallback serves index.html for these extension-less routes).
+// ---------------------------------------------------------------------------
+const PUBLIC_PAGES = [
+  { key: 'home',         label: 'Home',                   path: '/' },
+  { key: 'about',        label: 'About Us',               path: '/about' },
+  { key: 'board',        label: 'Meet the Board',         path: '/board' },
+  { key: 'testimonials', label: 'What People Are Saying', path: '/testimonials' },
+  { key: 'involved',     label: 'Get Involved',           path: '/get-involved' },
+];
+
+function publicPageFromPath(pathname) {
+  const hit = PUBLIC_PAGES.find((p) => p.path === pathname);
+  return hit ? hit.key : 'home';
+}
+
+function PublicSite({ home, events, volunteerEvents, onEnterPortal }) {
+  const [page, setPage] = useState(() => publicPageFromPath(window.location.pathname));
+
+  // Keep in sync with the browser back/forward buttons.
+  useEffect(() => {
+    const onPop = () => setPage(publicPageFromPath(window.location.pathname));
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  const navigate = useCallback((key) => {
+    const pg = PUBLIC_PAGES.find((p) => p.key === key);
+    if (!pg) return;
+    if (window.location.pathname !== pg.path) window.history.pushState(null, '', pg.path);
+    setPage(key);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
+  const cards = (
+    <div className="grid md:grid-cols-2 gap-6">
+      <Card3D><MeetingCard home={home} events={events} volunteerEvents={volunteerEvents} /></Card3D>
+      <Card3D><PodcastCard home={home} /></Card3D>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      <PublicNav current={page} onNavigate={navigate} onEnterPortal={onEnterPortal} />
+      <div className="flex-1">
+        {page === 'home' && <PublicHomePage home={home} cards={cards} onNavigate={navigate} />}
+
+        {page === 'about' && (
+          <PublicPageShell title="About Us" subtitle="Who we are and what we stand for.">
+            {home.aboutText && <AboutSection home={home} />}
+            <ValuesSection />
+            <CharlieKirkTribute />
+          </PublicPageShell>
+        )}
+
+        {page === 'board' && (
+          <PublicPageShell>
+            <MeetTheBoard />
+          </PublicPageShell>
+        )}
+
+        {page === 'testimonials' && (
+          <PublicPageShell title="What People Are Saying" subtitle="Hear from the people who make Club America what it is.">
+            <TestimonialsSection bare />
+          </PublicPageShell>
+        )}
+
+        {page === 'involved' && (
+          <PublicPageShell title="Get Involved" subtitle="Join us, follow along, and stay in the loop.">
+            <GetInvolved />
+            <EventPhotos />
+            <InstagramFeed home={home} />
+            <NewsletterSignup />
+          </PublicPageShell>
+        )}
+      </div>
+      <PublicFooter home={home} onEnterPortal={onEnterPortal} />
+    </div>
+  );
+}
+
+// Top navigation: logo (→ home), a dropdown menu listing every page plus the
+// board login, and a prominent Board Login button.
+function PublicNav({ current, onNavigate, onEnterPortal }) {
+  const [open, setOpen] = useState(false);
+
+  // Close the dropdown on any outside click.
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [open]);
+
+  const go = (key) => { setOpen(false); onNavigate(key); };
+  const currentLabel = (PUBLIC_PAGES.find((p) => p.key === current) || PUBLIC_PAGES[0]).label;
+
+  return (
+    <header className="sticky top-0 z-40 bg-navy/85 backdrop-blur border-b border-cream/10">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+        <button onClick={() => go('home')} className="flex items-center shrink-0" aria-label="Club America home">
+          <Logo size="sidebar" />
+        </button>
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="relative" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm text-cream/85 border border-cream/15 hover:text-cream hover:border-cream/30 hover:bg-cream/5 transition-colors">
+              <span className="hidden sm:inline text-cream/45">Menu —</span>
+              <span className="font-medium">{currentLabel}</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                className={`transition-transform ${open ? 'rotate-180' : ''}`}><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            {open && (
+              <div role="menu" className="absolute right-0 mt-2 w-60 bg-navy2 border border-cream/15 rounded-xl shadow-xl shadow-black/40 py-1.5 overflow-hidden">
+                {PUBLIC_PAGES.map((p) => (
+                  <button key={p.key} role="menuitem" onClick={() => go(p.key)}
+                    className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${current === p.key ? 'text-gold bg-cream/5' : 'text-cream/80 hover:text-cream hover:bg-cream/5'}`}>
+                    {p.label}
+                  </button>
+                ))}
+                <div className="h-px bg-cream/10 my-1.5" />
+                <button role="menuitem" onClick={() => { setOpen(false); onEnterPortal(); }}
+                  className="w-full text-left px-4 py-2.5 text-sm text-gold hover:bg-cream/5 transition-colors">
+                  Board Member Login →
+                </button>
+              </div>
+            )}
+          </div>
+          <Button variant="primary" onClick={onEnterPortal} className="hidden sm:inline-flex">Board Login →</Button>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+// Shared wrapper for the inner pages: faint background glows + a centered title.
+function PublicPageShell({ title, subtitle, children }) {
+  return (
+    <div className="relative">
+      <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+        <div className="absolute top-[6%] -left-1/4 w-[60%] h-[34%] rounded-full"
+          style={{ background: 'radial-gradient(circle, rgba(0,40,104,0.20), transparent 60%)', filter: 'blur(50px)' }} />
+        <div className="absolute bottom-[8%] -right-1/4 w-[55%] h-[30%] rounded-full"
+          style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.10), transparent 60%)', filter: 'blur(50px)' }} />
+      </div>
+      <main className="relative max-w-5xl mx-auto px-4 sm:px-6 pt-10 pb-20 space-y-8">
+        {title && (
+          <div className="text-center">
+            <h1 className="font-display text-4xl sm:text-5xl text-cream">{title}</h1>
+            {subtitle && <p className="text-cream/55 mt-2">{subtitle}</p>}
+          </div>
+        )}
+        {children}
+      </main>
+    </div>
+  );
+}
+
+// The landing page: the immersive hero, then the announcement, stats, and the
+// Next Meeting / Podcast cards. Everything else now lives on its own page.
+function PublicHomePage({ home, cards, onNavigate }) {
+  const hasBelow = (home.homeAnnouncementEnabled && home.homeAnnouncement) || home.memberCount > 0;
+  return (
+    <div>
+      <div className="relative min-h-[calc(100vh-4rem)] flex flex-col overflow-hidden">
         {/* Ambient background layers — old-glory red and blue, kept quiet */}
         <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
           <div className="ca-aurora-a absolute -top-1/4 -left-1/4 w-[80%] h-[80%] rounded-full"
             style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.16), transparent 60%)', filter: 'blur(40px)' }} />
           <div className="ca-aurora-b absolute -bottom-1/3 -right-1/4 w-[85%] h-[85%] rounded-full"
             style={{ background: 'radial-gradient(circle, rgba(0,40,104,0.35), transparent 60%)', filter: 'blur(40px)' }} />
-          {/* Waving flag stripes rising from the bottom of the hero */}
           <div className="ca-stripes absolute inset-x-0 bottom-0 h-[42%] opacity-10" />
         </div>
         <ParallaxLayer speed={0.25} className="absolute inset-0 pointer-events-none"><Starfield count={16} /></ParallaxLayer>
         <ParallaxLayer speed={0.12} className="absolute inset-0 pointer-events-none"><Starfield count={12} /></ParallaxLayer>
-
-        <header className="relative z-10 max-w-5xl mx-auto w-full px-4 sm:px-6 pt-6 flex items-center justify-between gap-3">
-          <Logo size="sidebar" />
-          <Button variant="primary" onClick={onEnterPortal}>Board Login →</Button>
-        </header>
 
         <section className="relative z-10 flex-1 flex flex-col justify-center px-4 sm:px-6 py-16">
           <TiltScene className="relative w-full" innerClassName="relative flex flex-col items-center text-center">
@@ -3261,13 +3427,11 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
             </p>
             <div className="mt-9 flex flex-wrap gap-3 justify-center items-center ca-fade-in"
               style={{ animationDelay: '950ms', animationDuration: '0.8s', transform: 'translateZ(50px)' }}>
-              <button
-                onClick={() => document.getElementById('get-involved')?.scrollIntoView({ behavior: 'smooth' })}
+              <button onClick={() => onNavigate('involved')}
                 className="px-8 py-3.5 bg-red hover:bg-red/85 text-cream font-semibold rounded-lg transition-all shadow-lg shadow-red/25 text-sm active:scale-95 hover:shadow-xl hover:shadow-red/35 hover:-translate-y-0.5">
                 Get Involved →
               </button>
-              <button
-                onClick={() => document.getElementById('meet-the-board')?.scrollIntoView({ behavior: 'smooth' })}
+              <button onClick={() => onNavigate('board')}
                 className="px-8 py-3.5 border border-gold/50 text-gold hover:bg-gold/10 rounded-lg transition-all text-sm font-medium active:scale-95 hover:-translate-y-0.5">
                 Meet the Board
               </button>
@@ -3276,17 +3440,17 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
           </TiltScene>
         </section>
 
-        <button
-          onClick={() => document.getElementById('club-content')?.scrollIntoView({ behavior: 'smooth' })}
-          className="ca-scroll-cue relative z-10 mx-auto mb-7 text-cream/60 hover:text-gold transition-colors"
-          aria-label="Scroll to content">
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
-        </button>
+        {hasBelow && (
+          <button
+            onClick={() => document.getElementById('club-content')?.scrollIntoView({ behavior: 'smooth' })}
+            className="ca-scroll-cue relative z-10 mx-auto mb-7 text-cream/60 hover:text-gold transition-colors"
+            aria-label="Scroll to content">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+        )}
       </div>
 
       <div className="relative">
-        {/* Faint stars and glows continue behind the lower page, drifting
-            slightly against the scroll so the content keeps its depth. */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
           <ParallaxLayer speed={-0.06} className="absolute inset-0"><Starfield count={22} /></ParallaxLayer>
           <div className="absolute top-[12%] -left-1/4 w-[60%] h-[34%] rounded-full"
@@ -3294,43 +3458,39 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
           <div className="absolute bottom-[8%] -right-1/4 w-[55%] h-[30%] rounded-full"
             style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.10), transparent 60%)', filter: 'blur(50px)' }} />
         </div>
-      <main id="club-content" className="relative max-w-5xl mx-auto px-4 sm:px-6 pb-20 pt-10 space-y-8">
-        {home.homeAnnouncementEnabled && home.homeAnnouncement && <Reveal><HomeAnnouncementBanner home={home} /></Reveal>}
-        {home.memberCount > 0 && <Reveal><MemberStatsBar memberCount={home.memberCount} testimonialCount={home.testimonialCount || 0} /></Reveal>}
-        <Reveal>{cards}</Reveal>
-        {home.aboutText && <Reveal><AboutSection home={home} /></Reveal>}
-        <ValuesSection />
-        <Reveal><CharlieKirkTribute /></Reveal>
-        <Reveal><div id="photos"><EventPhotos /></div></Reveal>
-        <Reveal><InstagramFeed home={home} /></Reveal>
-        <Reveal><div id="meet-the-board"><MeetTheBoard /></div></Reveal>
-        <Reveal><div id="testimonials"><TestimonialsSection /></div></Reveal>
-        <Reveal><NewsletterSignup /></Reveal>
-        <Reveal><div id="get-involved"><GetInvolved /></div></Reveal>
-      </main>
-      <footer className="relative pb-10">
-        <div className="h-[3px] bg-gradient-to-r from-red via-cream/50 to-[#3b5bdb] opacity-60 mb-10" />
-        <div className="max-w-5xl mx-auto px-4 sm:px-6">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-6 text-sm">
-            <div className="flex flex-col sm:flex-row items-center gap-3 text-cream/40">
-              <span className="font-display text-base tracking-widest text-cream/30">CLUB AMERICA</span>
-              <span className="hidden sm:inline text-cream/20">·</span>
-              <span>Park City High School · Powered by TPUSA</span>
-            </div>
-            <div className="flex items-center gap-5 text-cream/40">
-              {home.instagramUrl && (
-                <a href={ensureHttps(home.instagramUrl)} target="_blank" rel="noopener"
-                  className="inline-flex items-center gap-2 hover:text-gold transition-colors">
-                  <InstagramIcon className="w-4 h-4" /> Instagram
-                </a>
-              )}
-              <button onClick={onEnterPortal} className="hover:text-gold transition-colors">Board Portal</button>
-            </div>
-          </div>
-        </div>
-      </footer>
+        <main id="club-content" className="relative max-w-5xl mx-auto px-4 sm:px-6 pb-20 pt-10 space-y-8">
+          {home.homeAnnouncementEnabled && home.homeAnnouncement && <Reveal><HomeAnnouncementBanner home={home} /></Reveal>}
+          {home.memberCount > 0 && <Reveal><MemberStatsBar memberCount={home.memberCount} /></Reveal>}
+          <Reveal>{cards}</Reveal>
+        </main>
       </div>
     </div>
+  );
+}
+
+function PublicFooter({ home, onEnterPortal }) {
+  return (
+    <footer className="relative pb-10 pt-4">
+      <div className="h-[3px] bg-gradient-to-r from-red via-cream/50 to-[#3b5bdb] opacity-60 mb-10" />
+      <div className="max-w-5xl mx-auto px-4 sm:px-6">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-6 text-sm">
+          <div className="flex flex-col sm:flex-row items-center gap-3 text-cream/40">
+            <span className="font-display text-base tracking-widest text-cream/30">CLUB AMERICA</span>
+            <span className="hidden sm:inline text-cream/20">·</span>
+            <span>Park City High School · Powered by TPUSA</span>
+          </div>
+          <div className="flex items-center gap-5 text-cream/40">
+            {home.instagramUrl && (
+              <a href={ensureHttps(home.instagramUrl)} target="_blank" rel="noopener"
+                className="inline-flex items-center gap-2 hover:text-gold transition-colors">
+                <InstagramIcon className="w-4 h-4" /> Instagram
+              </a>
+            )}
+            <button onClick={onEnterPortal} className="hover:text-gold transition-colors">Board Portal</button>
+          </div>
+        </div>
+      </div>
+    </footer>
   );
 }
 
@@ -8794,11 +8954,10 @@ function AnimatedCount({ to }) {
   return <span>{val}</span>;
 }
 
-function MemberStatsBar({ memberCount, testimonialCount }) {
+function MemberStatsBar({ memberCount }) {
   if (!memberCount) return null;
   const stats = [
-    { value: memberCount, label: 'Board Members' },
-    ...(testimonialCount > 0 ? [{ value: testimonialCount, label: 'Member Stories' }] : []),
+    { value: memberCount, label: 'Members' },
     { value: null, label: 'Park City, UT' },
   ];
   return (
@@ -8821,7 +8980,9 @@ function MemberStatsBar({ memberCount, testimonialCount }) {
 // ---------------------------------------------------------------------------
 // Testimonials Section — public display of approved testimonials
 // ---------------------------------------------------------------------------
-function TestimonialsSection() {
+// `bare` (used on the dedicated "What People Are Saying" page) drops the inner
+// heading and shows a loading/empty state instead of rendering nothing.
+function TestimonialsSection({ bare = false }) {
   const [items, setItems] = useState(null);
 
   useEffect(() => {
@@ -8831,32 +8992,43 @@ function TestimonialsSection() {
       .catch(() => setItems([]));
   }, []);
 
-  if (!items || items.length === 0) return null;
+  if (items === null) {
+    return bare ? <div className="flex items-center justify-center gap-2 text-cream/50 py-12"><Spinner /> Loading…</div> : null;
+  }
+  if (items.length === 0) {
+    return bare ? <EmptyState icon="💬" title="No testimonials yet" hint="Check back soon to hear what our members have to say." /> : null;
+  }
+
+  const grid = (
+    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+      {items.map((t) => (
+        <div key={t.id} className="bg-navy border border-cream/10 rounded-xl p-5 flex flex-col gap-3 hover:border-gold/30 transition-colors">
+          <div className="text-cream/80 text-sm leading-relaxed italic flex-1">"{t.text}"</div>
+          <div className="flex items-center gap-3 mt-2 pt-3 border-t border-cream/10">
+            {t.photo ? (
+              <img src={t.photo} alt={t.name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-gold/20 flex items-center justify-center flex-shrink-0">
+                <span className="text-gold font-display text-lg">{(t.name || '?')[0]}</span>
+              </div>
+            )}
+            <div>
+              <div className="text-cream font-medium text-sm">{t.name}</div>
+              {t.role && <div className="text-gold/70 text-xs">{t.role}</div>}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  if (bare) return grid;
 
   return (
     <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6">
       <h2 className="font-display text-3xl text-gold mb-1">What Members Say</h2>
       <p className="text-cream/60 text-sm mb-6">Hear from the people who make Club America what it is.</p>
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-        {items.map((t) => (
-          <div key={t.id} className="bg-navy border border-cream/10 rounded-xl p-5 flex flex-col gap-3 hover:border-gold/30 transition-colors">
-            <div className="text-cream/80 text-sm leading-relaxed italic flex-1">"{t.text}"</div>
-            <div className="flex items-center gap-3 mt-2 pt-3 border-t border-cream/10">
-              {t.photo ? (
-                <img src={t.photo} alt={t.name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
-              ) : (
-                <div className="w-10 h-10 rounded-full bg-gold/20 flex items-center justify-center flex-shrink-0">
-                  <span className="text-gold font-display text-lg">{(t.name || '?')[0]}</span>
-                </div>
-              )}
-              <div>
-                <div className="text-cream font-medium text-sm">{t.name}</div>
-                {t.role && <div className="text-gold/70 text-xs">{t.role}</div>}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+      {grid}
     </section>
   );
 }

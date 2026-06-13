@@ -298,8 +298,7 @@ app.get('/api/home', async (req, res) => {
     ORDER BY ve.startDate ASC
   `).all();
   const memberCount = db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
-  const testimonialCount = db.prepare("SELECT COUNT(*) AS n FROM testimonials WHERE status='approved'").get().n;
-  res.json({ home: { ...publicHome, calendarConfigured: !!calendarUrl, memberCount, testimonialCount }, events, volunteerEvents });
+  res.json({ home: { ...publicHome, calendarConfigured: !!calendarUrl, memberCount }, events, volunteerEvents });
 });
 
 // Public board roster for the "Meet the Board" page (no private info, no auth).
