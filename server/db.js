@@ -476,6 +476,20 @@ function init() {
       createdAt     TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_event_photos_status ON event_photos(status, createdAt DESC);
+
+    -- Board-curated "From Our Instagram" slideshow. Because Instagram blocks
+    -- embeds for logged-out visitors, the board uploads the image itself and
+    -- links it to the post — so it always renders and taps through to Instagram.
+    CREATE TABLE IF NOT EXISTS instagram_highlights (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      image       TEXT NOT NULL,
+      link        TEXT NOT NULL DEFAULT '',
+      caption     TEXT NOT NULL DEFAULT '',
+      sortOrder   INTEGER NOT NULL DEFAULT 0,
+      createdById INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      createdAt   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_instagram_highlights ON instagram_highlights(sortOrder, createdAt DESC);
   `);
 
   // User column migrations.

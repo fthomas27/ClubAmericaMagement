@@ -2167,10 +2167,7 @@ function HomeEditor({ onSaved }) {
     try {
       // Load the full settings (including the private calendar URL).
       const d = await api('/home/settings');
-      // Keep the Instagram links as raw multi-line text while editing so blank
-      // lines (pressing Enter between links) aren't stripped mid-typing; it's
-      // parsed back into a list on save.
-      setForm({ ...d.home, instagramPostsText: (d.home.instagramPosts || []).join('\n') });
+      setForm(d.home);
       setOpen(true);
     } catch (err) { setError(err.message); }
   }
@@ -2185,7 +2182,6 @@ function HomeEditor({ onSaved }) {
         podcastUrl: form.podcastUrl,
         calendarUrl: form.calendarUrl,
         instagramUrl: form.instagramUrl,
-        instagramPosts: (form.instagramPostsText || '').split('\n').map((s) => s.trim()).filter(Boolean),
         aboutText: form.aboutText,
         podcastEnabled: form.podcastEnabled,
       }});
@@ -2231,15 +2227,6 @@ function HomeEditor({ onSaved }) {
           <div className="sm:col-span-2"><Field label="Meeting location (fallback)"><input className={inputCls} value={form.meetingLocation || ''} onChange={set('meetingLocation')} placeholder="e.g. Room 214" /></Field></div>
           <div className="sm:col-span-2"><Field label="Podcast link (YouTube video or page URL)"><input className={inputCls} value={form.podcastUrl || ''} onChange={set('podcastUrl')} placeholder="https://www.youtube.com/watch?v=…" /></Field></div>
           <div className="sm:col-span-2"><Field label="Instagram link"><input className={inputCls} value={form.instagramUrl || ''} onChange={set('instagramUrl')} placeholder="https://www.instagram.com/yourclub" /></Field></div>
-          <div className="sm:col-span-2">
-            <Field label="Instagram feed — paste post links (one per line)">
-              <textarea className={inputCls + ' min-h-[96px] resize-y font-mono text-sm'}
-                value={form.instagramPostsText || ''}
-                onChange={set('instagramPostsText')}
-                placeholder={'https://www.instagram.com/p/XXXXXXXX/\nhttps://www.instagram.com/reel/YYYYYYYY/'} />
-            </Field>
-            <p className="text-xs text-cream/40 mt-1">These posts show live in the “From Our Instagram” section. Open a post on Instagram, hit Share → Copy link, and paste it here (up to 12). Reels and tagged posts work too — paste their links.</p>
-          </div>
           <div className="sm:col-span-2"><Field label="About / Mission (shown on the public homepage)"><textarea className={inputCls + ' min-h-[120px] resize-y'} value={form.aboutText || ''} onChange={set('aboutText')} placeholder="Tell visitors who Club America is and what you stand for…" /></Field></div>
           {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
           <div className="sm:col-span-2 flex gap-2">
@@ -2407,13 +2394,6 @@ function CharlieKirkTribute() {
   );
 }
 
-// Normalize an Instagram post/reel/tv URL to its canonical permalink (stripping
-// share params). Returns null for anything that isn't a recognizable post link.
-function igPermalink(url) {
-  const m = String(url || '').match(/instagram\.com\/(p|reel|tv)\/([\w-]+)/i);
-  return m ? `https://www.instagram.com/${m[1]}/${m[2]}/` : null;
-}
-
 // ---------------------------------------------------------------------------
 // Event Photos — anyone can share photos from an event; they appear in a
 // public gallery once a board member approves them.
@@ -2561,31 +2541,29 @@ function EventPhotos() {
 }
 
 // ---------------------------------------------------------------------------
-// Instagram feed — the posts the board curates in Edit Website, rendered with
-// Instagram's official embed (embed.js). Laid out in a responsive grid so each
-// post shows in full (one per row on phones). The official embed is the
-// supported, reliable way to show public posts — the old iframe trick showed a
-// "post may be removed" card for many valid links.
+// Instagram feed — a one-at-a-time fading slideshow of board-curated posts.
+// Instagram blocks embeds for logged-out visitors, so the board uploads each
+// image (linked to its post) and we host it — it always renders and taps
+// through to Instagram.
 // ---------------------------------------------------------------------------
-function useInstagramEmbeds(key) {
-  // Load Instagram's embed.js once, then (re)process blockquotes whenever the
-  // set of posts changes. Already-rendered embeds are skipped by embed.js.
-  useEffect(() => {
-    const process = () => { try { window.instgrm && window.instgrm.Embeds && window.instgrm.Embeds.process(); } catch (_) {} };
-    if (window.instgrm && window.instgrm.Embeds) { process(); return; }
-    let s = document.getElementById('ig-embed-js');
-    if (s) { s.addEventListener('load', process); return () => s.removeEventListener('load', process); }
-    s = document.createElement('script');
-    s.id = 'ig-embed-js'; s.async = true; s.src = 'https://www.instagram.com/embed.js';
-    s.onload = process;
-    document.body.appendChild(s);
-  }, [key]);
-}
-
 function InstagramFeed({ home }) {
-  const posts = (home.instagramPosts || []).map(igPermalink).filter(Boolean);
-  useInstagramEmbeds(posts.join('|'));
-  if (posts.length === 0) return null;
+  const [items, setItems] = useState(null);
+  const [idx, setIdx] = useState(0);
+  const [paused, setPaused] = useState(false);
+
+  useEffect(() => { api('/instagram-highlights').then((d) => setItems(d.items || [])).catch(() => setItems([])); }, []);
+
+  const count = items ? items.length : 0;
+  useEffect(() => {
+    if (paused || count <= 1) return;
+    const t = setInterval(() => setIdx((i) => (i + 1) % count), 5000);
+    return () => clearInterval(t);
+  }, [paused, count]);
+
+  if (!items || items.length === 0) return null;
+  const safeIdx = idx % items.length;
+  const cur = items[safeIdx];
+  const go = (n) => setIdx((n + items.length) % items.length);
 
   return (
     <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6">
@@ -2596,17 +2574,130 @@ function InstagramFeed({ home }) {
         </div>
         {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
       </div>
-      <div className="grid gap-4 justify-items-center"
-        style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
-        {posts.map((url, i) => (
-          <blockquote key={url + i} className="instagram-media" data-instgrm-permalink={url} data-instgrm-version="14"
-            style={{ background: '#FFF', border: 0, margin: 0, width: '100%', maxWidth: 400, minWidth: 240, borderRadius: 12 }}>
-            <a href={url} target="_blank" rel="noopener" className="block p-8 text-center text-sm" style={{ color: '#555' }}>
-              View this post on Instagram →
-            </a>
-          </blockquote>
-        ))}
+
+      <div className="relative max-w-md mx-auto"
+        onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+        <a key={cur.id} href={cur.link ? ensureHttps(cur.link) : (home.instagramUrl ? ensureHttps(home.instagramUrl) : '#')}
+          target="_blank" rel="noopener" onClick={() => track('ig_highlight_click', cur.link)}
+          className="ca-fade-in block rounded-xl overflow-hidden border border-cream/10 bg-navy group">
+          <img src={`/api/instagram-highlights/${cur.id}/image`} alt={cur.caption || 'Instagram post'}
+            className="w-full max-h-[70vh] object-contain bg-black" />
+          {cur.caption && (
+            <div className="px-4 py-3 text-cream/80 text-sm">{cur.caption}</div>
+          )}
+          <div className="px-4 pb-3 text-xs text-gold/80 flex items-center gap-1">
+            <InstagramIcon className="w-3.5 h-3.5" /> View on Instagram →
+          </div>
+        </a>
+
+        {items.length > 1 && (
+          <>
+            <button onClick={() => go(safeIdx - 1)} aria-label="Previous"
+              className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/55 hover:bg-black/80 text-cream flex items-center justify-center transition-colors">‹</button>
+            <button onClick={() => go(safeIdx + 1)} aria-label="Next"
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/55 hover:bg-black/80 text-cream flex items-center justify-center transition-colors">›</button>
+            <div className="flex justify-center gap-1.5 mt-3">
+              {items.map((_, i) => (
+                <button key={i} onClick={() => setIdx(i)} aria-label={`Go to ${i + 1}`}
+                  className={`h-2 rounded-full transition-all ${i === safeIdx ? 'w-5 bg-gold' : 'w-2 bg-cream/25 hover:bg-cream/50'}`} />
+              ))}
+            </div>
+          </>
+        )}
       </div>
+    </section>
+  );
+}
+
+// Board uploader for the "From Our Instagram" slideshow (shown in Edit Website).
+function InstagramHighlightsManager() {
+  const [items, setItems] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+  const [img, setImg] = useState(null);
+  const [link, setLink] = useState('');
+  const [caption, setCaption] = useState('');
+  const fileRef = useRef(null);
+
+  const load = useCallback(async () => {
+    try { const d = await api('/instagram-highlights/manage'); setItems(d.items || []); }
+    catch (err) { setError(err.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  function pick(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setError('');
+    if (!/^image\//.test(file.type)) { setError('Please choose an image file.'); return; }
+    resizeImage(file, 1080, (d) => { if (!d) { setError("Couldn't read that image."); return; } setImg(d); });
+  }
+
+  async function add(e) {
+    e.preventDefault();
+    if (!img) { setError('Choose an image first.'); return; }
+    setBusy(true); setError('');
+    try {
+      await api('/instagram-highlights', { method: 'POST', body: { image: img, link, caption } });
+      setImg(null); setLink(''); setCaption('');
+      if (fileRef.current) fileRef.current.value = '';
+      await load();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function remove(id) {
+    setBusyId(id);
+    try { await api(`/instagram-highlights/${id}`, { method: 'DELETE' }); await load(); }
+    catch (err) { setError(err.message); }
+    finally { setBusyId(null); }
+  }
+
+  return (
+    <section className="bg-navy2 border border-cream/10 rounded-2xl p-6">
+      <h2 className="font-display text-2xl text-cream">Instagram Slideshow</h2>
+      <p className="text-cream/50 text-sm mb-4">
+        Upload the photos you want in the homepage’s “From Our Instagram” slideshow and link each to its post.
+        (Instagram blocks live embeds for signed-out visitors, so uploading the image is what makes it actually show.)
+      </p>
+
+      <form onSubmit={add} className="grid sm:grid-cols-2 gap-4 mb-6">
+        <div className="sm:col-span-2">
+          <Field label="Photo">
+            <input ref={fileRef} type="file" accept="image/*" onChange={pick}
+              className="block w-full text-sm text-cream/70 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-gold file:text-navy file:font-semibold file:cursor-pointer hover:file:bg-gold/85" />
+          </Field>
+        </div>
+        {img && <img src={img} alt="Preview" className="max-h-40 rounded-lg border border-cream/15 object-contain sm:col-span-2" />}
+        <Field label="Link to the Instagram post (optional)">
+          <input className={inputCls} value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://www.instagram.com/p/…" />
+        </Field>
+        <Field label="Caption (optional)">
+          <input className={inputCls} value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="Short caption" maxLength={280} />
+        </Field>
+        {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
+        <div className="sm:col-span-2">
+          <Button type="submit" variant="gold" disabled={busy}>{busy ? <span className="flex items-center gap-2"><Spinner /> Adding…</span> : 'Add to slideshow'}</Button>
+        </div>
+      </form>
+
+      {items === null ? <Loading label="Loading…" /> : items.length === 0 ? (
+        <p className="text-cream/40 text-sm">No slideshow photos yet.</p>
+      ) : (
+        <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+          {items.map((it) => (
+            <div key={it.id} className="relative group">
+              <img src={`/api/instagram-highlights/${it.id}/image`} alt={it.caption || 'Slide'} loading="lazy"
+                className="w-full aspect-square object-cover rounded-lg border border-cream/10" />
+              <button onClick={() => remove(it.id)} disabled={busyId === it.id}
+                className="absolute top-1 right-1 bg-black/70 hover:bg-red text-cream text-xs rounded px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -3043,12 +3134,13 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
           <p className="text-cream/50 mt-1">Update what visitors see on the public homepage at <span className="text-gold/80">/home</span>.</p>
         </div>
         <HomeEditor onSaved={load} />
+        <InstagramHighlightsManager />
         <div className="space-y-6">
           <div className="font-display text-2xl text-gold">Live Preview</div>
           <HomeAnnouncementBanner home={home} />
           <AboutSection home={home} />
           {cards}
-          {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
+          <InstagramFeed home={home} />
         </div>
       </div>
     );
