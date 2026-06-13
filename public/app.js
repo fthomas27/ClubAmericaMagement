@@ -2696,228 +2696,6 @@ function PhotoModerationPage({ me }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Instagram auto-import — connect the account (admin), then approve which
-// tagged posts appear in the public "From Our Instagram" marquee.
-// ---------------------------------------------------------------------------
-function InstagramAdminPage({ me }) {
-  const [cfg, setCfg] = useState(null);
-  const [pending, setPending] = useState([]);
-  const [approved, setApproved] = useState([]);
-  const [error, setError] = useState('');
-  const [msg, setMsg] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [busyId, setBusyId] = useState(null);
-  const [showSetup, setShowSetup] = useState(false);
-
-  // Setup form (admin only)
-  const [token, setToken] = useState('');
-  const [userId, setUserId] = useState('');
-  const [accounts, setAccounts] = useState(null);
-
-  const isAdmin = me.role === 'admin';
-
-  const loadQueues = useCallback(async () => {
-    const [p, a] = await Promise.all([api('/instagram/pending'), api('/instagram/approved')]);
-    setPending(p.posts || []);
-    setApproved(a.posts || []);
-  }, []);
-
-  const load = useCallback(async () => {
-    try {
-      const c = await api('/instagram/config');
-      setCfg(c);
-      setUserId(c.userId || '');
-      await loadQueues();
-    } catch (err) { setError(err.message); }
-  }, [loadQueues]);
-  useEffect(() => { load(); }, [load]);
-
-  async function saveConfig() {
-    setBusy(true); setMsg(''); setError('');
-    try {
-      const body = { userId };
-      if (token) body.token = token;
-      const c = await api('/instagram/config', { method: 'PUT', body });
-      setToken('');
-      setCfg((prev) => ({ ...prev, ...c }));
-      setMsg('Saved.');
-    } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
-  }
-
-  async function discover() {
-    setBusy(true); setMsg(''); setError(''); setAccounts(null);
-    try {
-      const d = await api('/instagram/discover', { method: 'POST', body: token ? { token } : {} });
-      setAccounts(d.accounts || []);
-      if ((d.accounts || []).length === 1) setUserId(d.accounts[0].igUserId);
-    } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
-  }
-
-  async function test() {
-    setBusy(true); setMsg(''); setError('');
-    try { await api('/instagram/test', { method: 'POST' }); setMsg('✓ Connection works — your token can read tagged posts.'); }
-    catch (err) { setError(err.message); }
-    finally { setBusy(false); }
-  }
-
-  async function refresh() {
-    setBusy(true); setMsg(''); setError('');
-    try {
-      const r = await api('/instagram/import', { method: 'POST' });
-      setMsg(r.imported ? `Imported ${r.imported} new tagged post${r.imported === 1 ? '' : 's'}.` : 'No new tagged posts — you’re all caught up.');
-      await loadQueues();
-    } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
-  }
-
-  async function act(id, action) {
-    setBusyId(id);
-    try { await api(`/instagram/${id}/${action}`, { method: 'POST' }); await loadQueues(); }
-    catch (err) { setError(err.message); }
-    finally { setBusyId(null); }
-  }
-
-  if (!cfg) return <Loading label="Loading…" />;
-
-  const Thumb = ({ p }) => {
-    const src = p.thumbnailUrl || p.mediaUrl;
-    return (
-      <div className="bg-navy2 border border-cream/15 rounded-xl overflow-hidden">
-        <a href={ensureHttps(p.permalink)} target="_blank" rel="noopener" className="block aspect-square bg-navy3">
-          {src ? <img src={src} alt={p.caption || 'Instagram post'} loading="lazy" className="w-full h-full object-cover" />
-               : <div className="w-full h-full flex items-center justify-center text-cream/30 text-sm">No preview</div>}
-        </a>
-        <div className="p-3 space-y-2">
-          {p.caption && <div className="text-cream text-sm line-clamp-2">{p.caption}</div>}
-          <div className="text-cream/50 text-xs">{p.username ? `@${p.username}` : ''}{p.mediaType === 'VIDEO' ? ' · video' : ''}</div>
-        </div>
-      </div>
-    );
-  };
-
-  const setupBlock = (
-    <section className="bg-navy2 border border-cream/10 rounded-2xl p-6 space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h2 className="font-display text-2xl text-cream">Instagram Connection</h2>
-        <span className={`text-sm ${cfg.configured ? 'text-emerald-300' : 'text-cream/50'}`}>
-          {cfg.configured ? '● Connected' : '○ Not connected'}
-        </span>
-      </div>
-      {cfg.envManaged && <p className="text-xs text-cream/40">Credentials are set via environment variables and can’t be edited here.</p>}
-      {!isAdmin ? (
-        <p className="text-cream/60 text-sm">{cfg.configured ? 'Instagram is connected.' : 'Ask a President/VP (admin) to connect the club’s Instagram account.'}</p>
-      ) : cfg.envManaged ? null : (
-        <>
-          {!showSetup && cfg.configured ? (
-            <div className="flex items-center gap-3 flex-wrap">
-              <span className="text-cream/60 text-sm">Account id: <span className="text-cream/90">{cfg.userId}</span>{cfg.tokenSetAt ? ` · token saved ${(cfg.tokenSetAt || '').slice(0, 10)}` : ''}</span>
-              <Button variant="ghost" onClick={() => setShowSetup(true)}>Manage connection</Button>
-              <Button variant="ghost" onClick={test} disabled={busy}>Test connection</Button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <details className="text-sm text-cream/60 bg-navy rounded-lg p-3 border border-cream/10">
-                <summary className="cursor-pointer text-gold/80">How to get a token &amp; account id</summary>
-                <ol className="list-decimal ml-5 mt-2 space-y-1">
-                  <li>At <span className="text-gold/80">developers.facebook.com</span>, create an app (type “Business”) and add the <b>Instagram Graph API</b> product.</li>
-                  <li>In the Graph API Explorer, generate a <b>User token</b> with <span className="text-gold/80">instagram_basic</span> and <span className="text-gold/80">pages_read_engagement</span>, then exchange it for a <b>long-lived token</b> (~60 days).</li>
-                  <li>Paste the token below and click <b>Find my account</b> to auto-fill your IG account id.</li>
-                  <li>Save, then <b>Test connection</b>. Tokens expire about every 60 days — re-paste a fresh one when prompted.</li>
-                </ol>
-              </details>
-              <Field label="Long-lived access token">
-                <textarea className={inputCls + ' min-h-[72px] resize-y font-mono text-xs'} value={token} onChange={(e) => setToken(e.target.value)}
-                  placeholder={cfg.hasToken ? '•••••• (a token is already saved — paste a new one to replace it)' : 'EAAG...'} />
-              </Field>
-              <div className="flex gap-2 flex-wrap">
-                <Button variant="ghost" onClick={discover} disabled={busy || (!token && !cfg.hasToken)}>Find my account</Button>
-              </div>
-              {accounts && (
-                accounts.length === 0
-                  ? <p className="text-cream/50 text-sm">No Instagram Business account found on that token. Make sure your IG account is Business/Creator and linked to a Facebook Page.</p>
-                  : <div className="space-y-1">
-                      {accounts.map((a) => (
-                        <button key={a.igUserId} onClick={() => setUserId(a.igUserId)}
-                          className={`block w-full text-left text-sm px-3 py-2 rounded-md border transition-colors ${userId === a.igUserId ? 'border-gold text-cream bg-gold/10' : 'border-cream/15 text-cream/70 hover:border-gold/50'}`}>
-                          @{a.igUsername || '—'} · {a.pageName} <span className="text-cream/40">({a.igUserId})</span>
-                        </button>
-                      ))}
-                    </div>
-              )}
-              <Field label="IG Business account id">
-                <input className={inputCls} value={userId} onChange={(e) => setUserId(e.target.value)} placeholder="17841400000000000" />
-              </Field>
-              <div className="flex gap-2 flex-wrap">
-                <Button variant="gold" onClick={saveConfig} disabled={busy || (!userId && !token)}>Save</Button>
-                {cfg.configured && <Button variant="ghost" onClick={test} disabled={busy}>Test connection</Button>}
-                {showSetup && <Button variant="ghost" onClick={() => setShowSetup(false)}>Done</Button>}
-              </div>
-            </div>
-          )}
-        </>
-      )}
-      {msg && <div className="text-emerald-300 text-sm">{msg}</div>}
-      {error && <div className="text-red text-sm">{error}</div>}
-    </section>
-  );
-
-  return (
-    <div className="max-w-5xl space-y-8">
-      {setupBlock}
-
-      {cfg.configured && (
-        <>
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <h2 className="font-display text-2xl text-gold">Tagged Posts to Review ({pending.length})</h2>
-              <p className="text-cream/50 text-sm">Approve the ones you want in the homepage’s “From Our Instagram” feed.</p>
-            </div>
-            <Button variant="gold" onClick={refresh} disabled={busy}>{busy ? <span className="flex items-center gap-2"><Spinner /> Refreshing…</span> : '↻ Refresh from Instagram'}</Button>
-          </div>
-          {pending.length === 0 ? (
-            <EmptyState icon="📷" title="Nothing to review" hint="New posts you’re tagged in will show up here automatically." />
-          ) : (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {pending.map((p) => (
-                <div key={p.id} className="space-y-2">
-                  <Thumb p={p} />
-                  <div className="flex gap-2">
-                    <Button variant="gold" onClick={() => act(p.id, 'approve')} disabled={busyId === p.id}>Approve</Button>
-                    <Button variant="ghost" onClick={() => act(p.id, 'reject')} disabled={busyId === p.id}>Hide</Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div>
-            <h2 className="font-display text-2xl text-gold">Live in the Feed ({approved.length})</h2>
-            <p className="text-cream/50 text-sm">Currently showing in the public marquee.</p>
-          </div>
-          {approved.length === 0 ? (
-            <p className="text-cream/40 text-sm">Nothing approved yet.</p>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-              {approved.map((p) => (
-                <div key={p.id} className="relative group">
-                  <Thumb p={p} />
-                  <button onClick={() => act(p.id, 'reject')} disabled={busyId === p.id}
-                    className="absolute top-1 right-1 bg-black/70 hover:bg-red text-cream text-xs rounded px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
 function HomeAnnouncementEditor({ home, onSaved }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState(home.homeAnnouncement || '');
@@ -6807,7 +6585,6 @@ function App() {
     ...(isMgrOrAdmin                          ? [{ type: 'budget',      label: 'Budget Overview' }] : []),
     ...(isMgrOrAdmin || !!me.managedGrade     ? [{ type: 'grades',      label: 'Grade Pipeline' }] : []),
     ...(canEditSite || !!me.canManageSocial   ? [{ type: 'photos',      label: 'Photo Approvals' }] : []),
-    ...(canEditSite || !!me.canManageSocial   ? [{ type: 'igfeed',      label: 'Instagram Feed' }] : []),
     ...(canEditSite                           ? [{ type: 'website',     label: 'Edit Website' }] : []),
     ...(me.role === 'admin'                   ? [{ type: 'admin',       label: 'Admin Panel' }] : []),
     ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity' }] : []),
@@ -6838,7 +6615,7 @@ function App() {
     meetings: 'Meetings', speaker: 'Speaker Events', grants: 'Grant Tracker', social: 'Social Media',
     grades: 'Grade Pipeline', reimbursements: 'Reimbursements', directory: 'Board Directory',
     resources: 'Resource Hub', volunteers: 'Volunteer Manager',
-    photos: 'Photo Approvals', igfeed: 'Instagram Feed',
+    photos: 'Photo Approvals',
     org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity',
     ai: 'AI Assistant', password: 'Change Password', profile: 'Edit Profile',
   };
@@ -6847,7 +6624,6 @@ function App() {
   if (view.type === 'home') content = <Home mode="portal" me={me} />;
   else if (view.type === 'website') content = canEditSite ? <Home mode="editor" me={me} editable={true} /> : <Home mode="portal" me={me} />;
   else if (view.type === 'photos') content = (me.role === 'admin' || me.canEditHome || me.canManageSocial) ? <PhotoModerationPage me={me} /> : null;
-  else if (view.type === 'igfeed') content = (me.role === 'admin' || me.canEditHome || me.canManageSocial) ? <InstagramAdminPage me={me} /> : null;
   else if (view.type === 'mytasks') content = <TaskPage me={me} userId={me.id} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'person') content = <TaskPage me={me} userId={view.userId} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'myteam') content = <MyTeamView reports={reports} onNavigate={navigate} />;

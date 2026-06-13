@@ -90,9 +90,6 @@ does the right thing without the warning.
 | `MAIL_FROM` | The sender address for emails, e.g. `Club America <noreply@yourdomain.org>`. Defaults to Resend's test sender. |
 | `APP_URL` | Public URL of the app (used for the "Open Club America" button in emails). |
 | `PORT` | Port to listen on (Railway sets this automatically). |
-| `IG_ACCESS_TOKEN` | Optional. A long-lived Instagram Graph API token for the tagged-post **auto-import**. Can also be set in-app (Instagram Feed tab); the env var takes precedence when present. |
-| `IG_USER_ID` | Optional. The Instagram **Business account id** to import tagged posts for. Can be discovered/set in-app, or pinned here. |
-| `IG_API_VERSION` | Optional. Graph API version (default `v21.0`). |
 
 ### Notifications
 Every board member has an **in-app notification bell** (top-right) that works
@@ -198,18 +195,9 @@ report in the Admin Panel, and drops back to **Member** when they have none.
   once a board member approves them (no unvetted images ever go live). Board
   members with the **Photo Approvals** tab — admins, the Digital Presence
   Manager, and the Social Media manager — approve or remove photos.
-- **From Our Instagram:** a continuously rotating, looping marquee of Instagram
-  posts (pauses on hover). Posts come from two sources, both curated:
-  - **Manual:** paste any public post/reel link in **Edit Website**.
-  - **Auto-import (tagged posts):** when the club's Instagram is a **Business or
-    Creator** account connected to a Facebook Page, the app pulls the posts the
-    account is **@-tagged** in via the Instagram Graph API into a **pending
-    queue**. The board approves which tagged posts go live from the **Instagram
-    Feed** tab; approved ones join the marquee. Connect the account once (an
-    admin pastes a long-lived token and picks the IG account in that tab), and
-    new tags import automatically every ~30 minutes. Access tokens expire about
-    every 60 days — re-paste a fresh one when prompted. See the env vars below
-    to configure credentials via the environment instead of in-app.
+- **From Our Instagram:** a continuously rotating, looping marquee (pauses on
+  hover) of hand-picked Instagram posts. The board pastes any public post/reel
+  link in **Edit Website** (up to 12) and they render as live Instagram embeds.
 - **Controlled by the Digital Presence Manager** (`dhays`) — they (and the
   President/VP) get an edit panel on the in-portal **Home** view to set the
   calendar feed, meeting fallback, and podcast link. Everyone else sees it

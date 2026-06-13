@@ -476,26 +476,6 @@ function init() {
       createdAt     TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_event_photos_status ON event_photos(status, createdAt DESC);
-
-    -- Posts the club's Instagram account was tagged in, imported via the Graph
-    -- API. Each lands as 'pending' so the board curates which tagged posts go
-    -- live on the homepage; 'rejected' rows are kept so they don't re-import.
-    CREATE TABLE IF NOT EXISTS instagram_imports (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      igId         TEXT UNIQUE NOT NULL,
-      permalink    TEXT NOT NULL DEFAULT '',
-      mediaType    TEXT NOT NULL DEFAULT '',
-      mediaUrl     TEXT NOT NULL DEFAULT '',
-      thumbnailUrl TEXT NOT NULL DEFAULT '',
-      caption      TEXT NOT NULL DEFAULT '',
-      username     TEXT NOT NULL DEFAULT '',
-      takenAt      TEXT,
-      status       TEXT NOT NULL DEFAULT 'pending',
-      reviewedById INTEGER REFERENCES users(id) ON DELETE SET NULL,
-      reviewedAt   TEXT,
-      createdAt    TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-    CREATE INDEX IF NOT EXISTS idx_instagram_imports_status ON instagram_imports(status, takenAt DESC);
   `);
 
   // User column migrations.
@@ -562,9 +542,6 @@ function init() {
   if (!siteCols.includes('weeklyCheckinEnabled'))     db.exec("ALTER TABLE site_settings ADD COLUMN weeklyCheckinEnabled INTEGER NOT NULL DEFAULT 0");
   if (!siteCols.includes('announcementPostedAt'))     db.exec("ALTER TABLE site_settings ADD COLUMN announcementPostedAt TEXT");
   if (!siteCols.includes('instagramPosts'))           db.exec("ALTER TABLE site_settings ADD COLUMN instagramPosts TEXT NOT NULL DEFAULT '[]'");
-  if (!siteCols.includes('instagramToken'))           db.exec("ALTER TABLE site_settings ADD COLUMN instagramToken TEXT NOT NULL DEFAULT ''");
-  if (!siteCols.includes('instagramUserId'))          db.exec("ALTER TABLE site_settings ADD COLUMN instagramUserId TEXT NOT NULL DEFAULT ''");
-  if (!siteCols.includes('instagramTokenSetAt'))      db.exec("ALTER TABLE site_settings ADD COLUMN instagramTokenSetAt TEXT");
 
   // user_page_settings column migrations.
   const upsCols = db.prepare("PRAGMA table_info(user_page_settings)").all().map((c) => c.name);
