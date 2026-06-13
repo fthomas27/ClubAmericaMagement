@@ -490,6 +490,34 @@ function init() {
       createdAt   TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_instagram_highlights ON instagram_highlights(sortOrder, createdAt DESC);
+
+    -- Member testimonials: submitted via private link or created directly by admins.
+    -- Held as 'pending' until admin approves; only 'approved' ones appear publicly.
+    CREATE TABLE IF NOT EXISTS testimonials (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      name                TEXT NOT NULL DEFAULT '',
+      role                TEXT NOT NULL DEFAULT '',
+      photo               TEXT NOT NULL DEFAULT '',
+      text                TEXT NOT NULL DEFAULT '',
+      status              TEXT NOT NULL DEFAULT 'pending',
+      submitToken         TEXT UNIQUE,
+      submittedByMemberId INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      sortOrder           INTEGER NOT NULL DEFAULT 0,
+      createdAt           TEXT NOT NULL DEFAULT (datetime('now')),
+      updatedAt           TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_testimonials_status ON testimonials(status, sortOrder, createdAt DESC);
+
+    -- Newsletter subscriber list. Members are auto-enrolled; public visitors can sign up.
+    CREATE TABLE IF NOT EXISTS newsletter_subscribers (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      email        TEXT NOT NULL,
+      name         TEXT NOT NULL DEFAULT '',
+      source       TEXT NOT NULL DEFAULT 'signup',
+      active       INTEGER NOT NULL DEFAULT 1,
+      subscribedAt TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_newsletter_email ON newsletter_subscribers(lower(email));
   `);
 
   // User column migrations.
@@ -540,6 +568,13 @@ function init() {
   if (!cols.includes('canManageSocial')) db.exec("ALTER TABLE users ADD COLUMN canManageSocial INTEGER NOT NULL DEFAULT 0");
   if (!cols.includes('phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
   if (!cols.includes('hiddenTabs')) db.exec("ALTER TABLE users ADD COLUMN hiddenTabs TEXT NOT NULL DEFAULT ''");
+
+  // Auto-enroll existing users with email addresses into the newsletter list.
+  try {
+    db.exec(`INSERT OR IGNORE INTO newsletter_subscribers (email, name, source)
+      SELECT lower(trim(email)), displayName, 'auto' FROM users
+      WHERE trim(email) != '' AND email IS NOT NULL`);
+  } catch (_) {}
 
   // Remove the old dedicated logistics observer account — the dashboard is now
   // accessible to admins directly and via the canViewLogistics permission.

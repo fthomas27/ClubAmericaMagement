@@ -73,7 +73,9 @@ app.use((req, res, next) => {
   const isProfilePhoto = req.method === 'PUT' && req.path === '/api/me/profile';
   const isEventPhoto = req.method === 'POST' && req.path === '/api/event-photos';
   const isIgHighlight = req.method === 'POST' && req.path === '/api/instagram-highlights';
-  const limit = isProfilePhoto || isEventPhoto || isIgHighlight ? '6mb' : '50kb';
+  const isTestimonial = (req.method === 'POST' || req.method === 'PATCH') &&
+    (req.path === '/api/admin/testimonials' || req.path.startsWith('/api/admin/testimonials/') || req.path.startsWith('/api/public/testimonial-submit/'));
+  const limit = isProfilePhoto || isEventPhoto || isIgHighlight || isTestimonial ? '6mb' : '50kb';
   express.json({ limit })(req, res, next);
 });
 
@@ -293,7 +295,9 @@ app.get('/api/home', async (req, res) => {
     WHERE ve.volunteersEnabled = 1 AND ve.startDate >= strftime('%Y-%m-%dT%H:%M', 'now', '-1 hour')
     ORDER BY ve.startDate ASC
   `).all();
-  res.json({ home: { ...publicHome, calendarConfigured: !!calendarUrl }, events, volunteerEvents });
+  // Total active member count (all board members, regardless of firstLogin state).
+  const memberCount = db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
+  res.json({ home: { ...publicHome, calendarConfigured: !!calendarUrl, memberCount }, events, volunteerEvents });
 });
 
 // Public board roster for the "Meet the Board" page (no private info, no auth).
@@ -1981,6 +1985,7 @@ app.post('/api/admin/users', requireAdmin, rateLimit({ windowMs: 60 * 60 * 1000,
     .run(username, firstName, lastName, displayName, bcrypt.hashSync(username, 10), role, title || '', managerId || null, grade, email);
 
   if (managerId) refreshRole(Number(managerId));
+  if (email) newsletterEnroll(email, displayName, 'auto');
   res.status(201).json({ user: publicUser(getUser(info.lastInsertRowid)), defaultPassword: username });
 });
 
@@ -2836,6 +2841,180 @@ app.get('/api/roster-members/:id/attendance-history', (req, res) => {
     `).all(linkedUserId);
   }
   res.json({ history });
+});
+
+// ---- Testimonials -----------------------------------------------------------
+
+// Public: approved testimonials only.
+app.get('/api/testimonials', (req, res) => {
+  const rows = db.prepare(
+    "SELECT id, name, role, photo, text, sortOrder FROM testimonials WHERE status = 'approved' ORDER BY sortOrder ASC, createdAt DESC"
+  ).all();
+  res.json({ testimonials: rows });
+});
+
+// Admin: all testimonials (any status).
+app.get('/api/admin/testimonials', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT id, name, role, photo, text, status, submitToken, submittedByMemberId, sortOrder, createdAt, updatedAt FROM testimonials ORDER BY createdAt DESC"
+  ).all();
+  res.json({ testimonials: rows });
+});
+
+// Admin: create a testimonial directly (instantly approved).
+app.post('/api/admin/testimonials', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
+  let { name, role, photo, text, status } = req.body || {};
+  name   = String(name   || '').trim().slice(0, 120);
+  role   = String(role   || '').trim().slice(0, 120);
+  photo  = String(photo  || '').trim().slice(0, 8 * 1024 * 1024);
+  text   = String(text   || '').trim().slice(0, 5000);
+  status = ['pending', 'approved'].includes(status) ? status : 'approved';
+  if (!name || !text) return res.status(400).json({ error: 'Name and testimonial text are required' });
+  const info = db.prepare(
+    "INSERT INTO testimonials (name, role, photo, text, status) VALUES (?, ?, ?, ?, ?)"
+  ).run(name, role, photo, text, status);
+  const row = db.prepare("SELECT * FROM testimonials WHERE id = ?").get(info.lastInsertRowid);
+  res.json({ testimonial: row });
+});
+
+// Admin: update a testimonial.
+app.patch('/api/admin/testimonials/:id', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const row = db.prepare("SELECT * FROM testimonials WHERE id = ?").get(id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  let { name, role, photo, text, status, sortOrder } = req.body || {};
+  const upName   = name      !== undefined ? String(name).trim().slice(0, 120) : row.name;
+  const upRole   = role      !== undefined ? String(role).trim().slice(0, 120) : row.role;
+  const upPhoto  = photo     !== undefined ? String(photo).trim().slice(0, 8 * 1024 * 1024) : row.photo;
+  const upText   = text      !== undefined ? String(text).trim().slice(0, 5000) : row.text;
+  const upStatus = (status !== undefined && ['pending', 'approved'].includes(status)) ? status : row.status;
+  const upOrder  = sortOrder !== undefined ? Number(sortOrder) : row.sortOrder;
+  db.prepare(
+    "UPDATE testimonials SET name=?, role=?, photo=?, text=?, status=?, sortOrder=?, updatedAt=datetime('now') WHERE id=?"
+  ).run(upName, upRole, upPhoto, upText, upStatus, upOrder, id);
+  res.json({ testimonial: db.prepare("SELECT * FROM testimonials WHERE id = ?").get(id) });
+});
+
+// Admin: delete a testimonial.
+app.delete('/api/admin/testimonials/:id', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  db.prepare("DELETE FROM testimonials WHERE id = ?").run(id);
+  res.json({ ok: true });
+});
+
+// Admin: approve a testimonial.
+app.post('/api/admin/testimonials/:id/approve', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const row = db.prepare("SELECT id FROM testimonials WHERE id = ?").get(id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  db.prepare("UPDATE testimonials SET status='approved', updatedAt=datetime('now') WHERE id=?").run(id);
+  res.json({ ok: true });
+});
+
+// Admin: generate a private submit link for a specific user.
+// The link is single-use: once a testimonial is submitted via the token, the
+// token is cleared so the link can't be reused.
+const crypto = require('crypto');
+app.post('/api/admin/testimonials/generate-link', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
+  const { userId } = req.body || {};
+  const user = userId ? db.prepare("SELECT id, displayName, title FROM users WHERE id = ?").get(Number(userId)) : null;
+  if (!user) return res.status(400).json({ error: 'User ID required' });
+  const token = crypto.randomBytes(24).toString('hex');
+  // Store as a new pending testimonial pre-filled with the user's name/role.
+  const info = db.prepare(
+    "INSERT INTO testimonials (name, role, text, status, submitToken, submittedByMemberId) VALUES (?, ?, '', 'pending', ?, ?)"
+  ).run(user.displayName, user.title || '', token, user.id);
+  const appUrl = process.env.APP_URL || '';
+  const link = `${appUrl}/testimonial-submit/${token}`;
+  res.json({ link, testimonialId: info.lastInsertRowid });
+});
+
+// Public: get pre-fill info for a testimonial submit form.
+app.get('/api/public/testimonial-submit/:token', (req, res) => {
+  const token = String(req.params.token).replace(/[^a-zA-Z0-9]/g, '');
+  const row = db.prepare("SELECT id, name, role FROM testimonials WHERE submitToken = ? AND status = 'pending'").get(token);
+  if (!row) return res.status(404).json({ error: 'This link is no longer valid or has already been used.' });
+  res.json({ name: row.name, role: row.role });
+});
+
+// Public: submit a testimonial via a private link.
+app.post('/api/public/testimonial-submit/:token',
+  rateLimit({ windowMs: 60 * 60 * 1000, max: 10, name: 'testimonial-submit' }),
+  (req, res) => {
+    const token = String(req.params.token).replace(/[^a-zA-Z0-9]/g, '');
+    const row = db.prepare("SELECT id FROM testimonials WHERE submitToken = ? AND status = 'pending'").get(token);
+    if (!row) return res.status(404).json({ error: 'This link is no longer valid or has already been used.' });
+    let { name, role, photo, text } = req.body || {};
+    name  = String(name  || '').trim().slice(0, 120);
+    role  = String(role  || '').trim().slice(0, 120);
+    photo = String(photo || '').trim().slice(0, 8 * 1024 * 1024);
+    text  = String(text  || '').trim().slice(0, 5000);
+    if (!name || !text) return res.status(400).json({ error: 'Name and testimonial text are required' });
+    // Save the submission but keep status 'pending' for admin review.
+    // Clear the token so the link can't be reused.
+    db.prepare(
+      "UPDATE testimonials SET name=?, role=?, photo=?, text=?, submitToken=NULL, updatedAt=datetime('now') WHERE id=?"
+    ).run(name, role, photo, text, row.id);
+    res.json({ ok: true });
+  }
+);
+
+// ---- Newsletter -------------------------------------------------------------
+
+function newsletterEnroll(email, name, source = 'auto') {
+  const e = String(email || '').trim().toLowerCase();
+  const n = String(name  || '').trim().slice(0, 120);
+  if (!e || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) return;
+  try {
+    db.prepare(
+      "INSERT OR IGNORE INTO newsletter_subscribers (email, name, source) VALUES (?, ?, ?)"
+    ).run(e, n, source);
+  } catch (_) {}
+}
+
+// Public: sign up for the newsletter.
+app.post('/api/newsletter/subscribe',
+  rateLimit({ windowMs: 60 * 60 * 1000, max: 20, name: 'newsletter' }),
+  (req, res) => {
+    let { email, name } = req.body || {};
+    email = String(email || '').trim().toLowerCase();
+    name  = String(name  || '').trim().slice(0, 120);
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      return res.status(400).json({ error: 'A valid email address is required.' });
+    }
+    const existing = db.prepare("SELECT id, active FROM newsletter_subscribers WHERE lower(email) = ?").get(email);
+    if (existing) {
+      if (!existing.active) {
+        db.prepare("UPDATE newsletter_subscribers SET active=1, name=?, subscribedAt=datetime('now') WHERE id=?")
+          .run(name || existing.name, existing.id);
+      }
+      return res.json({ ok: true, alreadySubscribed: !existing.active });
+    }
+    db.prepare("INSERT INTO newsletter_subscribers (email, name, source) VALUES (?, ?, 'signup')").run(email, name);
+    res.json({ ok: true });
+  }
+);
+
+// Admin: list all subscribers.
+app.get('/api/admin/newsletter', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
+  const rows = db.prepare(
+    "SELECT id, email, name, source, active, subscribedAt FROM newsletter_subscribers ORDER BY subscribedAt DESC"
+  ).all();
+  res.json({ subscribers: rows });
+});
+
+// Admin: toggle subscriber active/inactive.
+app.patch('/api/admin/newsletter/:id', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const { active } = req.body || {};
+  db.prepare("UPDATE newsletter_subscribers SET active=? WHERE id=?").run(active ? 1 : 0, id);
+  res.json({ ok: true });
+});
+
+// Admin: remove a subscriber.
+app.delete('/api/admin/newsletter/:id', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
+  db.prepare("DELETE FROM newsletter_subscribers WHERE id=?").run(Number(req.params.id));
+  res.json({ ok: true });
 });
 
 // ---- Static frontend --------------------------------------------------------
