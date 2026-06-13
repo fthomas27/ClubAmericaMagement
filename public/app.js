@@ -2558,30 +2558,60 @@ function EventPhotos() {
 }
 
 // ---------------------------------------------------------------------------
-// Instagram feed — live embeds of the posts the board curates in Edit Website.
-// (Instagram's API doesn't allow pulling "tagged" posts without a business
-// account + access token, so the board picks which posts appear here.)
+// Instagram feed — a continuously rotating, looping marquee of the posts the
+// board curates in Edit Website. The track holds two copies of the posts and
+// scrolls left by half its width, so it loops seamlessly; it pauses on hover so
+// visitors can read/tap a post. (Instagram's API doesn't allow pulling "tagged"
+// posts without a business account + access token, so the board picks them.)
 // ---------------------------------------------------------------------------
 function InstagramFeed({ home }) {
   const posts = (home.instagramPosts || []).map(igEmbedUrl).filter(Boolean);
   if (posts.length === 0) return null;
+
+  const header = (
+    <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+      <div className="flex items-center gap-2">
+        <InstagramIcon className="w-6 h-6 text-gold" />
+        <h2 className="font-display text-3xl text-gold">From Our Instagram</h2>
+      </div>
+      {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
+    </div>
+  );
+
+  const Post = ({ src, i }) => (
+    <div className="shrink-0 w-[300px] rounded-xl overflow-hidden bg-white">
+      <iframe src={src} title={`Instagram post ${i + 1}`} loading="lazy"
+        className="w-full" style={{ height: 500, border: 0 }} scrolling="no" allowTransparency="true" />
+    </div>
+  );
+
+  // A single post: nothing to loop, just center it.
+  if (posts.length === 1) {
+    return (
+      <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6">
+        {header}
+        <div className="flex justify-center"><Post src={posts[0]} i={0} /></div>
+      </section>
+    );
+  }
+
+  // Two copies for a seamless loop; ~9s of travel per post feels unhurried.
+  const loop = posts.concat(posts);
+  const duration = Math.max(20, posts.length * 9);
+  const edgeFade = {
+    WebkitMaskImage: 'linear-gradient(to right, transparent, #000 6%, #000 94%, transparent)',
+    maskImage: 'linear-gradient(to right, transparent, #000 6%, #000 94%, transparent)',
+  };
+
   return (
     <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6">
-      <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-        <div className="flex items-center gap-2">
-          <InstagramIcon className="w-6 h-6 text-gold" />
-          <h2 className="font-display text-3xl text-gold">From Our Instagram</h2>
+      {header}
+      <div className="ca-ig-marquee relative overflow-hidden" style={edgeFade}>
+        <div className="ca-ig-track flex gap-4" style={{ '--ca-ig-dur': `${duration}s` }} aria-hidden="false">
+          {loop.map((src, i) => <Post key={i} src={src} i={i % posts.length} />)}
         </div>
-        {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
       </div>
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {posts.map((src, i) => (
-          <div key={i} className="rounded-xl overflow-hidden bg-white" style={{ minHeight: 480 }}>
-            <iframe src={src} title={`Instagram post ${i + 1}`} loading="lazy"
-              className="w-full" style={{ height: 540, border: 0 }} scrolling="no" allowTransparency="true" />
-          </div>
-        ))}
-      </div>
+      <p className="text-cream/40 text-xs text-center mt-3">Hover to pause · tap a post to open it on Instagram</p>
     </section>
   );
 }
