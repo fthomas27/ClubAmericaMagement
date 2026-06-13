@@ -2407,11 +2407,11 @@ function CharlieKirkTribute() {
   );
 }
 
-// Turn an Instagram post/reel/tv URL into its embeddable URL. Returns null for
-// anything that isn't a recognizable post link.
-function igEmbedUrl(url) {
+// Normalize an Instagram post/reel/tv URL to its canonical permalink (stripping
+// share params). Returns null for anything that isn't a recognizable post link.
+function igPermalink(url) {
   const m = String(url || '').match(/instagram\.com\/(p|reel|tv)\/([\w-]+)/i);
-  return m ? `https://www.instagram.com/${m[1]}/${m[2]}/embed` : null;
+  return m ? `https://www.instagram.com/${m[1]}/${m[2]}/` : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -2561,60 +2561,52 @@ function EventPhotos() {
 }
 
 // ---------------------------------------------------------------------------
-// Instagram feed — a continuously rotating, looping marquee of the posts the
-// board curates in Edit Website. The track holds two copies of the posts and
-// scrolls left by half its width, so it loops seamlessly; it pauses on hover so
-// visitors can read/tap a post. (Instagram's API doesn't allow pulling "tagged"
-// posts without a business account + access token, so the board picks them.)
+// Instagram feed — the posts the board curates in Edit Website, rendered with
+// Instagram's official embed (embed.js). Laid out in a responsive grid so each
+// post shows in full (one per row on phones). The official embed is the
+// supported, reliable way to show public posts — the old iframe trick showed a
+// "post may be removed" card for many valid links.
 // ---------------------------------------------------------------------------
+function useInstagramEmbeds(key) {
+  // Load Instagram's embed.js once, then (re)process blockquotes whenever the
+  // set of posts changes. Already-rendered embeds are skipped by embed.js.
+  useEffect(() => {
+    const process = () => { try { window.instgrm && window.instgrm.Embeds && window.instgrm.Embeds.process(); } catch (_) {} };
+    if (window.instgrm && window.instgrm.Embeds) { process(); return; }
+    let s = document.getElementById('ig-embed-js');
+    if (s) { s.addEventListener('load', process); return () => s.removeEventListener('load', process); }
+    s = document.createElement('script');
+    s.id = 'ig-embed-js'; s.async = true; s.src = 'https://www.instagram.com/embed.js';
+    s.onload = process;
+    document.body.appendChild(s);
+  }, [key]);
+}
+
 function InstagramFeed({ home }) {
-  const posts = (home.instagramPosts || []).map(igEmbedUrl).filter(Boolean);
+  const posts = (home.instagramPosts || []).map(igPermalink).filter(Boolean);
+  useInstagramEmbeds(posts.join('|'));
   if (posts.length === 0) return null;
-
-  const header = (
-    <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
-      <div className="flex items-center gap-2">
-        <InstagramIcon className="w-6 h-6 text-gold" />
-        <h2 className="font-display text-3xl text-gold">From Our Instagram</h2>
-      </div>
-      {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
-    </div>
-  );
-
-  const Post = ({ src, i }) => (
-    <div className="shrink-0 w-[300px] rounded-xl overflow-hidden bg-white">
-      <iframe src={src} title={`Instagram post ${i + 1}`} loading="lazy"
-        className="w-full" style={{ height: 500, border: 0 }} scrolling="no" allowTransparency="true" />
-    </div>
-  );
-
-  // A single post: nothing to loop, just center it.
-  if (posts.length === 1) {
-    return (
-      <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6">
-        {header}
-        <div className="flex justify-center"><Post src={posts[0]} i={0} /></div>
-      </section>
-    );
-  }
-
-  // Two copies for a seamless loop; ~9s of travel per post feels unhurried.
-  const loop = posts.concat(posts);
-  const duration = Math.max(20, posts.length * 9);
-  const edgeFade = {
-    WebkitMaskImage: 'linear-gradient(to right, transparent, #000 6%, #000 94%, transparent)',
-    maskImage: 'linear-gradient(to right, transparent, #000 6%, #000 94%, transparent)',
-  };
 
   return (
     <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6">
-      {header}
-      <div className="ca-ig-marquee relative overflow-hidden" style={edgeFade}>
-        <div className="ca-ig-track flex gap-4" style={{ '--ca-ig-dur': `${duration}s` }} aria-hidden="false">
-          {loop.map((src, i) => <Post key={i} src={src} i={i % posts.length} />)}
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+        <div className="flex items-center gap-2">
+          <InstagramIcon className="w-6 h-6 text-gold" />
+          <h2 className="font-display text-3xl text-gold">From Our Instagram</h2>
         </div>
+        {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
       </div>
-      <p className="text-cream/40 text-xs text-center mt-3">Hover to pause · tap a post to open it on Instagram</p>
+      <div className="grid gap-4 justify-items-center"
+        style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+        {posts.map((url, i) => (
+          <blockquote key={url + i} className="instagram-media" data-instgrm-permalink={url} data-instgrm-version="14"
+            style={{ background: '#FFF', border: 0, margin: 0, width: '100%', maxWidth: 400, minWidth: 240, borderRadius: 12 }}>
+            <a href={url} target="_blank" rel="noopener" className="block p-8 text-center text-sm" style={{ color: '#555' }}>
+              View this post on Instagram →
+            </a>
+          </blockquote>
+        ))}
+      </div>
     </section>
   );
 }
