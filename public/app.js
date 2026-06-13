@@ -275,12 +275,14 @@ function LogoMark({ big }) {
 function Logo({ size = 'sidebar' }) {
   const [failed, setFailed] = useState(false);
   const big = size === 'login';
+  const nav = size === 'nav';
 
   // The artwork uses navy lettering, so it sits on a white rounded panel to
   // stay legible against the dark navy app background.
+  const imgHeight = big ? 'max-h-40' : nav ? 'max-h-12' : 'max-h-16';
   return (
     <div className={big ? 'flex justify-center' : ''}>
-      <div className="bg-white rounded-xl p-3 inline-block shadow-lg">
+      <div className={`bg-white rounded-xl inline-block shadow-lg ${nav ? 'p-2' : 'p-3'}`}>
         {failed ? (
           <LogoMark big={big} />
         ) : (
@@ -288,7 +290,7 @@ function Logo({ size = 'sidebar' }) {
             src={LOGO_SRC}
             alt="Club America at Park City High School"
             onError={() => setFailed(true)}
-            className={`object-contain ${big ? 'max-h-40 w-auto' : 'max-h-16 w-auto'}`}
+            className={`object-contain w-auto ${imgHeight}`}
           />
         )}
       </div>
@@ -3324,9 +3326,9 @@ function PublicNav({ current, onNavigate, onEnterPortal }) {
 
   return (
     <header className="sticky top-0 z-40 bg-navy/85 backdrop-blur border-b border-cream/10">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between gap-3">
         <button onClick={() => go('home')} className="flex items-center shrink-0" aria-label="Club America home">
-          <Logo size="sidebar" />
+          <Logo size="nav" />
         </button>
         <div className="flex items-center gap-2 sm:gap-3">
           <div className="relative" onClick={(e) => e.stopPropagation()}>
@@ -3389,7 +3391,7 @@ function PublicHomePage({ home, cards, onNavigate }) {
   const hasBelow = (home.homeAnnouncementEnabled && home.homeAnnouncement) || home.memberCount > 0;
   return (
     <div>
-      <div className="relative min-h-[calc(100vh-4rem)] flex flex-col overflow-hidden">
+      <div className="relative min-h-[calc(100vh-5rem)] flex flex-col overflow-hidden">
         {/* Ambient background layers — old-glory red and blue, kept quiet */}
         <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
           <div className="ca-aurora-a absolute -top-1/4 -left-1/4 w-[80%] h-[80%] rounded-full"
