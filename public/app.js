@@ -2167,7 +2167,10 @@ function HomeEditor({ onSaved }) {
     try {
       // Load the full settings (including the private calendar URL).
       const d = await api('/home/settings');
-      setForm(d.home);
+      // Keep the Instagram links as raw multi-line text while editing so blank
+      // lines (pressing Enter between links) aren't stripped mid-typing; it's
+      // parsed back into a list on save.
+      setForm({ ...d.home, instagramPostsText: (d.home.instagramPosts || []).join('\n') });
       setOpen(true);
     } catch (err) { setError(err.message); }
   }
@@ -2182,7 +2185,7 @@ function HomeEditor({ onSaved }) {
         podcastUrl: form.podcastUrl,
         calendarUrl: form.calendarUrl,
         instagramUrl: form.instagramUrl,
-        instagramPosts: form.instagramPosts || [],
+        instagramPosts: (form.instagramPostsText || '').split('\n').map((s) => s.trim()).filter(Boolean),
         aboutText: form.aboutText,
         podcastEnabled: form.podcastEnabled,
       }});
@@ -2231,8 +2234,8 @@ function HomeEditor({ onSaved }) {
           <div className="sm:col-span-2">
             <Field label="Instagram feed — paste post links (one per line)">
               <textarea className={inputCls + ' min-h-[96px] resize-y font-mono text-sm'}
-                value={(form.instagramPosts || []).join('\n')}
-                onChange={(e) => setForm((f) => ({ ...f, instagramPosts: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean) }))}
+                value={form.instagramPostsText || ''}
+                onChange={set('instagramPostsText')}
                 placeholder={'https://www.instagram.com/p/XXXXXXXX/\nhttps://www.instagram.com/reel/YYYYYYYY/'} />
             </Field>
             <p className="text-xs text-cream/40 mt-1">These posts show live in the “From Our Instagram” section. Open a post on Instagram, hit Share → Copy link, and paste it here (up to 12). Reels and tagged posts work too — paste their links.</p>
