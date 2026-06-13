@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Club America &mdash; Board Management</title>
+  <meta name="theme-color" content="#0A1628" />
+  <title>Club America &mdash; Park City High School</title>
   <meta name="description" content="Club America at Park City High School — faith, freedom, and community. Join us at our next meeting." />
   <meta property="og:title" content="Club America — Park City High School" />
   <meta property="og:description" content="Faith, freedom, and community. Join Club America at Park City High School." />
@@ -148,8 +149,18 @@
     }
     @keyframes ca-spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     .ca-spin-slow { animation: ca-spin-slow 90s linear infinite; }
+
+    /* Looping Instagram marquee — the track holds two copies of the posts and
+       slides left by exactly half its width, so the loop is seamless. */
+    @keyframes ca-marquee {
+      from { transform: translateX(0); }
+      to   { transform: translateX(-50%); }
+    }
+    .ca-ig-track { animation: ca-marquee var(--ca-ig-dur, 40s) linear infinite; width: max-content; }
+    .ca-ig-marquee:hover .ca-ig-track { animation-play-state: paused; }
+
     @media (prefers-reduced-motion: reduce) {
-      .ca-star, .ca-aurora-a, .ca-aurora-b, .ca-scroll-cue, .ca-stripes, .ca-spin-slow, .ca-breathe { animation: none; }
+      .ca-star, .ca-aurora-a, .ca-aurora-b, .ca-scroll-cue, .ca-stripes, .ca-spin-slow, .ca-breathe, .ca-ig-track { animation: none; }
       .ca-reveal { opacity: 1; transform: none; transition: none; }
       .ca-card3d { transform: none !important; transition: none; }
     }
