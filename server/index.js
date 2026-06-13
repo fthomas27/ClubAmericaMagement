@@ -15,6 +15,7 @@ process.on('uncaughtException', (err) => {
 
 const { db, init, seed } = require('./db');
 const { fetchUpcoming, clearCache } = require('./calendar');
+const igApi = require('./instagram');
 const { notify, escHtml } = require('./email');
 const { analyzeTeamHealth, chatWithAI, aiEnabled } = require('./ai');
 const {
@@ -277,12 +278,67 @@ function getHome() {
   try { instagramPosts = JSON.parse(row.instagramPosts || '[]'); } catch (_) {}
   return { ...row, podcastEnabled: !!row.podcastEnabled, homeAnnouncementEnabled: announcementEnabled, instagramPosts };
 }
+// ---- Instagram tagged-post import -------------------------------------------
+function getIgConfig() {
+  const row = db.prepare('SELECT instagramToken, instagramUserId, instagramTokenSetAt FROM site_settings WHERE id = 1').get() || {};
+  // Env vars win if set (handy for ops); otherwise use the values saved in-app.
+  return {
+    token: process.env.IG_ACCESS_TOKEN || row.instagramToken || '',
+    userId: process.env.IG_USER_ID || row.instagramUserId || '',
+    tokenSetAt: row.instagramTokenSetAt || null,
+  };
+}
+function igConfigured() { const c = getIgConfig(); return !!(c.token && c.userId); }
+
+// Pull tagged media and upsert new items as 'pending'. Existing rows (including
+// previously rejected ones) are left untouched, so nothing re-imports after review.
+async function importTaggedMedia() {
+  const { token, userId } = getIgConfig();
+  if (!token || !userId) return { configured: false, imported: 0 };
+  const media = await igApi.fetchTaggedMedia({ token, userId });
+  const insert = db.prepare(`INSERT OR IGNORE INTO instagram_imports
+    (igId, permalink, mediaType, mediaUrl, thumbnailUrl, caption, username, takenAt)
+    VALUES (@igId, @permalink, @mediaType, @mediaUrl, @thumbnailUrl, @caption, @username, @takenAt)`);
+  let imported = 0;
+  const tx = db.transaction((rows) => {
+    for (const m of rows) {
+      const info = insert.run({
+        igId: String(m.id),
+        permalink: String(m.permalink || '').slice(0, 500),
+        mediaType: String(m.media_type || '').slice(0, 30),
+        mediaUrl: String(m.media_url || '').slice(0, 1000),
+        thumbnailUrl: String(m.thumbnail_url || '').slice(0, 1000),
+        caption: String(m.caption || '').slice(0, 2000),
+        username: String(m.username || '').slice(0, 120),
+        takenAt: m.timestamp || null,
+      });
+      if (info.changes) imported++;
+    }
+  });
+  tx(media);
+  if (imported) {
+    const moderators = db.prepare("SELECT id FROM users WHERE role = 'admin' OR canEditHome = 1 OR canManageSocial = 1").all();
+    for (const mod of moderators) pushNotification(mod.id, `${imported} new tagged Instagram post${imported === 1 ? '' : 's'} to review`, 'igfeed', 'submission');
+  }
+  return { configured: true, imported, fetched: media.length };
+}
+
+// Approved imports as embeddable permalinks, newest first.
+function approvedIgPermalinks(limit = 24) {
+  return db.prepare("SELECT permalink FROM instagram_imports WHERE status = 'approved' AND permalink != '' ORDER BY takenAt DESC LIMIT ?")
+    .all(limit).map((r) => r.permalink);
+}
+
 app.get('/api/home', async (req, res) => {
   const home = getHome();
   let events = [];
   try { events = await fetchUpcoming(home.calendarUrl, 3); } catch (_) {}
-  // Don't leak the raw calendar URL to the public payload.
-  const { calendarUrl, ...publicHome } = home;
+  // Don't leak the raw calendar URL (or IG credentials) to the public payload.
+  const { calendarUrl, instagramToken, instagramUserId, instagramTokenSetAt, ...publicHome } = home;
+  // The public feed = manually-pasted posts first, then approved tagged imports
+  // (deduped). Both render as live Instagram embeds in the rotating marquee.
+  const manual = publicHome.instagramPosts || [];
+  publicHome.instagramPosts = [...new Set([...manual, ...approvedIgPermalinks()])].slice(0, 24);
   // Attach upcoming volunteer events (enabled, future) with per-role signup counts.
   const volunteerEvents = db.prepare(`
     SELECT ve.id, ve.icalUid, ve.title, ve.startDate,
@@ -721,6 +777,107 @@ app.delete('/api/event-photos/:id', (req, res) => {
   if (!row) return res.status(404).json({ error: 'Not found' });
   db.prepare('DELETE FROM event_photos WHERE id = ?').run(row.id);
   logApproval('event_photo', row.id, 'removed', req.user);
+  res.json({ ok: true });
+});
+
+// ---- Instagram tagged-post import & curation --------------------------------
+// Connection status — never returns the token itself, only whether it's set.
+app.get('/api/instagram/config', (req, res) => {
+  if (!canModeratePhotos(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const c = getIgConfig();
+  res.json({
+    configured: igConfigured(),
+    hasToken: !!c.token,
+    userId: c.userId,
+    tokenSetAt: c.tokenSetAt,
+    envManaged: !!(process.env.IG_ACCESS_TOKEN || process.env.IG_USER_ID),
+    canEdit: req.user.role === 'admin',
+  });
+});
+
+// Save the access token / IG user id (admin only). Token is write-only.
+app.put('/api/instagram/config', requireAdmin, (req, res) => {
+  let { token, userId } = req.body || {};
+  token = token === undefined ? undefined : String(token || '').trim().slice(0, 1000);
+  userId = userId === undefined ? undefined : String(userId || '').trim().slice(0, 60);
+  if (token !== undefined && token !== '') {
+    db.prepare("UPDATE site_settings SET instagramToken = ?, instagramTokenSetAt = datetime('now') WHERE id = 1").run(token);
+  } else if (token === '') {
+    db.prepare("UPDATE site_settings SET instagramToken = '', instagramTokenSetAt = NULL WHERE id = 1").run();
+  }
+  if (userId !== undefined) {
+    db.prepare('UPDATE site_settings SET instagramUserId = ? WHERE id = 1').run(userId);
+    igApi.clearCache();
+  }
+  const c = getIgConfig();
+  res.json({ ok: true, configured: igConfigured(), hasToken: !!c.token, userId: c.userId, tokenSetAt: c.tokenSetAt });
+});
+
+// Discover the IG Business account id(s) reachable from the saved/posted token.
+app.post('/api/instagram/discover', requireAdmin, async (req, res) => {
+  const token = String((req.body && req.body.token) || getIgConfig().token || '').trim();
+  if (!token) return res.status(400).json({ error: 'Add an access token first.' });
+  try {
+    const accounts = await igApi.discoverAccounts({ token });
+    res.json({ accounts });
+  } catch (e) {
+    res.status(502).json({ error: e.message || 'Could not reach Instagram.' });
+  }
+});
+
+// Confirm the saved credentials can read the tags edge.
+app.post('/api/instagram/test', requireAdmin, async (req, res) => {
+  const { token, userId } = getIgConfig();
+  if (!token || !userId) return res.status(400).json({ error: 'Add a token and IG account id first.' });
+  try {
+    await igApi.testConnection({ token, userId });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: e.message || 'Connection failed.' });
+  }
+});
+
+// Pull the latest tagged posts into the pending queue.
+app.post('/api/instagram/import', async (req, res) => {
+  if (!canModeratePhotos(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  if (!igConfigured()) return res.status(400).json({ error: 'Instagram isn’t connected yet.' });
+  igApi.clearCache(getIgConfig().userId); // force a fresh pull on a manual refresh
+  try {
+    const result = await importTaggedMedia();
+    res.json(result);
+  } catch (e) {
+    res.status(502).json({ error: e.message || 'Failed to fetch from Instagram.' });
+  }
+});
+
+app.get('/api/instagram/pending', (req, res) => {
+  if (!canModeratePhotos(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const posts = db.prepare("SELECT id, permalink, mediaType, mediaUrl, thumbnailUrl, caption, username, takenAt FROM instagram_imports WHERE status = 'pending' ORDER BY takenAt DESC").all();
+  res.json({ posts });
+});
+
+app.get('/api/instagram/approved', (req, res) => {
+  if (!canModeratePhotos(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const posts = db.prepare("SELECT id, permalink, mediaType, mediaUrl, thumbnailUrl, caption, username, takenAt FROM instagram_imports WHERE status = 'approved' ORDER BY takenAt DESC LIMIT 100").all();
+  res.json({ posts });
+});
+
+app.post('/api/instagram/:id/approve', (req, res) => {
+  if (!canModeratePhotos(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const row = db.prepare('SELECT id FROM instagram_imports WHERE id = ?').get(Number(req.params.id));
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  db.prepare("UPDATE instagram_imports SET status = 'approved', reviewedById = ?, reviewedAt = datetime('now') WHERE id = ?").run(req.user.id, row.id);
+  logApproval('instagram_import', row.id, 'approved', req.user);
+  res.json({ ok: true });
+});
+
+// Reject (or un-publish): keep the row so it never re-imports, just hide it.
+app.post('/api/instagram/:id/reject', (req, res) => {
+  if (!canModeratePhotos(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const row = db.prepare('SELECT id FROM instagram_imports WHERE id = ?').get(Number(req.params.id));
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  db.prepare("UPDATE instagram_imports SET status = 'rejected', reviewedById = ?, reviewedAt = datetime('now') WHERE id = ?").run(req.user.id, row.id);
+  logApproval('instagram_import', row.id, 'rejected', req.user);
   res.json({ ok: true });
 });
 
@@ -2811,11 +2968,24 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Something went wrong' });
 });
 
+// Auto-import tagged Instagram posts into the pending queue on a timer (and once
+// shortly after boot) when the account is connected — so new tags show up for
+// approval without anyone clicking refresh.
+function scheduleInstagramImport() {
+  const run = () => {
+    if (!igConfigured()) return;
+    importTaggedMedia().catch((e) => console.warn('[instagram] auto-import failed:', e.message));
+  };
+  setTimeout(run, 30 * 1000).unref?.();
+  setInterval(run, 30 * 60 * 1000).unref?.();
+}
+
 const PORT = process.env.PORT || 3000;
 if (require.main === module) {
   app.listen(PORT, () => {
     if (seeded) console.log('Seeded database with default Club America accounts.');
     console.log(`Club America Management running at http://localhost:${PORT}`);
+    scheduleInstagramImport();
   });
 }
 
