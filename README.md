@@ -190,6 +190,15 @@ report in the Admin Panel, and drops back to **Member** when they have none.
   back to a manually-entered **next meeting** (date, time, location).
 - **Podcast section** embeds a YouTube video inline (or links out to a
   channel/page).
+- **Event Photos:** anyone can share photos they took at an event right from the
+  homepage. Submissions are held for review and only appear in the public gallery
+  once a board member approves them (no unvetted images ever go live). Board
+  members with the **Photo Approvals** tab — admins, the Digital Presence
+  Manager, and the Social Media manager — approve or remove photos.
+- **From Our Instagram:** a live feed of hand-picked Instagram posts. The board
+  pastes post/reel links in **Edit Website** and they render as live embeds.
+  (Instagram's API doesn't allow auto-pulling *tagged* posts without a business
+  account and access token, so posts are curated rather than scraped.)
 - **Controlled by the Digital Presence Manager** (`dhays`) — they (and the
   President/VP) get an edit panel on the in-portal **Home** view to set the
   calendar feed, meeting fallback, and podcast link. Everyone else sees it

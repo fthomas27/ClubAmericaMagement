@@ -461,6 +461,21 @@ function init() {
     );
     CREATE INDEX IF NOT EXISTS idx_volunteer_signups_event ON volunteer_signups(eventId, status);
     CREATE INDEX IF NOT EXISTS idx_volunteer_signups_roster ON volunteer_signups(matchedRosterId);
+
+    -- Photos submitted by anyone from the public homepage ("event photos").
+    -- Held as 'pending' until a board member approves, so nothing unvetted ever
+    -- appears on the public page.
+    CREATE TABLE IF NOT EXISTS event_photos (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      photo         TEXT NOT NULL,
+      caption       TEXT NOT NULL DEFAULT '',
+      submitterName TEXT NOT NULL DEFAULT '',
+      status        TEXT NOT NULL DEFAULT 'pending',
+      approvedById  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      approvedAt    TEXT,
+      createdAt     TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_event_photos_status ON event_photos(status, createdAt DESC);
   `);
 
   // User column migrations.
@@ -526,6 +541,7 @@ function init() {
   if (!siteCols.includes('homeAnnouncementEnabled'))  db.exec("ALTER TABLE site_settings ADD COLUMN homeAnnouncementEnabled INTEGER NOT NULL DEFAULT 0");
   if (!siteCols.includes('weeklyCheckinEnabled'))     db.exec("ALTER TABLE site_settings ADD COLUMN weeklyCheckinEnabled INTEGER NOT NULL DEFAULT 0");
   if (!siteCols.includes('announcementPostedAt'))     db.exec("ALTER TABLE site_settings ADD COLUMN announcementPostedAt TEXT");
+  if (!siteCols.includes('instagramPosts'))           db.exec("ALTER TABLE site_settings ADD COLUMN instagramPosts TEXT NOT NULL DEFAULT '[]'");
 
   // user_page_settings column migrations.
   const upsCols = db.prepare("PRAGMA table_info(user_page_settings)").all().map((c) => c.name);

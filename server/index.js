@@ -68,9 +68,11 @@ app.use((req, res, next) => {
   }
   next();
 });
-// Keep the global body limit small (photo upload gets its own parser).
+// Keep the global body limit small (photo uploads get a larger parser).
 app.use((req, res, next) => {
-  const limit = req.method === 'PUT' && req.path === '/api/me/profile' ? '6mb' : '50kb';
+  const isProfilePhoto = req.method === 'PUT' && req.path === '/api/me/profile';
+  const isEventPhoto = req.method === 'POST' && req.path === '/api/event-photos';
+  const limit = isProfilePhoto || isEventPhoto ? '6mb' : '50kb';
   express.json({ limit })(req, res, next);
 });
 
@@ -261,7 +263,7 @@ app.get('/api/me', authenticate, (req, res) => {
 
 // ---- Public homepage content (no auth) --------------------------------------
 function getHome() {
-  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, aboutText, homeAnnouncement, homeAnnouncementEnabled, announcementPostedAt, updatedAt FROM site_settings WHERE id = 1').get();
+  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, instagramPosts, aboutText, homeAnnouncement, homeAnnouncementEnabled, announcementPostedAt, updatedAt FROM site_settings WHERE id = 1').get();
   // Auto-expire the announcement after 7 days.
   let announcementEnabled = !!row.homeAnnouncementEnabled;
   if (announcementEnabled && row.announcementPostedAt) {
@@ -271,7 +273,9 @@ function getHome() {
       db.prepare("UPDATE site_settings SET homeAnnouncementEnabled = 0 WHERE id = 1").run();
     }
   }
-  return { ...row, podcastEnabled: !!row.podcastEnabled, homeAnnouncementEnabled: announcementEnabled };
+  let instagramPosts = [];
+  try { instagramPosts = JSON.parse(row.instagramPosts || '[]'); } catch (_) {}
+  return { ...row, podcastEnabled: !!row.podcastEnabled, homeAnnouncementEnabled: announcementEnabled, instagramPosts };
 }
 app.get('/api/home', async (req, res) => {
   const home = getHome();
@@ -367,6 +371,49 @@ app.post('/api/track', rateLimit({ windowMs: 60 * 1000, max: 120, name: 'track' 
   db.prepare('INSERT INTO page_events (event, label) VALUES (?, ?)')
     .run(String(event).slice(0, 80), String(label || '').slice(0, 200));
   res.json({ ok: true });
+});
+
+// ---- Event photos (public submit + public approved gallery) -----------------
+// Anyone can submit a photo from the homepage, but it stays 'pending' until a
+// board member approves it — so unvetted images never show on the public page.
+app.post('/api/event-photos', rateLimit({ windowMs: 60 * 60 * 1000, max: 12, name: 'event-photos' }), (req, res) => {
+  let { photo, caption, submitterName } = req.body || {};
+  photo = typeof photo === 'string' ? photo : '';
+  caption = String(caption || '').trim().slice(0, 280);
+  submitterName = String(submitterName || '').trim().slice(0, 80);
+  if (!/^data:image\/(png|jpe?g|webp);base64,/.test(photo)) {
+    return res.status(400).json({ error: 'Please choose an image file (JPG, PNG, or WEBP).' });
+  }
+  if (photo.length > 6 * 1024 * 1024) return res.status(400).json({ error: 'That image is too large — please pick a smaller one.' });
+  db.prepare('INSERT INTO event_photos (photo, caption, submitterName, status) VALUES (?, ?, ?, ?)')
+    .run(photo, caption, submitterName, 'pending');
+
+  // Let the photo moderators know something is waiting for review.
+  const moderators = db.prepare("SELECT id, email FROM users WHERE role = 'admin' OR canEditHome = 1 OR canManageSocial = 1").all();
+  for (const m of moderators) {
+    pushNotification(m.id, `New event photo${submitterName ? ' from ' + submitterName : ''} awaiting approval`, 'photos', 'submission');
+  }
+  res.status(201).json({ ok: true });
+});
+
+// Public gallery — only approved photos, metadata only (image bytes come from
+// the per-photo route below to keep this payload small).
+app.get('/api/event-photos', (req, res) => {
+  const photos = db.prepare(
+    "SELECT id, caption, submitterName, createdAt FROM event_photos WHERE status = 'approved' ORDER BY createdAt DESC LIMIT 60"
+  ).all();
+  res.json({ photos });
+});
+
+// Serve a single approved photo's image bytes (public).
+app.get('/api/event-photos/:id/image', (req, res) => {
+  const row = db.prepare("SELECT photo, status FROM event_photos WHERE id = ?").get(Number(req.params.id));
+  if (!row || row.status !== 'approved') return res.status(404).end();
+  const m = String(row.photo).match(/^data:(image\/[a-z+]+);base64,(.+)$/s);
+  if (!m) return res.status(404).end();
+  res.set('Content-Type', m[1]);
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.send(Buffer.from(m[2], 'base64'));
 });
 
 // ---- Public volunteer sign-up routes (NO auth required) ----------------------
@@ -558,9 +605,13 @@ function canEditHome(user) {
 function canPostAnnouncement(user) {
   return user.role === 'admin' || !!user.canAnnounce;
 }
+// Review public photo submissions — admins, Digital Presence, Social Media managers.
+function canModeratePhotos(user) {
+  return user.role === 'admin' || !!user.canEditHome || !!user.canManageSocial;
+}
 app.put('/api/home', (req, res) => {
   if (!canEditHome(req.user)) return res.status(403).json({ error: 'Only the Digital Presence Manager can edit the homepage' });
-  let { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, aboutText } = req.body || {};
+  let { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, instagramPosts, aboutText } = req.body || {};
   if (meetingDate   !== undefined) meetingDate    = String(meetingDate).trim().slice(0, 100);
   if (meetingTime   !== undefined) meetingTime    = String(meetingTime).trim().slice(0, 100);
   if (meetingLocation !== undefined) meetingLocation = String(meetingLocation).trim().slice(0, 300);
@@ -568,6 +619,17 @@ app.put('/api/home', (req, res) => {
   if (calendarUrl   !== undefined) calendarUrl    = String(calendarUrl).trim().slice(0, 500);
   if (instagramUrl  !== undefined) instagramUrl   = String(instagramUrl).trim().slice(0, 300);
   if (aboutText     !== undefined) aboutText      = String(aboutText).trim().slice(0, 8000);
+  // Curated Instagram post URLs (one per entry) shown as live embeds. Keep only
+  // valid instagram.com post/reel links, cap the count, and store as JSON.
+  let instagramPostsJson = null;
+  if (instagramPosts !== undefined) {
+    const arr = Array.isArray(instagramPosts) ? instagramPosts : [];
+    const clean = arr
+      .map((u) => String(u || '').trim().slice(0, 300))
+      .filter((u) => /^https?:\/\/(www\.)?instagram\.com\/(p|reel|tv)\//i.test(u))
+      .slice(0, 12);
+    instagramPostsJson = JSON.stringify(clean);
+  }
   const podcastEnabledVal = podcastEnabled === undefined ? null : (podcastEnabled ? 1 : 0);
   db.prepare(`UPDATE site_settings SET
        meetingDate = COALESCE(?, meetingDate),
@@ -577,6 +639,7 @@ app.put('/api/home', (req, res) => {
        podcastEnabled = COALESCE(?, podcastEnabled),
        calendarUrl = COALESCE(?, calendarUrl),
        instagramUrl = COALESCE(?, instagramUrl),
+       instagramPosts = COALESCE(?, instagramPosts),
        aboutText = COALESCE(?, aboutText),
        updatedAt = datetime('now')
      WHERE id = 1`)
@@ -588,6 +651,7 @@ app.put('/api/home', (req, res) => {
       podcastEnabledVal,
       calendarUrl ?? null,
       instagramUrl ?? null,
+      instagramPostsJson,
       aboutText ?? null,
     );
   res.json({ home: getHome() });
@@ -619,6 +683,45 @@ app.put('/api/home/announcement', (req, res) => {
     updatedAt = datetime('now')
   WHERE id = 1`).run(text, text ? 1 : 0, text);
   res.json({ home: getHome() });
+});
+
+// ---- Event-photo moderation (board members) ---------------------------------
+// Pending photos include the inline image so a moderator can preview before
+// approving (this route is authenticated; the public gallery never sees them).
+app.get('/api/event-photos/pending', (req, res) => {
+  if (!canModeratePhotos(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const photos = db.prepare(
+    "SELECT id, photo, caption, submitterName, createdAt FROM event_photos WHERE status = 'pending' ORDER BY createdAt ASC"
+  ).all();
+  res.json({ photos });
+});
+
+// Approved list for moderators (so they can also un-publish a photo later).
+app.get('/api/event-photos/approved', (req, res) => {
+  if (!canModeratePhotos(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const photos = db.prepare(
+    "SELECT id, caption, submitterName, createdAt, approvedAt FROM event_photos WHERE status = 'approved' ORDER BY createdAt DESC LIMIT 200"
+  ).all();
+  res.json({ photos });
+});
+
+app.post('/api/event-photos/:id/approve', (req, res) => {
+  if (!canModeratePhotos(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const row = db.prepare('SELECT * FROM event_photos WHERE id = ?').get(Number(req.params.id));
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  db.prepare("UPDATE event_photos SET status = 'approved', approvedById = ?, approvedAt = datetime('now') WHERE id = ?")
+    .run(req.user.id, row.id);
+  logApproval('event_photo', row.id, 'approved', req.user);
+  res.json({ ok: true });
+});
+
+app.delete('/api/event-photos/:id', (req, res) => {
+  if (!canModeratePhotos(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const row = db.prepare('SELECT id FROM event_photos WHERE id = ?').get(Number(req.params.id));
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM event_photos WHERE id = ?').run(row.id);
+  logApproval('event_photo', row.id, 'removed', req.user);
+  res.json({ ok: true });
 });
 
 // ---- Directory / org --------------------------------------------------------

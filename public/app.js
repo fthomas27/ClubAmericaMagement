@@ -2182,6 +2182,7 @@ function HomeEditor({ onSaved }) {
         podcastUrl: form.podcastUrl,
         calendarUrl: form.calendarUrl,
         instagramUrl: form.instagramUrl,
+        instagramPosts: form.instagramPosts || [],
         aboutText: form.aboutText,
         podcastEnabled: form.podcastEnabled,
       }});
@@ -2227,6 +2228,15 @@ function HomeEditor({ onSaved }) {
           <div className="sm:col-span-2"><Field label="Meeting location (fallback)"><input className={inputCls} value={form.meetingLocation || ''} onChange={set('meetingLocation')} placeholder="e.g. Room 214" /></Field></div>
           <div className="sm:col-span-2"><Field label="Podcast link (YouTube video or page URL)"><input className={inputCls} value={form.podcastUrl || ''} onChange={set('podcastUrl')} placeholder="https://www.youtube.com/watch?v=…" /></Field></div>
           <div className="sm:col-span-2"><Field label="Instagram link"><input className={inputCls} value={form.instagramUrl || ''} onChange={set('instagramUrl')} placeholder="https://www.instagram.com/yourclub" /></Field></div>
+          <div className="sm:col-span-2">
+            <Field label="Instagram feed — paste post links (one per line)">
+              <textarea className={inputCls + ' min-h-[96px] resize-y font-mono text-sm'}
+                value={(form.instagramPosts || []).join('\n')}
+                onChange={(e) => setForm((f) => ({ ...f, instagramPosts: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean) }))}
+                placeholder={'https://www.instagram.com/p/XXXXXXXX/\nhttps://www.instagram.com/reel/YYYYYYYY/'} />
+            </Field>
+            <p className="text-xs text-cream/40 mt-1">These posts show live in the “From Our Instagram” section. Open a post on Instagram, hit Share → Copy link, and paste it here (up to 12). Reels and tagged posts work too — paste their links.</p>
+          </div>
           <div className="sm:col-span-2"><Field label="About / Mission (shown on the public homepage)"><textarea className={inputCls + ' min-h-[120px] resize-y'} value={form.aboutText || ''} onChange={set('aboutText')} placeholder="Tell visitors who Club America is and what you stand for…" /></Field></div>
           {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
           <div className="sm:col-span-2 flex gap-2">
@@ -2391,6 +2401,268 @@ function CharlieKirkTribute() {
       </div>
     </section>
     </Card3D>
+  );
+}
+
+// Turn an Instagram post/reel/tv URL into its embeddable URL. Returns null for
+// anything that isn't a recognizable post link.
+function igEmbedUrl(url) {
+  const m = String(url || '').match(/instagram\.com\/(p|reel|tv)\/([\w-]+)/i);
+  return m ? `https://www.instagram.com/${m[1]}/${m[2]}/embed` : null;
+}
+
+// ---------------------------------------------------------------------------
+// Event Photos — anyone can share photos from an event; they appear in a
+// public gallery once a board member approves them.
+// ---------------------------------------------------------------------------
+function EventPhotos() {
+  const [photos, setPhotos] = useState(null);
+  const [error, setError] = useState('');
+  const [lightbox, setLightbox] = useState(null); // photo id being viewed full-size
+  const [showForm, setShowForm] = useState(false);
+
+  // Share form state
+  const [name, setName] = useState('');
+  const [caption, setCaption] = useState('');
+  const [imgData, setImgData] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState('');
+  const [done, setDone] = useState(false);
+  const fileRef = useRef(null);
+
+  const load = useCallback(async () => {
+    try { const d = await api('/event-photos'); setPhotos(d.photos || []); }
+    catch (err) { setError(err.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  function pickFile(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setFormError('');
+    if (!/^image\//.test(file.type)) { setFormError('Please choose an image file.'); return; }
+    // Downscale before upload so big phone photos don't blow the size limit.
+    resizeImage(file, 1280, (dataUrl) => {
+      if (!dataUrl) { setFormError("Couldn't read that image — try another."); return; }
+      setImgData(dataUrl);
+    });
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    setFormError('');
+    if (!imgData) { setFormError('Please choose a photo to share.'); return; }
+    setBusy(true);
+    try {
+      await api('/event-photos', { method: 'POST', body: { photo: imgData, caption, submitterName: name } });
+      track('event_photo_submit');
+      setDone(true);
+      setImgData(null); setCaption(''); setName('');
+      if (fileRef.current) fileRef.current.value = '';
+    } catch (err) { setFormError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  if (error) return null; // never block the rest of the page on a gallery error
+
+  const list = photos || [];
+  return (
+    <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6">
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-1">
+        <h2 className="font-display text-3xl text-gold">Event Photos</h2>
+        <button
+          onClick={() => { setShowForm((v) => !v); setDone(false); }}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-red hover:bg-red/85 text-cream text-sm font-semibold transition-colors active:scale-95">
+          📷 Share your photos
+        </button>
+      </div>
+      <p className="text-cream/60 text-sm mb-5">Snap something great at one of our events? Share it — photos go live once a board member approves them.</p>
+
+      {showForm && (
+        <div className="mb-6 bg-navy border border-cream/15 rounded-xl p-5 ca-slide-down">
+          {done ? (
+            <div className="text-center py-4 ca-slide-up">
+              <div className="text-4xl mb-2">🎉</div>
+              <div className="font-display text-2xl text-gold">Thanks for sharing!</div>
+              <p className="text-cream/70 mt-1 text-sm">Your photo was submitted — it'll appear in the gallery once a board member approves it.</p>
+              <button className="mt-4 text-gold/80 hover:text-gold text-sm" onClick={() => setDone(false)}>Share another</button>
+            </div>
+          ) : (
+            <form onSubmit={submit} className="space-y-4">
+              <Field label="Photo">
+                <input ref={fileRef} type="file" accept="image/*" onChange={pickFile}
+                  className="block w-full text-sm text-cream/70 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-gold file:text-navy file:font-semibold file:cursor-pointer hover:file:bg-gold/85" />
+              </Field>
+              {imgData && (
+                <img src={imgData} alt="Preview" className="max-h-48 rounded-lg border border-cream/15 object-contain" />
+              )}
+              <div className="grid sm:grid-cols-2 gap-4">
+                <Field label="Your name (optional)">
+                  <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="So we can credit you" />
+                </Field>
+                <Field label="Caption (optional)">
+                  <input className={inputCls} value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="What's happening?" maxLength={280} />
+                </Field>
+              </div>
+              {formError && <div className="text-red text-sm">{formError}</div>}
+              <div className="flex gap-2">
+                <Button type="submit" variant="gold" disabled={busy}>
+                  {busy ? <span className="flex items-center gap-2"><Spinner /> Sending…</span> : 'Submit Photo'}
+                </Button>
+                <Button variant="ghost" onClick={() => setShowForm(false)} disabled={busy}>Cancel</Button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
+
+      {photos === null ? (
+        <Loading label="Loading photos…" />
+      ) : list.length === 0 ? (
+        <div className="text-center py-8 text-cream/50">
+          <div className="text-4xl mb-2">🖼️</div>
+          <p className="text-sm">No photos yet — be the first to share one from an event!</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          {list.map((p) => (
+            <button key={p.id} onClick={() => setLightbox(p)}
+              className="group relative aspect-square overflow-hidden rounded-lg border border-cream/10 bg-navy hover:border-gold/60 transition-colors">
+              <img src={`/api/event-photos/${p.id}/image`} alt={p.caption || 'Event photo'} loading="lazy"
+                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200" />
+              {p.caption && (
+                <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent text-cream text-[11px] px-2 py-1.5 text-left line-clamp-2">{p.caption}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {lightbox && (
+        <div onClick={() => setLightbox(null)} className="fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4">
+          <div onClick={(e) => e.stopPropagation()} className="max-w-3xl w-full ca-scale-in">
+            <button onClick={() => setLightbox(null)} aria-label="Close" className="block ml-auto mb-2 text-cream/70 hover:text-cream text-4xl leading-none">×</button>
+            <img src={`/api/event-photos/${lightbox.id}/image`} alt={lightbox.caption || 'Event photo'}
+              className="w-full max-h-[75vh] object-contain rounded-lg" />
+            {(lightbox.caption || lightbox.submitterName) && (
+              <div className="mt-3 text-center">
+                {lightbox.caption && <div className="text-cream">{lightbox.caption}</div>}
+                {lightbox.submitterName && <div className="text-cream/50 text-sm mt-0.5">— {lightbox.submitterName}</div>}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Instagram feed — live embeds of the posts the board curates in Edit Website.
+// (Instagram's API doesn't allow pulling "tagged" posts without a business
+// account + access token, so the board picks which posts appear here.)
+// ---------------------------------------------------------------------------
+function InstagramFeed({ home }) {
+  const posts = (home.instagramPosts || []).map(igEmbedUrl).filter(Boolean);
+  if (posts.length === 0) return null;
+  return (
+    <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6">
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+        <div className="flex items-center gap-2">
+          <InstagramIcon className="w-6 h-6 text-gold" />
+          <h2 className="font-display text-3xl text-gold">From Our Instagram</h2>
+        </div>
+        {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
+      </div>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {posts.map((src, i) => (
+          <div key={i} className="rounded-xl overflow-hidden bg-white" style={{ minHeight: 480 }}>
+            <iframe src={src} title={`Instagram post ${i + 1}`} loading="lazy"
+              className="w-full" style={{ height: 540, border: 0 }} scrolling="no" allowTransparency="true" />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Photo moderation — board members approve/remove submitted event photos.
+// ---------------------------------------------------------------------------
+function PhotoModerationPage({ me }) {
+  const [pending, setPending] = useState(null);
+  const [approved, setApproved] = useState([]);
+  const [error, setError] = useState('');
+  const [busyId, setBusyId] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const [p, a] = await Promise.all([api('/event-photos/pending'), api('/event-photos/approved')]);
+      setPending(p.photos || []);
+      setApproved(a.photos || []);
+    } catch (err) { setError(err.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function act(id, action) {
+    setBusyId(id);
+    try {
+      if (action === 'approve') await api(`/event-photos/${id}/approve`, { method: 'POST' });
+      else await api(`/event-photos/${id}`, { method: 'DELETE' });
+      await load();
+    } catch (err) { setError(err.message); }
+    finally { setBusyId(null); }
+  }
+
+  if (error) return <ErrorState message={error} onRetry={() => { setError(''); load(); }} />;
+  if (pending === null) return <Loading label="Loading photos…" />;
+
+  return (
+    <div className="max-w-5xl space-y-8">
+      <div>
+        <h2 className="font-display text-2xl text-gold">Awaiting Approval ({pending.length})</h2>
+        <p className="text-cream/50 text-sm">Photos visitors shared from the homepage. Approve to publish them to the public gallery.</p>
+      </div>
+      {pending.length === 0 ? (
+        <EmptyState icon="✅" title="Nothing to review" hint="New photo submissions will show up here." />
+      ) : (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {pending.map((p) => (
+            <div key={p.id} className="bg-navy2 border border-cream/15 rounded-xl overflow-hidden">
+              <img src={p.photo} alt={p.caption || 'Pending photo'} className="w-full aspect-square object-cover" />
+              <div className="p-3 space-y-2">
+                {p.caption && <div className="text-cream text-sm">{p.caption}</div>}
+                <div className="text-cream/50 text-xs">{p.submitterName ? `From ${p.submitterName}` : 'Anonymous'}</div>
+                <div className="flex gap-2 pt-1">
+                  <Button variant="gold" onClick={() => act(p.id, 'approve')} disabled={busyId === p.id}>Approve</Button>
+                  <Button variant="ghost" onClick={() => act(p.id, 'delete')} disabled={busyId === p.id}>Reject</Button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div>
+        <h2 className="font-display text-2xl text-gold">Published ({approved.length})</h2>
+        <p className="text-cream/50 text-sm">Currently live in the public gallery.</p>
+      </div>
+      {approved.length === 0 ? (
+        <p className="text-cream/40 text-sm">No published photos yet.</p>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          {approved.map((p) => (
+            <div key={p.id} className="relative group aspect-square rounded-lg overflow-hidden border border-cream/10">
+              <img src={`/api/event-photos/${p.id}/image`} alt={p.caption || 'Photo'} loading="lazy" className="w-full h-full object-cover" />
+              <button onClick={() => act(p.id, 'delete')} disabled={busyId === p.id}
+                className="absolute top-1 right-1 bg-black/70 hover:bg-red text-cream text-xs rounded px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -2786,6 +3058,8 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
           <AboutSection home={home} />
           <ValuesSection />
           <CharlieKirkTribute />
+          <div id="photos"><EventPhotos /></div>
+          <InstagramFeed home={home} />
           <div id="meet-the-board"><MeetTheBoard /></div>
           <div id="get-involved"><GetInvolved /></div>
         </main>
@@ -2904,6 +3178,8 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         {home.aboutText && <Reveal><AboutSection home={home} /></Reveal>}
         <ValuesSection />
         <Reveal><CharlieKirkTribute /></Reveal>
+        <Reveal><div id="photos"><EventPhotos /></div></Reveal>
+        <Reveal><InstagramFeed home={home} /></Reveal>
         <Reveal><div id="meet-the-board"><MeetTheBoard /></div></Reveal>
         <Reveal><div id="get-involved"><GetInvolved /></div></Reveal>
       </main>
@@ -6278,6 +6554,7 @@ function App() {
     ...(isMgrOrAdmin || !!me.canManageSocial  ? [{ type: 'social',      label: 'Social Media' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'budget',      label: 'Budget Overview' }] : []),
     ...(isMgrOrAdmin || !!me.managedGrade     ? [{ type: 'grades',      label: 'Grade Pipeline' }] : []),
+    ...(canEditSite || !!me.canManageSocial   ? [{ type: 'photos',      label: 'Photo Approvals' }] : []),
     ...(canEditSite                           ? [{ type: 'website',     label: 'Edit Website' }] : []),
     ...(me.role === 'admin'                   ? [{ type: 'admin',       label: 'Admin Panel' }] : []),
     ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity' }] : []),
@@ -6308,6 +6585,7 @@ function App() {
     meetings: 'Meetings', speaker: 'Speaker Events', grants: 'Grant Tracker', social: 'Social Media',
     grades: 'Grade Pipeline', reimbursements: 'Reimbursements', directory: 'Board Directory',
     resources: 'Resource Hub', volunteers: 'Volunteer Manager',
+    photos: 'Photo Approvals',
     org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity',
     ai: 'AI Assistant', password: 'Change Password', profile: 'Edit Profile',
   };
@@ -6315,6 +6593,7 @@ function App() {
   let content;
   if (view.type === 'home') content = <Home mode="portal" me={me} />;
   else if (view.type === 'website') content = canEditSite ? <Home mode="editor" me={me} editable={true} /> : <Home mode="portal" me={me} />;
+  else if (view.type === 'photos') content = (me.role === 'admin' || me.canEditHome || me.canManageSocial) ? <PhotoModerationPage me={me} /> : null;
   else if (view.type === 'mytasks') content = <TaskPage me={me} userId={me.id} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'person') content = <TaskPage me={me} userId={view.userId} users={users} refreshSignal={refreshSignal} />;
   else if (view.type === 'myteam') content = <MyTeamView reports={reports} onNavigate={navigate} />;
