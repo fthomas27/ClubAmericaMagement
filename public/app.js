@@ -3173,7 +3173,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         </section>
         <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 space-y-8">
           <HomeAnnouncementBanner home={home} />
-          {home.memberCount > 0 && <MemberStatsBar memberCount={home.memberCount} testimonialCount={home.testimonialCount || 0} />}
+          {home.memberCount > 0 && <MemberStatsBar memberCount={home.memberCount} />}
           {cards}
           <AboutSection home={home} />
           <ValuesSection />
@@ -3296,7 +3296,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         </div>
       <main id="club-content" className="relative max-w-5xl mx-auto px-4 sm:px-6 pb-20 pt-10 space-y-8">
         {home.homeAnnouncementEnabled && home.homeAnnouncement && <Reveal><HomeAnnouncementBanner home={home} /></Reveal>}
-        {home.memberCount > 0 && <Reveal><MemberStatsBar memberCount={home.memberCount} testimonialCount={home.testimonialCount || 0} /></Reveal>}
+        {home.memberCount > 0 && <Reveal><MemberStatsBar memberCount={home.memberCount} /></Reveal>}
         <Reveal>{cards}</Reveal>
         {home.aboutText && <Reveal><AboutSection home={home} /></Reveal>}
         <ValuesSection />
@@ -8794,11 +8794,10 @@ function AnimatedCount({ to }) {
   return <span>{val}</span>;
 }
 
-function MemberStatsBar({ memberCount, testimonialCount }) {
+function MemberStatsBar({ memberCount }) {
   if (!memberCount) return null;
   const stats = [
-    { value: memberCount, label: 'Board Members' },
-    ...(testimonialCount > 0 ? [{ value: testimonialCount, label: 'Member Stories' }] : []),
+    { value: memberCount, label: 'Members' },
     { value: null, label: 'Park City, UT' },
   ];
   return (
