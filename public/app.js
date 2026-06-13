@@ -8486,7 +8486,8 @@ function AttendancePage({ me }) {
   }, []);
 
   useEffect(() => { loadEvents(); }, [loadEvents]);
-  useEffect(() => { if (activeEvent) loadEvent(activeEvent); }, [activeEvent, loadEvent]);
+  // Clear the previous event's data first so switching events doesn't flash stale rows.
+  useEffect(() => { if (activeEvent) { setEventData(null); loadEvent(activeEvent); } }, [activeEvent, loadEvent]);
 
   async function createEvent(e) {
     e.preventDefault();
@@ -8667,9 +8668,9 @@ function BudgetDashboardPage({ me }) {
   if (error) return <ErrorState message={error} />;
   if (!data) return <Loading label="Loading budget overview…" />;
 
-  const { totals, bySubmitter, recent, reimbursedTotal = 0 } = data;
+  const { totals = {}, bySubmitter = [], recent = [], reimbursedTotal = 0 } = data;
   const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
-  const spent = Number(totals.approvedAmount) + Number(totals.purchasedAmount);
+  const spent = Number(totals.approvedAmount || 0) + Number(totals.purchasedAmount || 0);
 
   const StatCard = ({ label, value, tone = 'slate' }) => {
     const tones = { gold: 'border-gold/40 text-gold', green: 'border-emerald-500/40 text-emerald-300', blue: 'border-sky-500/40 text-sky-300', red: 'border-red/40 text-red', slate: 'border-cream/15 text-cream' };
