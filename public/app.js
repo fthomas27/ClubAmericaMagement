@@ -5429,6 +5429,12 @@ function AINotesPanel({ onClose, onRead }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const fn = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', fn);
+    return () => document.removeEventListener('keydown', fn);
+  }, [onClose]);
+
+  useEffect(() => {
     api('/ai/notes')
       .then((d) => setNotes(d.notes || []))
       .catch(() => {})
@@ -6520,7 +6526,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
       <header className="px-6 py-5 flex items-center justify-between border-b border-cream/10">
         <Logo size="sidebar" />
         <div className="flex items-center gap-4">
-          <button onClick={onSearch} aria-label="Search"
+          <button onClick={onSearch} aria-label="Search" title="Search (⌘K or /)"
             className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-gold hover:bg-navy3 transition-colors">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>
           </button>
@@ -6839,6 +6845,9 @@ function App() {
   const [aiNotesOpen, setAiNotesOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [showWelcomeIntro, setShowWelcomeIntro] = useState(false);
+  // Tracks whether we've pushed a "back-trap" history entry so the device/browser
+  // Back button returns to the home grid instead of leaving the app entirely.
+  const portalHistRef = useRef(false);
 
   const isSurveyPath = window.location.pathname === '/survey';
   const volunteerMatch = window.location.pathname.match(/^\/volunteer\/(\d+)$/);
@@ -6900,9 +6909,41 @@ function App() {
       setMe(null);
       setView({ type: 'apphome' });
       setEnterPortal(false);
+      portalHistRef.current = false;
     };
     window.addEventListener('ca:session-expired', handler);
     return () => window.removeEventListener('ca:session-expired', handler);
+  }, []);
+
+  // Device/browser Back button: when on a sub-page, return to the home grid
+  // (and close any open overlay) rather than dropping the user out of the app.
+  useEffect(() => {
+    const onPop = () => {
+      portalHistRef.current = false;
+      setSearchOpen(false);
+      setAiNotesOpen(false);
+      setView({ type: 'apphome' });
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  // Global search shortcut: ⌘K / Ctrl+K from anywhere, or "/" when not typing.
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setSearchOpen((o) => !o);
+        return;
+      }
+      if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const el = document.activeElement;
+        const typing = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+        if (!typing) { e.preventDefault(); setSearchOpen(true); }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, []);
 
   function logout() {
@@ -6910,6 +6951,7 @@ function App() {
     setMe(null);
     setView({ type: 'apphome' });
     setEnterPortal(false);
+    portalHistRef.current = false;
   }
 
   if (!booted) return <div className="min-h-screen flex items-center justify-center gap-2 text-cream/40"><Spinner className="w-5 h-5" /> Loading…</div>;
@@ -6960,7 +7002,18 @@ function App() {
   ].filter(t => !meHiddenTabs.has(t.type));
   // "Agent Notes" is a modal, not a routed view — open it instead of navigating
   // to a blank page (it's reachable from search and the welcome intro).
-  const navigate = (v) => { if (v && v.type === 'ainotes') { setAiNotesOpen(true); return; } setView(v); };
+  const navigate = (v) => {
+    if (v && v.type === 'ainotes') { setAiNotesOpen(true); return; }
+    if (v.type === 'apphome') {
+      // Returning home consumes the back-trap entry so the history stack stays
+      // clean (one device-Back press from a sub-page lands here, not earlier).
+      if (portalHistRef.current) { portalHistRef.current = false; window.history.back(); return; }
+    } else if (!portalHistRef.current) {
+      portalHistRef.current = true;
+      try { window.history.pushState({ caPortal: true }, ''); } catch (_) {}
+    }
+    setView(v);
+  };
 
   const introDismiss = () => { markWelcomeSeen(me.id); setShowWelcomeIntro(false); };
 
@@ -7041,7 +7094,7 @@ function App() {
             </svg>
           </button>
           <span className="text-cream font-semibold text-base flex-1">{PAGE_TITLES[view.type] || ''}</span>
-          <button onClick={() => setSearchOpen(true)} aria-label="Search"
+          <button onClick={() => setSearchOpen(true)} aria-label="Search" title="Search (⌘K or /)"
             className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-gold hover:bg-navy3 transition-colors">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>
           </button>
@@ -7935,6 +7988,7 @@ function SearchModal({ me, reports = [], tiles = [], onNavigate, onClose }) {
   const [q, setQ] = useState('');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [active, setActive] = useState(0);
   const inputRef = useRef(null);
 
   useEffect(() => { if (inputRef.current) inputRef.current.focus(); }, []);
@@ -7955,17 +8009,50 @@ function SearchModal({ me, reports = [], tiles = [], onNavigate, onClose }) {
   const matchingTiles = q.length >= 2
     ? tiles.filter((t) => t.label.toLowerCase().includes(q.toLowerCase()))
     : [];
-  const apiTotal = results ? (results.tasks.length + results.members.length + results.funding.length + results.announcements.length) : 0;
-  const hasAnyResults = matchingTiles.length > 0 || apiTotal > 0;
+
+  // A member's task page is only reachable by admins / their direct manager;
+  // everyone else lands on the directory instead of a "Not allowed" error.
+  const memberView = (u) => {
+    if (u.id === me.id) return { type: 'mytasks' };
+    const canOpen = me.role === 'admin' || reports.some((r) => r.id === u.id);
+    return canOpen ? { type: 'person', userId: u.id } : { type: 'directory' };
+  };
 
   function go(view) { onClose(); onNavigate(view); }
+
+  // Flat, ordered list of selectable rows so the results are fully
+  // keyboard-drivable (↑/↓ to move, Enter to open). Announcements are
+  // read-only, so they're shown but excluded from selection.
+  const flat = [];
+  matchingTiles.forEach((t) => flat.push({ key: 'tile-' + t.type, view: { type: t.type } }));
+  if (results) {
+    results.tasks.forEach((t) => flat.push({ key: 'task-' + t.id, view: { type: t.userId === me.id ? 'mytasks' : 'person', userId: t.userId } }));
+    results.members.forEach((u) => flat.push({ key: 'mem-' + u.id, view: memberView(u) }));
+    results.funding.forEach((f) => flat.push({ key: 'fund-' + f.id, view: { type: 'funding' } }));
+  }
+
+  // Keep the highlight in range whenever the result set changes.
+  useEffect(() => { setActive(0); }, [q, results]);
+
+  const apiTotal = results ? (results.tasks.length + results.members.length + results.funding.length + results.announcements.length) : 0;
+  const hasAnyResults = matchingTiles.length > 0 || apiTotal > 0;
+  const activeKey = flat.length ? flat[Math.min(active, flat.length - 1)].key : null;
+  const rowCls = (key) => `w-full text-left px-4 py-2.5 transition-colors flex items-start gap-3 ${key === activeKey ? 'bg-navy3' : 'hover:bg-navy3'}`;
+
+  function onKeyDown(e) {
+    if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
+    if (!flat.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => Math.min(i + 1, flat.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => Math.max(i - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); go(flat[Math.min(active, flat.length - 1)].view); }
+  }
 
   return (
     <div className="fixed inset-0 bg-black/75 z-50 flex items-start justify-center pt-16 px-4" onClick={onClose}>
       <div className="bg-navy2 border border-cream/15 rounded-2xl w-full max-w-2xl shadow-2xl ca-scale-in" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-4 py-3 border-b border-cream/10">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-cream/40 shrink-0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)}
+          <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onKeyDown}
             className="flex-1 bg-transparent text-cream placeholder-cream/30 focus:outline-none text-base"
             placeholder="Search pages, tasks, members, funding…" />
           {loading && <Spinner className="w-4 h-4 text-cream/40 shrink-0" />}
@@ -7982,8 +8069,8 @@ function SearchModal({ me, reports = [], tiles = [], onNavigate, onClose }) {
               <div className="py-2">
                 <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-cream/40 font-semibold">Pages</div>
                 {matchingTiles.map((t) => (
-                  <button key={t.type} onClick={() => go({ type: t.type })}
-                    className="w-full text-left px-4 py-2.5 hover:bg-navy3 transition-colors flex items-center gap-3">
+                  <button key={t.type} onClick={() => go({ type: t.type })} onMouseEnter={() => setActive(flat.findIndex((r) => r.key === 'tile-' + t.type))}
+                    className={rowCls('tile-' + t.type)}>
                     <span className="mt-0.5 text-gold/50 text-xs shrink-0">▦</span>
                     <div className="text-cream text-sm font-medium">{t.label}</div>
                   </button>
@@ -7995,8 +8082,8 @@ function SearchModal({ me, reports = [], tiles = [], onNavigate, onClose }) {
               <div className="py-2">
                 <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-cream/40 font-semibold">Tasks</div>
                 {results.tasks.map((t) => (
-                  <button key={t.id} onClick={() => go({ type: t.userId === me.id ? 'mytasks' : 'person', userId: t.userId })}
-                    className="w-full text-left px-4 py-2.5 hover:bg-navy3 transition-colors flex items-start gap-3">
+                  <button key={t.id} onClick={() => go({ type: t.userId === me.id ? 'mytasks' : 'person', userId: t.userId })} onMouseEnter={() => setActive(flat.findIndex((r) => r.key === 'task-' + t.id))}
+                    className={rowCls('task-' + t.id)}>
                     <span className="mt-0.5 text-cream/40 text-xs shrink-0">✓</span>
                     <div className="min-w-0">
                       <div className="text-cream text-sm font-medium truncate">{t.name}</div>
@@ -8011,15 +8098,8 @@ function SearchModal({ me, reports = [], tiles = [], onNavigate, onClose }) {
               <div className="py-2">
                 <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-cream/40 font-semibold">Members</div>
                 {results.members.map((u) => (
-                  <button key={u.id} onClick={() => {
-                      // Only admins and direct managers can open someone's task
-                      // page — everyone else lands on the directory instead of a
-                      // "Not allowed" error.
-                      if (u.id === me.id) return go({ type: 'mytasks' });
-                      const canOpen = me.role === 'admin' || reports.some((r) => r.id === u.id);
-                      go(canOpen ? { type: 'person', userId: u.id } : { type: 'directory' });
-                    }}
-                    className="w-full text-left px-4 py-2.5 hover:bg-navy3 transition-colors flex items-center gap-3">
+                  <button key={u.id} onClick={() => go(memberView(u))} onMouseEnter={() => setActive(flat.findIndex((r) => r.key === 'mem-' + u.id))}
+                    className={rowCls('mem-' + u.id).replace('items-start', 'items-center')}>
                     <div className="w-7 h-7 rounded-full bg-navy border border-gold/30 flex items-center justify-center text-gold text-xs font-display shrink-0">
                       {(u.displayName || '?').charAt(0).toUpperCase()}
                     </div>
@@ -8036,8 +8116,8 @@ function SearchModal({ me, reports = [], tiles = [], onNavigate, onClose }) {
               <div className="py-2">
                 <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-cream/40 font-semibold">Funding Requests</div>
                 {results.funding.map((f) => (
-                  <button key={f.id} onClick={() => go({ type: 'funding' })}
-                    className="w-full text-left px-4 py-2.5 hover:bg-navy3 transition-colors flex items-start gap-3">
+                  <button key={f.id} onClick={() => go({ type: 'funding' })} onMouseEnter={() => setActive(flat.findIndex((r) => r.key === 'fund-' + f.id))}
+                    className={rowCls('fund-' + f.id)}>
                     <span className="mt-0.5 text-cream/40 text-xs shrink-0">$</span>
                     <div className="min-w-0">
                       <div className="text-cream text-sm font-medium truncate">{f.title}</div>
@@ -8066,7 +8146,10 @@ function SearchModal({ me, reports = [], tiles = [], onNavigate, onClose }) {
         )}
 
         {q.length < 2 && (
-          <div className="px-5 py-6 text-center text-cream/30 text-sm">Type at least 2 characters to search…</div>
+          <div className="px-5 py-4 text-center text-cream/30 text-sm">
+            Type at least 2 characters to search.
+            <span className="hidden sm:inline"> Use <kbd className="px-1 py-0.5 rounded bg-navy3 border border-cream/15 text-cream/50 text-[10px]">↑</kbd> <kbd className="px-1 py-0.5 rounded bg-navy3 border border-cream/15 text-cream/50 text-[10px]">↓</kbd> to move, <kbd className="px-1 py-0.5 rounded bg-navy3 border border-cream/15 text-cream/50 text-[10px]">↵</kbd> to open, <kbd className="px-1 py-0.5 rounded bg-navy3 border border-cream/15 text-cream/50 text-[10px]">esc</kbd> to close.</span>
+          </div>
         )}
       </div>
     </div>
