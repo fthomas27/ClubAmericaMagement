@@ -548,6 +548,8 @@ function init() {
   if (!taskCols.includes('docUrl'))        db.exec("ALTER TABLE tasks ADD COLUMN docUrl TEXT NOT NULL DEFAULT ''");
   if (!taskCols.includes('isRecurring'))   db.exec("ALTER TABLE tasks ADD COLUMN isRecurring INTEGER NOT NULL DEFAULT 0");
   if (!taskCols.includes('recurringDays')) db.exec("ALTER TABLE tasks ADD COLUMN recurringDays TEXT NOT NULL DEFAULT ''");
+  // Links a delegated sub-task back to the parent task it was spun off from.
+  if (!taskCols.includes('parentTaskId'))  db.exec("ALTER TABLE tasks ADD COLUMN parentTaskId INTEGER REFERENCES tasks(id) ON DELETE CASCADE");
 
   // roster_members column migrations.
   const rosterCols = db.prepare("PRAGMA table_info(roster_members)").all().map((c) => c.name);

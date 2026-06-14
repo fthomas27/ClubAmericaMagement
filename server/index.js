@@ -1391,7 +1391,7 @@ function nextOccurrenceDate(recurringDays) {
 }
 
 app.post('/api/tasks', rateLimit({ windowMs: 60 * 60 * 1000, max: 60, name: 'tasks' }), (req, res) => {
-  const { name, description, dueDate, targetUserId, docUrl, isRecurring, recurringDays } = req.body || {};
+  const { name, description, dueDate, targetUserId, docUrl, isRecurring, recurringDays, parentTaskId } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'Task name required' });
 
   const ownerId = targetUserId ? Number(targetUserId) : req.user.id;
@@ -1400,11 +1400,24 @@ app.post('/api/tasks', rateLimit({ windowMs: 60 * 60 * 1000, max: 60, name: 'tas
 
   const isSelf = ownerId === req.user.id;
   const senderIsAdmin = req.user.role === 'admin';
+  // A manager delegating to one of their own direct reports is the approval
+  // authority for that report, so their tasks land directly — no self-approval.
+  const senderIsOwnersManager = owner.managerId === req.user.id;
+
+  // Optional parent task: validate it exists and that the sender may delegate
+  // from it (they must own the parent, or be an admin / the owner's manager).
+  let safeParentTaskId = null;
+  if (parentTaskId !== undefined && parentTaskId !== null && parentTaskId !== '') {
+    const parent = getTask(Number(parentTaskId));
+    if (parent && (parent.userId === req.user.id || senderIsAdmin || isManagerOf(req.user, parent.userId))) {
+      safeParentTaskId = parent.id;
+    }
+  }
 
   let approvalStatus = 'approved';
   let approverId = null;
 
-  if (!isSelf && !senderIsAdmin) {
+  if (!isSelf && !senderIsAdmin && !senderIsOwnersManager) {
     // Needs the recipient's manager to approve.
     approvalStatus = 'pending';
     approverId = owner.managerId || null;
@@ -1428,9 +1441,9 @@ app.post('/api/tasks', rateLimit({ windowMs: 60 * 60 * 1000, max: 60, name: 'tas
   const recurringFlag = isRecurring ? 1 : 0;
   const safeRecurDays = String(recurringDays || '').replace(/[^0-6,]/g, '').slice(0, 20);
   const info = db
-    .prepare(`INSERT INTO tasks (userId, name, description, dueDate, status, assignedById, approvalStatus, approverId, docUrl, isRecurring, recurringDays)
-              VALUES (?, ?, ?, ?, 'Not Started', ?, ?, ?, ?, ?, ?)`)
-    .run(ownerId, safeName, safeDesc, dueDate || null, req.user.id, approvalStatus, approverId, safeDocUrl, recurringFlag, safeRecurDays);
+    .prepare(`INSERT INTO tasks (userId, name, description, dueDate, status, assignedById, approvalStatus, approverId, docUrl, isRecurring, recurringDays, parentTaskId)
+              VALUES (?, ?, ?, ?, 'Not Started', ?, ?, ?, ?, ?, ?, ?)`)
+    .run(ownerId, safeName, safeDesc, dueDate || null, req.user.id, approvalStatus, approverId, safeDocUrl, recurringFlag, safeRecurDays, safeParentTaskId);
 
   // Notifications
   if (!isSelf) {
@@ -1457,6 +1470,20 @@ app.post('/api/tasks', rateLimit({ windowMs: 60 * 60 * 1000, max: 60, name: 'tas
 function getTask(id) {
   return db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
 }
+
+// List the delegated sub-tasks spun off from a given task, so the manager who
+// owns the parent can track who they handed work to and how it's progressing.
+app.get('/api/tasks/:id/subtasks', (req, res) => {
+  const task = getTask(Number(req.params.id));
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (!canViewTasksOf(req.user, task.userId)) return res.status(403).json({ error: 'Not allowed' });
+  const subtasks = db
+    .prepare(`SELECT * FROM tasks WHERE parentTaskId = ? AND approvalStatus != 'rejected'
+              ORDER BY createdAt DESC`)
+    .all(task.id)
+    .map(taskWithNames);
+  res.json({ subtasks });
+});
 
 // Update status (owner, that user's manager, or admin).
 app.patch('/api/tasks/:id', (req, res) => {
