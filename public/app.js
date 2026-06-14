@@ -665,7 +665,98 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
 // ---------------------------------------------------------------------------
 const DAY_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-function TaskCard({ task, canEdit, onChange, onDelete, me }) {
+// Lets a manager break a task assigned to them into sub-tasks and hand each one
+// to a direct report. The sub-task lands directly on that report's task list
+// (no approval needed — the manager is their approver), and any sub-tasks
+// already delegated are listed here so the manager can track progress.
+function DelegateSubtask({ parentTask, reports }) {
+  const [open, setOpen] = useState(false);
+  const [targetUserId, setTargetUserId] = useState('');
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [subtasks, setSubtasks] = useState([]);
+  const [showList, setShowList] = useState(false);
+  const { loading, error, setError, run } = useAction();
+
+  const loadSubtasks = useCallback(async () => {
+    try {
+      const d = await api(`/tasks/${parentTask.id}/subtasks`);
+      setSubtasks(d.subtasks || []);
+    } catch (_) {}
+  }, [parentTask.id]);
+
+  useEffect(() => { loadSubtasks(); }, [loadSubtasks]);
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!targetUserId) { setError('Choose who to delegate this to.'); return; }
+    if (!name.trim()) { setError('Enter a sub-task name.'); return; }
+    if (dueDate && dueDate < new Date().toISOString().slice(0, 10)) { setError("Due date can't be in the past."); return; }
+    try {
+      await run(() => api('/tasks', { method: 'POST', body: {
+        name: name.trim(), description: description.trim(), dueDate: dueDate || null,
+        targetUserId: Number(targetUserId), parentTaskId: parentTask.id,
+      }}));
+      setName(''); setDescription(''); setDueDate(''); setTargetUserId(''); setOpen(false);
+      await loadSubtasks();
+    } catch (_) {}
+  }
+
+  return (
+    <div className="mt-3 pt-3 border-t border-cream/10">
+      <div className="flex items-center gap-3 flex-wrap">
+        {!open && (
+          <button
+            onClick={() => { setOpen(true); setError(''); }}
+            className="inline-flex items-center gap-1 text-xs font-medium text-gold/90 hover:text-gold bg-gold/10 hover:bg-gold/20 border border-gold/30 rounded px-2.5 py-1 transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+            Delegate
+          </button>
+        )}
+        {subtasks.length > 0 && (
+          <button onClick={() => setShowList((v) => !v)} className="text-xs text-cream/50 hover:text-cream/80">
+            {showList ? 'Hide' : 'Show'} {subtasks.length} delegated sub-task{subtasks.length === 1 ? '' : 's'}
+          </button>
+        )}
+      </div>
+
+      {showList && subtasks.length > 0 && (
+        <div className="mt-2 space-y-1.5">
+          {subtasks.map((s) => (
+            <div key={s.id} className="flex items-center justify-between gap-2 text-xs bg-navy rounded px-2.5 py-1.5">
+              <span className="text-cream/80 truncate">↳ {s.name} <span className="text-cream/40">· {s.ownerName}</span></span>
+              <Badge tone={statusTone(s.status)}>{s.status}</Badge>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {open && (
+        <form onSubmit={submit} className="mt-2 bg-navy border border-gold/30 rounded-lg p-3 space-y-2.5 ca-slide-up">
+          <div className="text-sm font-medium text-gold">Delegate a sub-task</div>
+          <Field label="To">
+            <select className={inputCls} value={targetUserId} onChange={(e) => setTargetUserId(e.target.value)}>
+              <option value="">Select a team member…</option>
+              {reports.map((u) => <option key={u.id} value={u.id}>{u.displayName} — {u.title || roleLabel(u.role)}</option>)}
+            </select>
+          </Field>
+          <Field label="Sub-task Name"><input className={inputCls} value={name} autoFocus placeholder={parentTask.name} onChange={(e) => setName(e.target.value)} /></Field>
+          <Field label="Description"><textarea className={inputCls} rows="2" value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
+          <Field label="Due Date"><input type="date" className={inputCls} value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></Field>
+          {error && <div className="text-red text-sm">{error}</div>}
+          <div className="flex gap-2">
+            <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner /> Delegating…</span> : 'Delegate'}</Button>
+            <Button variant="ghost" onClick={() => { setOpen(false); setError(''); }} disabled={loading}>Cancel</Button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function TaskCard({ task, canEdit, onChange, onDelete, me, users }) {
   const [saving, setSaving] = useState(false);
   const recurringDays = task.isRecurring && task.recurringDays
     ? String(task.recurringDays).split(',').map(Number).filter((d) => d >= 0 && d <= 6).map((d) => DAY_LABELS[d]).join(', ')
@@ -721,6 +812,14 @@ function TaskCard({ task, canEdit, onChange, onDelete, me }) {
           )}
         </div>
       )}
+      {(() => {
+        // Show the Delegate control when the signed-in user owns this approved
+        // task and has direct reports they can hand sub-tasks to.
+        if (!me || task.userId !== me.id || task.approvalStatus !== 'approved') return null;
+        const reports = (users || []).filter((u) => u.managerId === me.id);
+        if (reports.length === 0) return null;
+        return <DelegateSubtask parentTask={task} reports={reports} />;
+      })()}
       {me && <TaskComments taskId={task.id} me={me} />}
     </div>
   );
@@ -1304,7 +1403,7 @@ function TaskPage({ me, userId, users, refreshSignal }) {
             <div className="font-display text-xl text-gold mb-2">{col} <span className="text-cream/30 text-base">({grouped[col].length})</span></div>
             <div className="space-y-3">
               {grouped[col].map((t) => (
-                <TaskCard key={t.id} task={t} canEdit={true} onChange={changeTask} onDelete={deleteTask} me={me} />
+                <TaskCard key={t.id} task={t} canEdit={true} onChange={changeTask} onDelete={deleteTask} me={me} users={users} />
               ))}
             </div>
           </div>
