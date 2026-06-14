@@ -6848,6 +6848,9 @@ function App() {
   // Tracks whether we've pushed a "back-trap" history entry so the device/browser
   // Back button returns to the home grid instead of leaving the app entirely.
   const portalHistRef = useRef(false);
+  // True only when the in-app portal (with search) is actually on screen, so the
+  // global keyboard shortcut never hijacks browser shortcuts on public/login pages.
+  const portalActiveRef = useRef(false);
 
   const isSurveyPath = window.location.pathname === '/survey';
   const volunteerMatch = window.location.pathname.match(/^\/volunteer\/(\d+)$/);
@@ -6929,8 +6932,11 @@ function App() {
   }, []);
 
   // Global search shortcut: ⌘K / Ctrl+K from anywhere, or "/" when not typing.
+  // Only active inside the logged-in portal so it never overrides browser
+  // shortcuts for visitors on the public homepage or login screen.
   useEffect(() => {
     const onKey = (e) => {
+      if (!portalActiveRef.current) return;
       if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
         e.preventDefault();
         setSearchOpen((o) => !o);
@@ -6945,6 +6951,12 @@ function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // Mirror "is the portal on screen?" into a ref the (deps-less) shortcut
+  // listener can read without going stale.
+  useEffect(() => {
+    portalActiveRef.current = !!(enterPortal && me && !me.firstLogin && me.profileComplete);
+  });
 
   function logout() {
     localStorage.removeItem(TOKEN_KEY);
@@ -7003,7 +7015,8 @@ function App() {
   // "Agent Notes" is a modal, not a routed view — open it instead of navigating
   // to a blank page (it's reachable from search and the welcome intro).
   const navigate = (v) => {
-    if (v && v.type === 'ainotes') { setAiNotesOpen(true); return; }
+    if (!v) return;
+    if (v.type === 'ainotes') { setAiNotesOpen(true); return; }
     if (v.type === 'apphome') {
       // Returning home consumes the back-trap entry so the history stack stays
       // clean (one device-Back press from a sub-page lands here, not earlier).
