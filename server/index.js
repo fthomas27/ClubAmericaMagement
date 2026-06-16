@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 
 // Keep a single stray error from taking the whole process down (which makes the
 // host restart the app — the "crash then reboot and load" loop). We log it and
@@ -24,6 +25,7 @@ const {
   authenticate,
   requirePasswordChanged,
   requireAdmin,
+  JWT_SECRET,
 } = require('./auth');
 
 init();
@@ -312,10 +314,20 @@ app.get('/api/board', (req, res) => {
   res.json({ members });
 });
 
-// Serves a single user's profile photo. No auth required (same data shown publicly).
+// Serves a single user's profile photo. Public board members' photos are shown
+// on the public "Meet the Board" page with no auth; every other user's photo
+// requires a valid session, so private profile photos can't be enumerated by
+// id by logged-out visitors.
 app.get('/api/users/:id/photo', (req, res) => {
-  const row = db.prepare('SELECT photo FROM users WHERE id = ?').get(Number(req.params.id));
+  const row = db.prepare('SELECT photo, bigBoard FROM users WHERE id = ?').get(Number(req.params.id));
   if (!row || !row.photo) return res.status(404).end();
+  if (!row.bigBoard) {
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    let valid = false;
+    if (token) { try { jwt.verify(token, JWT_SECRET); valid = true; } catch (_) {} }
+    if (!valid) return res.status(401).end();
+  }
   // photo is stored as a data URL: "data:image/jpeg;base64,..."
   const m = String(row.photo).match(/^data:(image\/[a-z+]+);base64,(.+)$/s);
   if (!m) return res.status(404).end();
