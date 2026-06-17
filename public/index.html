@@ -42,11 +42,17 @@
   </script>
 
   <!-- React + Babel (no build step required) -->
+  <!-- Babel is pinned to 7.x on purpose: the app is authored for the *classic*
+       JSX runtime (React.createElement via the global React UMD build). Babel
+       8's preset-react defaults to the *automatic* runtime, which injects an
+       `import { jsx } from "react/jsx-runtime"` that no module loader resolves
+       here — crashing the page with "import call expects one or two arguments".
+       Keep this pinned (or pass runtime: "classic") if you ever bump it. -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"
     onerror="(window.__cdnErrors=window.__cdnErrors||[]).push('React')"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
     onerror="(window.__cdnErrors=window.__cdnErrors||[]).push('ReactDOM')"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"
+  <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"
     onerror="(window.__cdnErrors=window.__cdnErrors||[]).push('Babel')"></script>
 
   <style>
