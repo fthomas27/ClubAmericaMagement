@@ -1370,7 +1370,14 @@ app.get('/api/users/:id/tasks', (req, res) => {
                 createdAt DESC`)
     .all(targetId, 'rejected')
     .map(taskWithNames);
-  res.json({ user: publicUser(target), tasks });
+  // Surface the job description for this member's position (their role's
+  // responsibilities, managed centrally by the President/VP) so it can show at
+  // the top of their page.
+  const roleRow = target.title
+    ? db.prepare('SELECT description FROM role_descriptions WHERE positionTitle = ?').get(target.title)
+    : null;
+  const user = { ...publicUser(target), positionDescription: roleRow ? roleRow.description : '' };
+  res.json({ user, tasks });
 });
 
 // Create a task. If targetUserId is omitted or equals self -> own task.
@@ -1843,10 +1850,59 @@ app.delete('/api/polls/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// ---- Role Descriptions ------------------------------------------------------
+// ---- Positions / Role Descriptions ------------------------------------------
 app.get('/api/role-descriptions', (req, res) => {
   const rows = db.prepare('SELECT * FROM role_descriptions ORDER BY positionTitle').all();
   res.json({ descriptions: rows });
+});
+
+// The full list of board positions for the "pick a position" dropdown — the
+// union of every defined role description and every title already assigned to a
+// member, so even positions without a written description are pickable. Each
+// entry carries its description (blank when none) and a count of members in it.
+app.get('/api/positions', (req, res) => {
+  const descs = db.prepare('SELECT positionTitle, description FROM role_descriptions').all();
+  const descByTitle = new Map(descs.map((d) => [d.positionTitle, d.description]));
+  const titles = new Set(descByTitle.keys());
+  db.prepare("SELECT DISTINCT title FROM users WHERE title != '' AND username != 'logistics'")
+    .all().forEach((r) => titles.add(r.title));
+  const counts = {};
+  db.prepare("SELECT title, COUNT(*) AS n FROM users WHERE title != '' AND username != 'logistics' GROUP BY title")
+    .all().forEach((r) => { counts[r.title] = r.n; });
+  const positions = [...titles].sort((a, b) => a.localeCompare(b)).map((title) => ({
+    title,
+    description: descByTitle.get(title) || '',
+    memberCount: counts[title] || 0,
+  }));
+  res.json({ positions });
+});
+
+// Rename a position everywhere at once: updates every member who holds it and
+// carries the role description over to the new name. Reflects automatically on
+// member pages and the org chart (both read the member's title). Admins only.
+app.put('/api/positions/:title/rename', requireAdmin, (req, res) => {
+  const oldTitle = decodeURIComponent(req.params.title).trim().slice(0, 200);
+  const newTitle = String((req.body || {}).newTitle || '').trim().slice(0, 200);
+  if (!oldTitle || !newTitle) return res.status(400).json({ error: 'Both the current and new position titles are required' });
+  if (oldTitle === newTitle) return res.json({ ok: true });
+
+  const tx = db.transaction(() => {
+    db.prepare('UPDATE users SET title = ? WHERE title = ?').run(newTitle, oldTitle);
+    // Move the role description onto the new title. If a description already
+    // exists under the new title, keep it and just drop the old row.
+    const existingNew = db.prepare('SELECT id FROM role_descriptions WHERE positionTitle = ?').get(newTitle);
+    const oldRow = db.prepare('SELECT * FROM role_descriptions WHERE positionTitle = ?').get(oldTitle);
+    if (oldRow) {
+      if (existingNew) {
+        db.prepare('DELETE FROM role_descriptions WHERE positionTitle = ?').run(oldTitle);
+      } else {
+        db.prepare('UPDATE role_descriptions SET positionTitle = ?, updatedById = ?, updatedAt = datetime(\'now\') WHERE positionTitle = ?')
+          .run(newTitle, req.user.id, oldTitle);
+      }
+    }
+  });
+  tx();
+  res.json({ ok: true });
 });
 
 app.put('/api/role-descriptions/:title', requireAdmin, (req, res) => {

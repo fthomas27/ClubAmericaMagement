@@ -590,6 +590,7 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
     if (forced && !photo) { setError('Please add a professional headshot.'); return; }
     if (forced && bio.trim().length < 40) { setError('Please write a short intro — a sentence or two about yourself.'); return; }
     if (forced && !email.trim()) { setError('Please add an email so you get notified about tasks and approvals.'); return; }
+    if (forced && phone.replace(/\D/g, '').length < 10) { setError('Please add a phone number (at least 10 digits) so the board can reach you.'); return; }
     setLoading(true);
     try {
       const d = await api('/me/profile', { method: 'PUT', body: { photo, bio, email, phone } });
@@ -628,7 +629,7 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
           onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
       </Field>
 
-      <Field label="Phone (optional — shown in Board Directory)">
+      <Field label={forced ? 'Phone (shown in Board Directory)' : 'Phone (optional — shown in Board Directory)'}>
         <input type="tel" className={inputCls} value={phone}
           onChange={(e) => setPhone(e.target.value)} placeholder="(555) 000-0000" />
       </Field>
@@ -1375,6 +1376,15 @@ function TaskPage({ me, userId, users, refreshSignal }) {
         <Badge tone="gold">{tasks.length} task{tasks.length === 1 ? '' : 's'}</Badge>
       </div>
 
+      {user.positionDescription && (
+        <div className="mb-6 bg-navy2 border border-gold/25 rounded-xl p-4">
+          <div className="text-gold/80 text-xs uppercase tracking-wide font-semibold mb-1">
+            {user.title || 'Role'} — Job Description
+          </div>
+          <div className="text-cream/80 text-sm whitespace-pre-wrap leading-relaxed">{user.positionDescription}</div>
+        </div>
+      )}
+
       <TeamAnnouncementsDisplay announcements={teamAnnouncements} />
 
       {canManagePage && <PageAdminControls targetUser={user} onUpdated={reloadSettings} />}
@@ -1693,15 +1703,24 @@ function EditMemberModal({ user, onSaved, onClose }) {
   const [lastName, setLastName] = useState(user.lastName || user.displayName.split(' ').slice(1).join(' ') || '');
   const [username, setUsername] = useState(user.username || '');
   const [title, setTitle] = useState(user.title || '');
+  const [positions, setPositions] = useState([]);
+  const [addingPosition, setAddingPosition] = useState(false);
+  const [newPosition, setNewPosition] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api('/positions').then((d) => setPositions(d.positions || [])).catch(() => {});
+  }, []);
 
   async function save(e) {
     e.preventDefault();
     setError('');
+    // When adding a brand-new position, the typed value wins.
+    const finalTitle = addingPosition ? newPosition.trim() : title;
     setSaving(true);
     try {
-      await api(`/admin/users/${user.id}`, { method: 'PATCH', body: { firstName, lastName, username, title } });
+      await api(`/admin/users/${user.id}`, { method: 'PATCH', body: { firstName, lastName, username, title: finalTitle } });
       onSaved();
       onClose();
     } catch (err) { setError(err.message); } finally { setSaving(false); }
@@ -1724,8 +1743,28 @@ function EditMemberModal({ user, onSaved, onClose }) {
           <input className={inputCls} value={username} onChange={(e) => setUsername(e.target.value.toLowerCase())}
             pattern="[a-z0-9._\-]+" title="Letters, numbers, dots, hyphens, underscores only" required />
         </Field>
-        <Field label="Title / Position">
-          <input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Grade Rep" />
+        <Field label="Position">
+          {addingPosition ? (
+            <div className="space-y-2">
+              <input className={inputCls} value={newPosition} autoFocus
+                onChange={(e) => setNewPosition(e.target.value)} placeholder="e.g. Grade Rep" />
+              <button type="button" onClick={() => { setAddingPosition(false); setNewPosition(''); }}
+                className="text-xs text-cream/50 hover:text-cream/80">← Pick an existing position</button>
+            </div>
+          ) : (
+            <select className={inputCls}
+              value={title}
+              onChange={(e) => {
+                if (e.target.value === '__new__') { setAddingPosition(true); setNewPosition(''); }
+                else setTitle(e.target.value);
+              }}>
+              <option value="">No position</option>
+              {/* Include the member's current title even if it isn't in the list yet. */}
+              {title && !positions.some((p) => p.title === title) && <option value={title}>{title}</option>}
+              {positions.map((p) => <option key={p.title} value={p.title}>{p.title}</option>)}
+              <option value="__new__">➕ Add new position…</option>
+            </select>
+          )}
         </Field>
         {error && <div className="text-red text-sm">{error}</div>}
         <div className="flex gap-2">
@@ -2025,62 +2064,92 @@ function AdminPanel({ users, reload }) {
 
 function RoleDescriptionsAdmin() {
   const [items, setItems] = useState([]);
-  const [editTitle, setEditTitle] = useState('');
+  const [editKey, setEditKey] = useState('');     // which position is being edited
+  const [editName, setEditName] = useState('');   // edited (renamed) title
   const [editDesc, setEditDesc] = useState('');
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
 
-  useEffect(() => {
-    api('/role-descriptions').then((d) => setItems(d.descriptions || [])).catch(() => {});
+  const load = useCallback(() => {
+    api('/positions').then((d) => setItems(d.positions || [])).catch(() => {});
   }, []);
+  useEffect(() => { load(); }, [load]);
 
-  async function save(title, description) {
+  // Save an existing position: rename it everywhere first (if the title
+  // changed), then store its job description under the (possibly new) title.
+  async function saveExisting(oldTitle, newName, description) {
+    const name = newName.trim();
+    if (!name) { setNotice('Position title cannot be empty.'); return; }
     setSaving(true);
     setNotice('');
     try {
-      const d = await api(`/role-descriptions/${encodeURIComponent(title)}`, { method: 'PUT', body: { description } });
-      setItems((prev) => {
-        const exists = prev.find((x) => x.positionTitle === title);
-        if (exists) return prev.map((x) => x.positionTitle === title ? d.description : x);
-        return [...prev, d.description];
-      });
-      setNotice('Saved.');
-      setEditTitle(''); setEditDesc(''); setNewTitle(''); setNewDesc('');
+      if (name !== oldTitle) {
+        await api(`/positions/${encodeURIComponent(oldTitle)}/rename`, { method: 'PUT', body: { newTitle: name } });
+      }
+      await api(`/role-descriptions/${encodeURIComponent(name)}`, { method: 'PUT', body: { description } });
+      setNotice(name !== oldTitle ? 'Position renamed and updated everywhere.' : 'Saved.');
+      setEditKey(''); setEditName(''); setEditDesc('');
+      load();
+    } catch (err) { setNotice(err.message); }
+    finally { setSaving(false); }
+  }
+
+  // Create a brand-new position with a description.
+  async function addNew(title, description) {
+    setSaving(true);
+    setNotice('');
+    try {
+      await api(`/role-descriptions/${encodeURIComponent(title)}`, { method: 'PUT', body: { description } });
+      setNotice('Position added.');
+      setNewTitle(''); setNewDesc('');
+      load();
     } catch (err) { setNotice(err.message); }
     finally { setSaving(false); }
   }
 
   return (
     <div className="mt-10">
-      <div className="font-display text-2xl text-gold mb-4">Role Descriptions</div>
+      <div className="font-display text-2xl text-gold mb-1">Positions &amp; Job Descriptions</div>
+      <p className="text-cream/50 text-sm mb-4">Rename a position to update it for every member who holds it and the org chart. Each job description shows at the top of those members' pages.</p>
       <div className="space-y-3 mb-6">
         {items.map((item) => (
-          <div key={item.positionTitle} className="bg-navy2 border border-cream/10 rounded-xl p-4">
-            {editTitle === item.positionTitle ? (
+          <div key={item.title} className="bg-navy2 border border-cream/10 rounded-xl p-4">
+            {editKey === item.title ? (
               <div className="space-y-2">
-                <div className="text-cream font-medium">{item.positionTitle}</div>
-                <textarea className={inputCls} rows="3" value={editDesc}
-                  onChange={(e) => setEditDesc(e.target.value)} autoFocus />
+                <Field label="Position title">
+                  <input className={inputCls} value={editName} autoFocus
+                    onChange={(e) => setEditName(e.target.value)} />
+                </Field>
+                {item.memberCount > 0 && editName.trim() !== item.title && (
+                  <div className="text-gold/70 text-xs">Renaming will update {item.memberCount} member{item.memberCount === 1 ? '' : 's'} and the org chart.</div>
+                )}
+                <Field label="Job description">
+                  <textarea className={inputCls} rows="3" value={editDesc}
+                    onChange={(e) => setEditDesc(e.target.value)} placeholder="Describe this position's responsibilities…" />
+                </Field>
                 <div className="flex gap-2">
-                  <Button variant="gold" disabled={saving} onClick={() => save(item.positionTitle, editDesc)}>
+                  <Button variant="gold" disabled={saving} onClick={() => saveExisting(item.title, editName, editDesc)}>
                     {saving ? <span className="flex items-center gap-1"><Spinner className="w-3 h-3" /> Saving…</span> : 'Save'}
                   </Button>
-                  <Button variant="ghost" onClick={() => setEditTitle('')}>Cancel</Button>
+                  <Button variant="ghost" onClick={() => setEditKey('')}>Cancel</Button>
                 </div>
               </div>
             ) : (
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-cream font-medium">{item.positionTitle}</div>
+                  <div className="text-cream font-medium">
+                    {item.title}
+                    <span className="text-cream/40 text-xs font-normal ml-2">{item.memberCount} member{item.memberCount === 1 ? '' : 's'}</span>
+                  </div>
                   {item.description ? (
                     <div className="text-cream/60 text-sm mt-1 whitespace-pre-wrap">{item.description}</div>
                   ) : (
-                    <div className="text-cream/30 text-sm mt-1 italic">No description yet.</div>
+                    <div className="text-cream/30 text-sm mt-1 italic">No job description yet.</div>
                   )}
                 </div>
-                <button onClick={() => { setEditTitle(item.positionTitle); setEditDesc(item.description || ''); }}
+                <button onClick={() => { setEditKey(item.title); setEditName(item.title); setEditDesc(item.description || ''); setNotice(''); }}
                   className="text-xs text-gold/70 hover:text-gold shrink-0">Edit</button>
               </div>
             )}
@@ -2088,12 +2157,12 @@ function RoleDescriptionsAdmin() {
         ))}
       </div>
       <div className="bg-navy2 border border-gold/20 rounded-xl p-4 space-y-3">
-        <div className="text-cream/70 text-sm font-medium">Add a new role description</div>
+        <div className="text-cream/70 text-sm font-medium">Add a new position</div>
         <Field label="Position Title"><input className={inputCls} value={newTitle} placeholder="e.g. Vice President" onChange={(e) => setNewTitle(e.target.value)} /></Field>
-        <Field label="Description"><textarea className={inputCls} rows="3" value={newDesc} placeholder="Describe this role's responsibilities…" onChange={(e) => setNewDesc(e.target.value)} /></Field>
+        <Field label="Job Description"><textarea className={inputCls} rows="3" value={newDesc} placeholder="Describe this position's responsibilities…" onChange={(e) => setNewDesc(e.target.value)} /></Field>
         {notice && <div className="text-emerald-300 text-sm">{notice}</div>}
-        <Button variant="gold" disabled={saving || !newTitle.trim()} onClick={() => save(newTitle.trim(), newDesc.trim())}>
-          {saving ? <span className="flex items-center gap-1"><Spinner className="w-3 h-3" /> Saving…</span> : 'Add Role'}
+        <Button variant="gold" disabled={saving || !newTitle.trim()} onClick={() => addNew(newTitle.trim(), newDesc.trim())}>
+          {saving ? <span className="flex items-center gap-1"><Spinner className="w-3 h-3" /> Saving…</span> : 'Add Position'}
         </Button>
       </div>
     </div>
