@@ -1793,6 +1793,7 @@ const ALL_TABS_BY_SECTION = [
     { type: 'ainotes',        label: 'Agent Notes' },
   ]},
   { section: 'Leadership', roles: ['manager','admin'], tabs: [
+    { type: 'howto',       label: 'How-To' },
     { type: 'announce',    label: 'Announcement' },
     { type: 'myteam',      label: 'My Team' },
     { type: 'approvals',   label: 'Approvals' },
@@ -5673,6 +5674,112 @@ function AIChatPage({ me }) {
 }
 
 // ---------------------------------------------------------------------------
+// How-To / Q&A assistant — answers questions about using the app. Stateless:
+// the full conversation is kept in client state and sent with each request.
+// ---------------------------------------------------------------------------
+const HOWTO_SUGGESTIONS = [
+  'How do I take attendance?',
+  'How do I approve a funding request?',
+  'Who can edit the website?',
+  'How does the roster pipeline work?',
+];
+
+function HowToPage({ me }) {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const bottomRef = useRef(null);
+
+  useEffect(() => {
+    if (bottomRef.current) bottomRef.current.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  async function ask(text) {
+    const trimmed = (text || '').trim();
+    if (!trimmed || busy) return;
+    setInput('');
+    setBusy(true);
+    setError('');
+    const next = [...messages, { role: 'user', content: trimmed }];
+    setMessages(next);
+    try {
+      const d = await api('/howto/chat', { method: 'POST', body: { messages: next } });
+      setMessages([...next, { role: 'assistant', content: d.reply }]);
+    } catch (err) {
+      setError(err.message || 'Request failed');
+      setMessages(messages); // roll back the optimistic user message
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="max-w-3xl mx-auto flex flex-col" style={{ height: 'calc(100vh - 120px)' }}>
+      <div className="flex items-end justify-between mb-4 flex-wrap gap-2">
+        <div>
+          <h1 className="font-display text-4xl text-cream leading-none">How-To / Q&A</h1>
+          <p className="text-cream/50 text-sm mt-1">Ask how to use any part of the app — features, steps, and who can do what.</p>
+        </div>
+        {messages.length > 0 && (
+          <Button variant="ghost" onClick={() => { setMessages([]); setError(''); }} className="text-xs">New Question</Button>
+        )}
+      </div>
+
+      <div className="flex-1 overflow-y-auto bg-navy2 border border-cream/10 rounded-xl p-4 space-y-4 mb-4">
+        {messages.length === 0 && (
+          <div className="pt-6 text-center">
+            <div className="text-cream/40 text-sm mb-4">Ask me anything about using the app. Try one of these:</div>
+            <div className="flex flex-wrap gap-2 justify-center">
+              {HOWTO_SUGGESTIONS.map((q) => (
+                <button key={q} onClick={() => ask(q)} disabled={busy}
+                  className="text-xs text-gold/80 hover:text-gold border border-gold/30 hover:border-gold/60 rounded-full px-3 py-1.5 transition-colors">
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {messages.map((m, i) => (
+          <div key={i} className={`flex ca-slide-up ${m.role === 'user' ? 'justify-end' : 'justify-start'}`} style={{ animationDelay: '0ms' }}>
+            <div className={`max-w-[82%] rounded-xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap
+              ${m.role === 'user'
+                ? 'bg-red/20 text-cream border border-red/30'
+                : 'bg-navy3 text-cream/90 border border-cream/10'}`}>
+              {m.role === 'assistant' && (
+                <div className="text-gold/60 text-xs font-medium mb-1 uppercase tracking-wider">Guide</div>
+              )}
+              {m.content}
+            </div>
+          </div>
+        ))}
+        {busy && (
+          <div className="flex justify-start">
+            <div className="bg-navy3 border border-cream/10 rounded-xl px-4 py-3 text-cream/40 text-sm">Thinking…</div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {error && <div className="text-red text-sm mb-2">{error}</div>}
+
+      <form onSubmit={(e) => { e.preventDefault(); ask(input); }} className="flex gap-2">
+        <input
+          className={inputCls + ' flex-1'}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Ask how to do something…"
+          disabled={busy}
+        />
+        <Button type="submit" variant="gold" disabled={busy || !input.trim()}>
+          {busy ? <Spinner /> : 'Ask'}
+        </Button>
+      </form>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Home Summary Card
 // ---------------------------------------------------------------------------
@@ -7063,6 +7170,7 @@ function App() {
     { type: 'directory',      label: 'Directory' },
     { type: 'org',            label: 'Org Chart' },
     { type: 'ainotes',        label: 'Agent Notes' },
+    ...(isMgrOrAdmin                          ? [{ type: 'howto',       label: 'How-To' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'announce',    label: 'Announcement' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'myteam',      label: 'My Team' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'approvals',   label: 'Approvals' }] : []),
@@ -7122,7 +7230,7 @@ function App() {
     resources: 'Resource Hub', volunteers: 'Volunteer Manager',
     photos: 'Photo Approvals',
     org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity',
-    ai: 'AI Assistant', password: 'Change Password', profile: 'Edit Profile',
+    ai: 'AI Assistant', howto: 'How-To / Q&A', password: 'Change Password', profile: 'Edit Profile',
     testimonials: 'Testimonials', newsletter: 'Newsletter',
   };
 
@@ -7145,6 +7253,7 @@ function App() {
   else if (view.type === 'admin') content = me.role === 'admin' ? <AdminPanel users={users} reload={bump} /> : null;
   else if (view.type === 'logistics') content = (me.role === 'admin' || me.canViewLogistics) ? <LogisticsPage /> : null;
   else if (view.type === 'ai') content = me.role === 'admin' ? <AIChatPage me={me} /> : null;
+  else if (view.type === 'howto') content = isMgrOrAdmin ? <HowToPage me={me} /> : null;
   else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;
   else if (view.type === 'profile') content = <ProfileSetup me={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;
   else if (view.type === 'attendance') content = <AttendancePage me={me} />;

@@ -17,7 +17,7 @@ process.on('uncaughtException', (err) => {
 const { db, init, seed } = require('./db');
 const { fetchUpcoming, clearCache } = require('./calendar');
 const { notify, escHtml } = require('./email');
-const { analyzeTeamHealth, chatWithAI, aiEnabled } = require('./ai');
+const { analyzeTeamHealth, chatWithAI, chatWithHowTo, aiEnabled } = require('./ai');
 const {
   signToken,
   publicUser,
@@ -2473,6 +2473,25 @@ app.post('/api/ai/analyze', requireAdmin, rateLimit({ windowMs: 60 * 60 * 1000, 
   } catch (err) {
     console.error('[AI analyze error]', err);
     res.status(500).json({ error: 'Analysis failed' });
+  }
+});
+
+// POST /api/howto/chat — managers/admins; stateless app how-to assistant.
+// Body: { messages: [{ role, content }, ...] } (recent conversation from client).
+app.post('/api/howto/chat', requireManagerOrAdmin, rateLimit({ windowMs: 60 * 60 * 1000, max: 40, name: 'howto-chat' }), async (req, res) => {
+  const { messages } = req.body || {};
+  if (!Array.isArray(messages) || messages.length === 0) return res.status(400).json({ error: 'messages required' });
+  const history = messages
+    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+    .slice(-20)
+    .map((m) => ({ role: m.role, content: m.content.slice(0, 4000) }));
+  if (history.length === 0) return res.status(400).json({ error: 'messages required' });
+  try {
+    const reply = await chatWithHowTo(history, req.user.role);
+    res.json({ reply });
+  } catch (err) {
+    console.error('[Howto chat error]', err);
+    res.status(500).json({ error: 'AI request failed' });
   }
 });
 
