@@ -256,26 +256,33 @@ function init() {
     );
     CREATE INDEX IF NOT EXISTS idx_task_comments ON task_comments(taskId, createdAt);
 
-    -- Attendance: events (meetings, club nights, etc.)
+    -- Attendance: events (meetings, club nights, etc.). Events may be created
+    -- manually or auto-imported: 'board' meetings come from the meetings table,
+    -- 'club' meetings come from the linked Google Calendar feed. eventType drives
+    -- which roster is shown; (sourceType, sourceId) dedupes auto-imported events.
     CREATE TABLE IF NOT EXISTS attendance_events (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       title       TEXT NOT NULL,
       eventDate   TEXT NOT NULL,
       location    TEXT NOT NULL DEFAULT '',
       notes       TEXT NOT NULL DEFAULT '',
+      eventType   TEXT NOT NULL DEFAULT 'club',
+      sourceType  TEXT NOT NULL DEFAULT 'manual',
+      sourceId    TEXT NOT NULL DEFAULT '',
       createdById INTEGER REFERENCES users(id) ON DELETE SET NULL,
       createdAt   TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    -- Attendance: who attended each event.
+    -- Attendance: who attended each event. An attendee is either a portal user
+    -- (userId) or an onboarded roster contact (rosterId) — exactly one is set.
     CREATE TABLE IF NOT EXISTS attendance_records (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       eventId    INTEGER NOT NULL REFERENCES attendance_events(id) ON DELETE CASCADE,
-      userId     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      userId     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      rosterId   INTEGER REFERENCES roster_members(id) ON DELETE CASCADE,
       status     TEXT NOT NULL DEFAULT 'present',
       markedById INTEGER REFERENCES users(id) ON DELETE SET NULL,
-      createdAt  TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(eventId, userId)
+      createdAt  TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_attendance_records ON attendance_records(eventId);
 
@@ -565,6 +572,43 @@ function init() {
   // volunteer_signups column migrations.
   const vsCols = db.prepare("PRAGMA table_info(volunteer_signups)").all().map((c) => c.name);
   if (!vsCols.includes('needsReview')) db.exec("ALTER TABLE volunteer_signups ADD COLUMN needsReview INTEGER NOT NULL DEFAULT 0");
+
+  // attendance_events column migrations: type + auto-import source tracking.
+  const aeCols = db.prepare("PRAGMA table_info(attendance_events)").all().map((c) => c.name);
+  if (!aeCols.includes('eventType'))  db.exec("ALTER TABLE attendance_events ADD COLUMN eventType TEXT NOT NULL DEFAULT 'club'");
+  if (!aeCols.includes('sourceType')) db.exec("ALTER TABLE attendance_events ADD COLUMN sourceType TEXT NOT NULL DEFAULT 'manual'");
+  if (!aeCols.includes('sourceId'))   db.exec("ALTER TABLE attendance_events ADD COLUMN sourceId TEXT NOT NULL DEFAULT ''");
+
+  // attendance_records migration: add rosterId so onboarded (non-account) club
+  // members can be marked. SQLite can't drop the old NOT NULL on userId in place,
+  // so rebuild the table when rosterId is absent.
+  const arCols = db.prepare("PRAGMA table_info(attendance_records)").all().map((c) => c.name);
+  if (!arCols.includes('rosterId')) {
+    db.exec(`
+      CREATE TABLE attendance_records_new (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        eventId    INTEGER NOT NULL REFERENCES attendance_events(id) ON DELETE CASCADE,
+        userId     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        rosterId   INTEGER REFERENCES roster_members(id) ON DELETE CASCADE,
+        status     TEXT NOT NULL DEFAULT 'present',
+        markedById INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        createdAt  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO attendance_records_new (id, eventId, userId, rosterId, status, markedById, createdAt)
+        SELECT id, eventId, userId, NULL, status, markedById, COALESCE(createdAt, datetime('now')) FROM attendance_records;
+      DROP TABLE attendance_records;
+      ALTER TABLE attendance_records_new RENAME TO attendance_records;
+      CREATE INDEX IF NOT EXISTS idx_attendance_records ON attendance_records(eventId);
+    `);
+  }
+  // Partial unique indexes (created here, after the rebuild above guarantees the
+  // rosterId column exists, so they're safe on both fresh and migrated databases).
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_records_user
+      ON attendance_records(eventId, userId) WHERE userId IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_records_roster
+      ON attendance_records(eventId, rosterId) WHERE rosterId IS NOT NULL;
+  `);
 
   // Additional user column migrations.
   if (!cols.includes('canManageSocial')) db.exec("ALTER TABLE users ADD COLUMN canManageSocial INTEGER NOT NULL DEFAULT 0");

@@ -8646,6 +8646,9 @@ const ATTENDANCE_STATUSES = ['present', 'absent', 'excused'];
 const ATTENDANCE_COLORS = { present: 'green', absent: 'red', excused: 'blue' };
 const ATTENDANCE_LABELS = { present: 'Present', absent: 'Absent', excused: 'Excused' };
 
+// Stable key for an attendee — users and roster contacts can share an id.
+const memberKey = (m) => `${m.kind}:${m.id}`;
+
 function RollCallModal({ eventId, onClose, onDone }) {
   const [allUsers, setAllUsers] = useState([]);
   const [statuses, setStatuses] = useState({});
@@ -8653,20 +8656,25 @@ function RollCallModal({ eventId, onClose, onDone }) {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api('/users').then((d) => {
-      const sorted = [...(d.users || [])].sort((a, b) => (a.displayName || '').localeCompare(b.displayName));
-      setAllUsers(sorted);
+    // Pull the event-specific roster (board vs club) and pre-fill existing marks.
+    api(`/attendance/${eventId}`).then((d) => {
+      setAllUsers(d.members || []);
+      const pre = {};
+      for (const [key, rec] of Object.entries(d.records || {})) pre[key] = rec.status;
+      setStatuses(pre);
     }).catch(() => {});
-  }, []);
+  }, [eventId]);
 
-  function toggle(userId, status) {
-    setStatuses((prev) => ({ ...prev, [userId]: prev[userId] === status ? undefined : status }));
+  function toggle(key, status) {
+    setStatuses((prev) => ({ ...prev, [key]: prev[key] === status ? undefined : status }));
   }
 
   async function submit() {
     const records = allUsers
-      .filter((u) => statuses[u.id])
-      .map((u) => ({ userId: u.id, status: statuses[u.id] }));
+      .filter((u) => statuses[memberKey(u)])
+      .map((u) => (u.kind === 'roster'
+        ? { rosterId: u.id, status: statuses[memberKey(u)] }
+        : { userId: u.id, status: statuses[memberKey(u)] }));
     if (records.length === 0) { setError('Mark at least one member before submitting.'); return; }
     setBusy(true); setError('');
     try {
@@ -8676,10 +8684,10 @@ function RollCallModal({ eventId, onClose, onDone }) {
     finally { setBusy(false); }
   }
 
-  const presentCount  = allUsers.filter((u) => statuses[u.id] === 'present').length;
-  const absentCount   = allUsers.filter((u) => statuses[u.id] === 'absent').length;
-  const excusedCount  = allUsers.filter((u) => statuses[u.id] === 'excused').length;
-  const unmarkedCount = allUsers.filter((u) => !statuses[u.id]).length;
+  const presentCount  = allUsers.filter((u) => statuses[memberKey(u)] === 'present').length;
+  const absentCount   = allUsers.filter((u) => statuses[memberKey(u)] === 'absent').length;
+  const excusedCount  = allUsers.filter((u) => statuses[memberKey(u)] === 'excused').length;
+  const unmarkedCount = allUsers.filter((u) => !statuses[memberKey(u)]).length;
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-navy" style={{ background: '#0d1b2e' }}>
@@ -8696,16 +8704,20 @@ function RollCallModal({ eventId, onClose, onDone }) {
       {error && <div className="mx-4 mt-3 text-red text-sm bg-red/10 border border-red/30 rounded px-3 py-2">{error}</div>}
       <div className="flex-1 overflow-y-auto divide-y divide-cream/5">
         {allUsers.map((u) => {
-          const s = statuses[u.id];
+          const key = memberKey(u);
+          const s = statuses[key];
           return (
-            <div key={u.id} className="px-4 py-3 flex items-center justify-between gap-3">
+            <div key={key} className="px-4 py-3 flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-cream text-sm font-medium">{u.displayName}</div>
+                <div className="text-cream text-sm font-medium flex items-center gap-2">
+                  {u.displayName}
+                  {u.kind === 'roster' && <span className="text-[10px] uppercase tracking-wide text-gold/70 border border-gold/30 rounded px-1">Club</span>}
+                </div>
                 {u.title && <div className="text-cream/40 text-xs">{u.title}</div>}
               </div>
               <div className="flex gap-2 shrink-0">
                 {[['present','P','bg-emerald-500/80'],['absent','A','bg-red/80'],['excused','E','bg-sky-500/80']].map(([val, label, activeClass]) => (
-                  <button key={val} onClick={() => toggle(u.id, val)}
+                  <button key={val} onClick={() => toggle(key, val)}
                     className={`w-9 h-9 rounded-lg text-sm font-bold transition-all duration-150 ${
                       s === val ? `${activeClass} text-white` : 'bg-navy border border-cream/15 text-cream/50 hover:border-cream/30'
                     }`}>
@@ -8734,7 +8746,7 @@ function AttendancePage({ me }) {
   const [eventData, setEventData] = useState(null);
   const [creating, setCreating] = useState(false);
   const [rollCallEvent, setRollCallEvent] = useState(null);
-  const [form, setForm] = useState({ title: '', eventDate: '', location: '', notes: '' });
+  const [form, setForm] = useState({ title: '', eventDate: '', location: '', notes: '', eventType: 'club' });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirmEl, confirm] = useConfirm();
@@ -8761,16 +8773,17 @@ function AttendancePage({ me }) {
       const d = await api('/attendance', { method: 'POST', body: form });
       await loadEvents();
       setCreating(false);
-      setForm({ title: '', eventDate: '', location: '', notes: '' });
+      setForm({ title: '', eventDate: '', location: '', notes: '', eventType: 'club' });
       setActiveEvent(d.event.id);
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   }
 
-  async function markAttendance(userId, status) {
+  async function markAttendance(member, status) {
     if (!activeEvent) return;
+    const body = member.kind === 'roster' ? { rosterId: member.id, status } : { userId: member.id, status };
     try {
-      await api(`/attendance/${activeEvent}/mark`, { method: 'POST', body: { userId, status } });
+      await api(`/attendance/${activeEvent}/mark`, { method: 'POST', body });
       loadEvent(activeEvent);
     } catch (err) { setError(err.message); }
   }
@@ -8816,6 +8829,12 @@ function AttendancePage({ me }) {
             <Field label="Date *"><input type="date" className={inputCls} value={form.eventDate} onChange={setF('eventDate')} required /></Field>
             <Field label="Location"><input className={inputCls} value={form.location} onChange={setF('location')} /></Field>
             <Field label="Notes"><input className={inputCls} value={form.notes} onChange={setF('notes')} /></Field>
+            <Field label="Type">
+              <select className={inputCls} value={form.eventType} onChange={setF('eventType')}>
+                <option value="club">Club meeting (full club)</option>
+                <option value="board">Board meeting (board only)</option>
+              </select>
+            </Field>
           </div>
           <div className="flex gap-2">
             <Button type="submit" variant="gold" disabled={busy}>{busy ? 'Creating…' : 'Create Event'}</Button>
@@ -8836,7 +8855,12 @@ function AttendancePage({ me }) {
               <button
                 onClick={() => setActiveEvent(ev.id === activeEvent ? null : ev.id)}
                 className="w-full text-left px-4 py-3 hover:bg-navy3/50 transition-colors rounded-t-xl">
-                <div className="font-medium text-cream truncate">{ev.title}</div>
+                <div className="flex items-center gap-2">
+                  <div className="font-medium text-cream truncate">{ev.title}</div>
+                  <span className={`shrink-0 text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border ${ev.eventType === 'board' ? 'text-gold/80 border-gold/40' : 'text-sky-300/80 border-sky-400/30'}`}>
+                    {ev.eventType === 'board' ? 'Board' : 'Club'}
+                  </span>
+                </div>
                 <div className="text-xs text-cream/50 mt-0.5">{new Date(ev.eventDate + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</div>
                 {ev.location && <div className="text-xs text-cream/40 truncate">{ev.location}</div>}
                 <div className="flex items-center gap-3 mt-1.5">
@@ -8876,7 +8900,7 @@ function AttendancePage({ me }) {
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge tone="green">{presentCount}/{totalMembers}</Badge>
-                  {me.role === 'admin' && (
+                  {me.role === 'admin' && eventData.event.sourceType === 'manual' && (
                     <button onClick={() => deleteEvent(activeEvent)} className="text-xs text-red/60 hover:text-red">Delete</button>
                   )}
                 </div>
@@ -8886,17 +8910,21 @@ function AttendancePage({ me }) {
               )}
               <div className="divide-y divide-cream/5">
                 {eventData.members.map((member) => {
-                  const rec = eventData.records[member.id];
+                  const key = memberKey(member);
+                  const rec = eventData.records[key];
                   const status = rec ? rec.status : null;
                   return (
-                    <div key={member.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                    <div key={key} className="px-5 py-3 flex items-center justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="text-cream text-sm font-medium">{member.displayName}</div>
+                        <div className="text-cream text-sm font-medium flex items-center gap-2">
+                          {member.displayName}
+                          {member.kind === 'roster' && <span className="text-[10px] uppercase tracking-wide text-gold/70 border border-gold/30 rounded px-1">Club</span>}
+                        </div>
                         {member.title && <div className="text-cream/40 text-xs">{member.title}</div>}
                       </div>
                       <div className="flex gap-1.5 shrink-0">
                         {ATTENDANCE_STATUSES.map((s) => (
-                          <button key={s} onClick={() => markAttendance(member.id, s)}
+                          <button key={s} onClick={() => markAttendance(member, s)}
                             className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all duration-150 ${
                               status === s
                                 ? s === 'present' ? 'bg-emerald-500/80 text-white' : s === 'absent' ? 'bg-red/80 text-white' : 'bg-sky-500/80 text-white'

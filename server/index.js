@@ -1678,12 +1678,88 @@ app.get('/api/search', (req, res) => {
 });
 
 // ---- Attendance Tracker -----------------------------------------------------
+const ATTENDANCE_STATUSES = ['present', 'absent', 'excused'];
+
 function canManageAttendance(user) {
   return user.role === 'admin' || user.role === 'manager';
 }
 
-app.get('/api/attendance', (req, res) => {
+// Auto-import attendance events from their sources. Idempotent via
+// (sourceType, sourceId): 'board' meetings come from the meetings table, 'club'
+// meetings come from the linked Google Calendar feed. Existing synced events are
+// updated in place so title/date stay current; they persist in attendance_events
+// even after a calendar event ages out of the upcoming feed.
+async function syncAttendanceEvents() {
+  const findSource = db.prepare('SELECT id FROM attendance_events WHERE sourceType = ? AND sourceId = ?');
+
+  // Board meetings -> board attendance events (roster = all portal accounts).
+  const meetings = db.prepare('SELECT id, title, meetingDate FROM meetings').all();
+  for (const m of meetings) {
+    const eventDate = String(m.meetingDate || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) continue;
+    const existing = findSource.get('meeting', String(m.id));
+    if (existing) {
+      db.prepare('UPDATE attendance_events SET title = ?, eventDate = ? WHERE id = ?').run(m.title, eventDate, existing.id);
+    } else {
+      db.prepare(`INSERT INTO attendance_events (title, eventDate, location, notes, eventType, sourceType, sourceId)
+        VALUES (?, ?, '', '', 'board', 'meeting', ?)`).run(m.title, eventDate, String(m.id));
+    }
+  }
+
+  // Club meetings from the calendar feed (roster = portal accounts + onboarded contacts).
+  const home = db.prepare('SELECT calendarUrl FROM site_settings WHERE id = 1').get();
+  if (home && home.calendarUrl) {
+    let events = [];
+    try { events = await fetchUpcoming(home.calendarUrl, 10); } catch (_) { events = []; }
+    for (const ev of events) {
+      if (!ev.uid) continue;
+      const eventDate = String(ev.start || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) continue;
+      const existing = findSource.get('calendar', ev.uid);
+      if (existing) {
+        db.prepare('UPDATE attendance_events SET title = ?, eventDate = ?, location = ? WHERE id = ?')
+          .run(ev.title, eventDate, ev.location || '', existing.id);
+      } else {
+        db.prepare(`INSERT INTO attendance_events (title, eventDate, location, notes, eventType, sourceType, sourceId)
+          VALUES (?, ?, ?, '', 'club', 'calendar', ?)`).run(ev.title, eventDate, ev.location || '', ev.uid);
+      }
+    }
+  }
+}
+
+// The roster for an event depends on its type. Board meetings pull every portal
+// account; club meetings additionally pull onboarded (non-account) roster contacts.
+function attendanceRoster(eventType) {
+  const users = db.prepare("SELECT id, displayName, title FROM users WHERE username != 'logistics' ORDER BY displayName").all()
+    .map((u) => ({ kind: 'user', id: u.id, displayName: u.displayName, title: u.title || '' }));
+  if (eventType !== 'club') return users;
+  const contacts = db.prepare("SELECT id, firstName, lastName, grade, roleDescription FROM roster_members WHERE status = 'Onboarded' ORDER BY firstName, lastName").all()
+    .map((r) => ({
+      kind: 'roster',
+      id: r.id,
+      displayName: `${r.firstName || ''} ${r.lastName || ''}`.trim() || 'Club Member',
+      title: r.roleDescription || (r.grade ? `Grade ${r.grade}` : 'Club Member'),
+    }));
+  return [...users, ...contacts];
+}
+
+// Upsert a single attendance record keyed by user or roster contact.
+function markAttendanceRecord(eventId, { userId, rosterId, status, markedById }) {
+  const col = userId != null ? 'userId' : 'rosterId';
+  const refId = userId != null ? userId : rosterId;
+  const existing = db.prepare(`SELECT id FROM attendance_records WHERE eventId = ? AND ${col} = ?`).get(eventId, refId);
+  if (existing) {
+    db.prepare("UPDATE attendance_records SET status = ?, markedById = ?, createdAt = datetime('now') WHERE id = ?")
+      .run(status, markedById, existing.id);
+  } else {
+    db.prepare(`INSERT INTO attendance_records (eventId, ${col}, status, markedById) VALUES (?, ?, ?, ?)`)
+      .run(eventId, refId, status, markedById);
+  }
+}
+
+app.get('/api/attendance', async (req, res) => {
   if (!canManageAttendance(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  try { await syncAttendanceEvents(); } catch (_) {}
   const events = db.prepare(`SELECT ae.*, u.displayName AS createdByName,
     (SELECT COUNT(*) FROM attendance_records ar WHERE ar.eventId = ae.id AND ar.status = 'present') AS presentCount,
     (SELECT COUNT(*) FROM attendance_records ar WHERE ar.eventId = ae.id) AS markedCount
@@ -1694,12 +1770,14 @@ app.get('/api/attendance', (req, res) => {
 
 app.post('/api/attendance', (req, res) => {
   if (!canManageAttendance(req.user)) return res.status(403).json({ error: 'Not allowed' });
-  const { title, eventDate, location, notes } = req.body || {};
+  const { title, eventDate, location, notes, eventType } = req.body || {};
   if (!title || !String(title).trim()) return res.status(400).json({ error: 'Title required' });
   if (!eventDate || !String(eventDate).match(/^\d{4}-\d{2}-\d{2}$/)) return res.status(400).json({ error: 'Valid event date required (YYYY-MM-DD)' });
-  const info = db.prepare(`INSERT INTO attendance_events (title, eventDate, location, notes, createdById) VALUES (?, ?, ?, ?, ?)`).run(
+  const safeType = eventType === 'board' ? 'board' : 'club';
+  const info = db.prepare(`INSERT INTO attendance_events (title, eventDate, location, notes, eventType, sourceType, createdById)
+    VALUES (?, ?, ?, ?, ?, 'manual', ?)`).run(
     String(title).trim().slice(0, 200), eventDate,
-    String(location || '').trim().slice(0, 200), String(notes || '').trim().slice(0, 1000), req.user.id
+    String(location || '').trim().slice(0, 200), String(notes || '').trim().slice(0, 1000), safeType, req.user.id
   );
   res.status(201).json({ event: db.prepare('SELECT * FROM attendance_events WHERE id = ?').get(info.lastInsertRowid) });
 });
@@ -1708,22 +1786,29 @@ app.get('/api/attendance/:id', (req, res) => {
   if (!canManageAttendance(req.user)) return res.status(403).json({ error: 'Not allowed' });
   const event = db.prepare('SELECT * FROM attendance_events WHERE id = ?').get(Number(req.params.id));
   if (!event) return res.status(404).json({ error: 'Event not found' });
-  const allMembers = db.prepare("SELECT id, displayName, title, role FROM users WHERE username != 'logistics' ORDER BY displayName").all().map(publicUser);
-  const records = db.prepare(`SELECT ar.*, u.displayName AS memberName FROM attendance_records ar JOIN users u ON u.id = ar.userId WHERE ar.eventId = ?`).all(event.id);
-  const byUser = Object.fromEntries(records.map((r) => [r.userId, r]));
-  res.json({ event, members: allMembers, records: byUser });
+  const members = attendanceRoster(event.eventType);
+  const records = db.prepare('SELECT * FROM attendance_records WHERE eventId = ?').all(event.id);
+  const byKey = {};
+  for (const r of records) {
+    const key = r.userId != null ? `user:${r.userId}` : `roster:${r.rosterId}`;
+    byKey[key] = r;
+  }
+  res.json({ event, members, records: byKey });
 });
 
 app.post('/api/attendance/:id/mark', (req, res) => {
   if (!canManageAttendance(req.user)) return res.status(403).json({ error: 'Not allowed' });
   const event = db.prepare('SELECT * FROM attendance_events WHERE id = ?').get(Number(req.params.id));
   if (!event) return res.status(404).json({ error: 'Event not found' });
-  const { userId, status } = req.body || {};
-  const ATTENDANCE_STATUSES = ['present', 'absent', 'excused'];
-  if (!userId) return res.status(400).json({ error: 'userId required' });
+  const { userId, rosterId, status } = req.body || {};
+  if (!userId && !rosterId) return res.status(400).json({ error: 'userId or rosterId required' });
   const safeStatus = ATTENDANCE_STATUSES.includes(status) ? status : 'present';
-  db.prepare(`INSERT INTO attendance_records (eventId, userId, status, markedById) VALUES (?, ?, ?, ?)
-    ON CONFLICT(eventId, userId) DO UPDATE SET status = excluded.status, markedById = excluded.markedById, createdAt = datetime('now')`).run(event.id, Number(userId), safeStatus, req.user.id);
+  markAttendanceRecord(event.id, {
+    userId: userId ? Number(userId) : null,
+    rosterId: !userId && rosterId ? Number(rosterId) : null,
+    status: safeStatus,
+    markedById: req.user.id,
+  });
   res.json({ ok: true, status: safeStatus });
 });
 
@@ -1739,12 +1824,16 @@ app.post('/api/attendance/:id/roll-call', (req, res) => {
   if (!event) return res.status(404).json({ error: 'Event not found' });
   const { records } = req.body || {};
   if (!Array.isArray(records) || records.length === 0) return res.status(400).json({ error: 'records array required' });
-  const insert = db.prepare('INSERT OR REPLACE INTO attendance_records (eventId, userId, status, markedById) VALUES (?, ?, ?, ?)');
   const tx = db.transaction(() => {
     for (const r of records) {
-      const VALID_STATUSES = ['present', 'absent', 'excused'];
-      if (!r.userId || !VALID_STATUSES.includes(r.status)) continue;
-      insert.run(event.id, Number(r.userId), r.status, req.user.id);
+      if (!ATTENDANCE_STATUSES.includes(r.status)) continue;
+      if (!r.userId && !r.rosterId) continue;
+      markAttendanceRecord(event.id, {
+        userId: r.userId ? Number(r.userId) : null,
+        rosterId: !r.userId && r.rosterId ? Number(r.rosterId) : null,
+        status: r.status,
+        markedById: req.user.id,
+      });
     }
   });
   tx();
