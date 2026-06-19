@@ -1,4 +1,5 @@
 const Anthropic = require('@anthropic-ai/sdk');
+const { APP_GUIDE } = require('./appGuide');
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const aiEnabled = !!ANTHROPIC_API_KEY;
@@ -162,4 +163,42 @@ ${JSON.stringify(snapshot, null, 2)}`;
   }
 }
 
-module.exports = { analyzeTeamHealth, chatWithAI, aiEnabled };
+// How-To assistant: answers questions about HOW TO USE the app, grounded only in
+// the curated APP_GUIDE (no private club data). Stateless — the caller passes the
+// recent conversation each time.
+async function chatWithHowTo(conversationHistory, userRole) {
+  if (!anthropic) {
+    return 'How-To assistant is not available — the administrator needs to set ANTHROPIC_API_KEY.';
+  }
+
+  const systemPrompt = `You are the in-app How-To assistant for the Club America Management app, a board-management web app for a high school club. Your job is to help users understand HOW TO USE the app: where features live, the steps to do something, and who is allowed to do what.
+
+The person asking has the role: ${userRole || 'member'}. Tailor answers to what that role can access.
+
+Rules:
+- Answer ONLY using the APP GUIDE below. It describes every tab and how to use it.
+- Be concise and practical. Use short numbered steps for "how do I…" questions.
+- If something is not covered in the guide, say you're not sure and suggest where in the app to look (e.g. ask an admin, check the Admin Panel). Do not invent features.
+- You do NOT have access to private club data (specific people, tasks, numbers). For those, tell admins to use the "AI Assistant" tab.
+- Stay on the topic of using this app; politely decline unrelated questions.
+
+APP GUIDE:
+${APP_GUIDE}`;
+
+  const messages = conversationHistory.map((m) => ({ role: m.role, content: m.content }));
+
+  try {
+    const response = await anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages,
+    });
+    return response.content[0].text;
+  } catch (err) {
+    console.error('[AI] chatWithHowTo error:', err.message);
+    throw err;
+  }
+}
+
+module.exports = { analyzeTeamHealth, chatWithAI, chatWithHowTo, aiEnabled };
