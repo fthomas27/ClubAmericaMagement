@@ -6665,6 +6665,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
     {
       title: 'Leadership',
       tiles: [
+        ...(isManager && visible('howto')       ? [{ type: 'howto',       label: 'How-To',          icon: 'ai'         }] : []),
         ...(isManager && visible('announce')    ? [{ type: 'announce',    label: 'Announcement',    icon: 'megaphone'  }] : []),
         ...(isManager && visible('myteam')      ? [{ type: 'myteam',      label: 'My Team',         icon: 'team'       }] : []),
         ...(isManager && visible('approvals')   ? [{ type: 'approvals',   label: 'Approvals',       icon: 'check',     badge: approvalsCount   }] : []),
@@ -6886,11 +6887,12 @@ const TAB_DESCRIPTIONS = {
   admin:          { headline: 'Admin Panel',                    body: 'The full control center for the portal. Add and manage users, assign roles, configure permissions, and handle all technical administration of the Club America board management platform.' },
   logistics:      { headline: 'Login Activity Log',             body: 'Review board member login history and portal access logs. Spot inactive members, monitor usage patterns, and maintain security awareness across the platform.' },
   ai:             { headline: 'AI Assistant',                   body: 'A Claude-powered AI interface built for club administration. Ask questions, generate content, analyze data, or get help drafting anything — your AI teammate is ready whenever you need it.' },
+  howto:          { headline: 'How-To / Q&A',                   body: 'Ask in plain language how to do anything in the app — where features live, the steps to complete a task, and who is allowed to do what. It answers from a built-in guide to the portal and never touches private club data.' },
 };
 
 const INTRO_SECTION_TYPES = {
   'My Club':      ['mytasks','home','checkin','attendance','polls','meetings','funding','apply','reimbursements','resources','directory','org','ainotes'],
-  'Leadership':   ['announce','myteam','approvals','submissions','roster','dashboard','volunteers','speaker','grants','social','budget','grades'],
+  'Leadership':   ['howto','announce','myteam','approvals','submissions','roster','dashboard','volunteers','speaker','grants','social','budget','grades'],
   'Site & Admin': ['website','admin','logistics','ai'],
 };
 
