@@ -3107,26 +3107,26 @@ app.get('/api/roster-members/:id/volunteer-history', (req, res) => {
 });
 
 // Roster cross-reference: meeting attendance for this roster member.
-// Resolves the user account via the explicit linkedUserId FK; falls back to email match.
+// Includes both records marked against this roster contact directly (rosterId)
+// and records marked against a linked portal account — resolved via the explicit
+// linkedUserId FK, falling back to an email match.
 app.get('/api/roster-members/:id/attendance-history', (req, res) => {
   if (!canViewRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
-  const member = db.prepare('SELECT email, linkedUserId FROM roster_members WHERE id = ?').get(Number(req.params.id));
+  const rosterId = Number(req.params.id);
+  const member = db.prepare('SELECT email, linkedUserId FROM roster_members WHERE id = ?').get(rosterId);
   if (!member) return res.status(404).json({ error: 'Not found' });
   let linkedUserId = member.linkedUserId;
   if (!linkedUserId && member.email) {
     const hit = db.prepare("SELECT id FROM users WHERE email != '' AND lower(email) = lower(?)").get(member.email);
     if (hit) linkedUserId = hit.id;
   }
-  let history = [];
-  if (linkedUserId) {
-    history = db.prepare(`
-      SELECT ae.id, ae.title, ae.eventDate, ae.location, ar.status
-      FROM attendance_records ar
-      JOIN attendance_events ae ON ae.id = ar.eventId
-      WHERE ar.userId = ?
-      ORDER BY ae.eventDate DESC
-    `).all(linkedUserId);
-  }
+  const history = db.prepare(`
+    SELECT ae.id, ae.title, ae.eventDate, ae.location, ar.status
+    FROM attendance_records ar
+    JOIN attendance_events ae ON ae.id = ar.eventId
+    WHERE ar.rosterId = ? OR (ar.userId IS NOT NULL AND ar.userId = ?)
+    ORDER BY ae.eventDate DESC
+  `).all(rosterId, linkedUserId || 0);
   res.json({ history });
 });
 
