@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 
 // Keep a single stray error from taking the whole process down (which makes the
 // host restart the app — the "crash then reboot and load" loop). We log it and
@@ -24,6 +25,7 @@ const {
   authenticate,
   requirePasswordChanged,
   requireAdmin,
+  JWT_SECRET,
 } = require('./auth');
 
 init();
@@ -168,6 +170,16 @@ setInterval(() => {
 }, 10 * 60 * 1000).unref?.();
 
 // ---- helpers ----------------------------------------------------------------
+// Accept only safe raster image data URLs for stored photos. Anything else
+// (notably image/svg+xml, which renders as an active document) is dropped to ''
+// so it can never be persisted and later served/embedded.
+const SAFE_IMAGE_DATA_URL = /^data:image\/(?:png|jpe?g|webp|gif);base64,/;
+function cleanPhotoDataUrl(photo) {
+  const p = String(photo || '').trim();
+  if (!p) return '';
+  return SAFE_IMAGE_DATA_URL.test(p) ? p.slice(0, 8 * 1024 * 1024) : '';
+}
+
 function getUser(id) {
   return db.prepare('SELECT * FROM users WHERE id = ?').get(id);
 }
@@ -312,12 +324,24 @@ app.get('/api/board', (req, res) => {
   res.json({ members });
 });
 
-// Serves a single user's profile photo. No auth required (same data shown publicly).
+// Serves a single user's profile photo. Public board members' photos are shown
+// on the public "Meet the Board" page with no auth; every other user's photo
+// requires a valid session, so private profile photos can't be enumerated by
+// id by logged-out visitors.
 app.get('/api/users/:id/photo', (req, res) => {
-  const row = db.prepare('SELECT photo FROM users WHERE id = ?').get(Number(req.params.id));
+  const row = db.prepare('SELECT photo, bigBoard FROM users WHERE id = ?').get(Number(req.params.id));
   if (!row || !row.photo) return res.status(404).end();
+  if (!row.bigBoard) {
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    let valid = false;
+    if (token) { try { jwt.verify(token, JWT_SECRET); valid = true; } catch (_) {} }
+    if (!valid) return res.status(401).end();
+  }
   // photo is stored as a data URL: "data:image/jpeg;base64,..."
-  const m = String(row.photo).match(/^data:(image\/[a-z+]+);base64,(.+)$/s);
+  // Only serve safe raster types — never echo a stored MIME like image/svg+xml,
+  // which the browser would render as an active document (script execution).
+  const m = String(row.photo).match(/^data:(image\/(?:png|jpe?g|webp|gif));base64,(.+)$/s);
   if (!m) return res.status(404).end();
   res.set('Content-Type', m[1]);
   res.set('Cache-Control', 'public, max-age=3600');
@@ -415,7 +439,7 @@ app.get('/api/event-photos', (req, res) => {
 app.get('/api/event-photos/:id/image', (req, res) => {
   const row = db.prepare("SELECT photo, status FROM event_photos WHERE id = ?").get(Number(req.params.id));
   if (!row || row.status !== 'approved') return res.status(404).end();
-  const m = String(row.photo).match(/^data:(image\/[a-z+]+);base64,(.+)$/s);
+  const m = String(row.photo).match(/^data:(image\/(?:png|jpe?g|webp|gif));base64,(.+)$/s);
   if (!m) return res.status(404).end();
   res.set('Content-Type', m[1]);
   res.set('Cache-Control', 'public, max-age=3600');
@@ -433,7 +457,7 @@ app.get('/api/instagram-highlights', (req, res) => {
 app.get('/api/instagram-highlights/:id/image', (req, res) => {
   const row = db.prepare('SELECT image FROM instagram_highlights WHERE id = ?').get(Number(req.params.id));
   if (!row || !row.image) return res.status(404).end();
-  const m = String(row.image).match(/^data:(image\/[a-z+]+);base64,(.+)$/s);
+  const m = String(row.image).match(/^data:(image\/(?:png|jpe?g|webp|gif));base64,(.+)$/s);
   if (!m) return res.status(404).end();
   res.set('Content-Type', m[1]);
   res.set('Cache-Control', 'public, max-age=3600');
@@ -524,7 +548,7 @@ app.post('/api/public/testimonial-submit',
     let { name, role, photo, text } = req.body || {};
     name  = String(name  || '').trim().slice(0, 120);
     role  = String(role  || '').trim().slice(0, 120);
-    photo = String(photo || '').trim().slice(0, 8 * 1024 * 1024);
+    photo = cleanPhotoDataUrl(photo);
     text  = String(text  || '').trim().slice(0, 5000);
     if (!name || !text) return res.status(400).json({ error: 'Name and testimonial text are required.' });
     db.prepare(
@@ -553,7 +577,7 @@ app.post('/api/public/testimonial-submit/:token',
     let { name, role, photo, text } = req.body || {};
     name  = String(name  || '').trim().slice(0, 120);
     role  = String(role  || '').trim().slice(0, 120);
-    photo = String(photo || '').trim().slice(0, 8 * 1024 * 1024);
+    photo = cleanPhotoDataUrl(photo);
     text  = String(text  || '').trim().slice(0, 5000);
     if (!name || !text) return res.status(400).json({ error: 'Name and testimonial text are required.' });
     db.prepare(
@@ -3155,7 +3179,7 @@ app.post('/api/admin/testimonials', authenticate, requirePasswordChanged, requir
   let { name, role, photo, text, status } = req.body || {};
   name   = String(name   || '').trim().slice(0, 120);
   role   = String(role   || '').trim().slice(0, 120);
-  photo  = String(photo  || '').trim().slice(0, 8 * 1024 * 1024);
+  photo  = cleanPhotoDataUrl(photo);
   text   = String(text   || '').trim().slice(0, 5000);
   status = ['pending', 'approved'].includes(status) ? status : 'approved';
   if (!name || !text) return res.status(400).json({ error: 'Name and testimonial text are required' });
@@ -3174,7 +3198,7 @@ app.patch('/api/admin/testimonials/:id', authenticate, requirePasswordChanged, r
   let { name, role, photo, text, status, sortOrder } = req.body || {};
   const upName   = name      !== undefined ? String(name).trim().slice(0, 120) : row.name;
   const upRole   = role      !== undefined ? String(role).trim().slice(0, 120) : row.role;
-  const upPhoto  = photo     !== undefined ? String(photo).trim().slice(0, 8 * 1024 * 1024) : row.photo;
+  const upPhoto  = photo     !== undefined ? cleanPhotoDataUrl(photo) : row.photo;
   const upText   = text      !== undefined ? String(text).trim().slice(0, 5000) : row.text;
   const upStatus = (status !== undefined && ['pending', 'approved'].includes(status)) ? status : row.status;
   const upOrder  = sortOrder !== undefined ? Number(sortOrder) : row.sortOrder;
