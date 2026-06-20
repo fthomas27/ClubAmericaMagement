@@ -3573,7 +3573,9 @@ function PublicNav({ current, onNavigate, onEnterPortal }) {
         </button>
 
         {/* ── Desktop: horizontal nav bar with overflow into "More" ── */}
-        <nav ref={barRef} className="hidden md:flex flex-1 min-w-0 items-center justify-center mx-2 overflow-hidden">
+        {/* No overflow-clip here: visibleCount is computed before paint, and a
+            clip would also hide the "More" dropdown (it opens below the bar). */}
+        <nav ref={barRef} className="hidden md:flex flex-1 min-w-0 items-center justify-center mx-2">
           {visiblePages.map((p) => (
             <button key={p.key} onClick={() => go(p.key)}
               aria-current={current === p.key ? 'page' : undefined}
@@ -3754,6 +3756,7 @@ function PublicHomePage({ home, cards, onNavigate }) {
           {home.homeAnnouncementEnabled && home.homeAnnouncement && <Reveal><HomeAnnouncementBanner home={home} /></Reveal>}
           {home.memberCount > 0 && <Reveal><MemberStatsBar memberCount={home.memberCount} /></Reveal>}
           <Reveal>{cards}</Reveal>
+          <Reveal><TestimonialsCarousel onNavigate={onNavigate} /></Reveal>
         </main>
       </div>
     </div>
@@ -9558,6 +9561,96 @@ function TestimonialsSection({ bare = false }) {
       <h2 className="font-display text-3xl text-gold mb-1">What Members Say</h2>
       <p className="text-cream/60 text-sm mb-6">Hear from the people who make Club America what it is.</p>
       {grid}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Testimonials Carousel — rotating single-quote display for the homepage.
+// Auto-advances every few seconds (pauses on hover and respects reduced
+// motion), with dots + arrows to step through manually.
+// ---------------------------------------------------------------------------
+function TestimonialsCarousel({ onNavigate }) {
+  const [items, setItems] = useState(null);
+  const [idx, setIdx] = useState(0);
+  const [paused, setPaused] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/testimonials')
+      .then((r) => r.json())
+      .then((d) => setItems(d.testimonials || []))
+      .catch(() => setItems([]));
+  }, []);
+
+  const count = items ? items.length : 0;
+
+  // Auto-advance, unless paused, reduced-motion, or there's only one quote.
+  useEffect(() => {
+    if (paused || count <= 1) return;
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) return;
+    const id = setInterval(() => setIdx((i) => (i + 1) % count), 6500);
+    return () => clearInterval(id);
+  }, [paused, count]);
+
+  // Keep the index valid if the list changes underneath us.
+  useEffect(() => { if (count && idx >= count) setIdx(0); }, [count, idx]);
+
+  if (items === null || count === 0) return null;
+
+  const t = items[idx];
+  const go = (n) => setIdx(((n % count) + count) % count);
+
+  return (
+    <section className="relative bg-navy2/40 border border-cream/10 rounded-2xl p-6 sm:p-8 overflow-hidden"
+      onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+      <div className="flex items-end justify-between gap-4 mb-5">
+        <div>
+          <h2 className="font-display text-3xl text-gold">What People Are Saying</h2>
+          <p className="text-cream/60 text-sm">Hear from the people who make Club America what it is.</p>
+        </div>
+        <button onClick={() => onNavigate && onNavigate('testimonials')}
+          className="hidden sm:inline text-sm text-cream/60 hover:text-gold transition-colors whitespace-nowrap">
+          See all →
+        </button>
+      </div>
+
+      <blockquote key={t.id} className="ca-fade-in text-center px-1 sm:px-10 min-h-[170px] flex flex-col justify-center">
+        <div className="text-gold/25 font-display text-6xl leading-none mb-1" aria-hidden="true">&ldquo;</div>
+        <p className="text-cream/90 text-lg sm:text-xl italic leading-relaxed">{t.text}</p>
+        <div className="flex items-center justify-center gap-3 mt-6">
+          {t.photo ? (
+            <img src={t.photo} alt={t.name} className="w-11 h-11 rounded-full object-cover flex-shrink-0" />
+          ) : (
+            <div className="w-11 h-11 rounded-full bg-gold/20 flex items-center justify-center flex-shrink-0">
+              <span className="text-gold font-display text-lg">{(t.name || '?')[0]}</span>
+            </div>
+          )}
+          <div className="text-left">
+            <div className="text-cream font-medium text-sm">{t.name}</div>
+            {t.role && <div className="text-gold/70 text-xs">{t.role}</div>}
+          </div>
+        </div>
+      </blockquote>
+
+      {count > 1 && (
+        <div className="flex items-center justify-center gap-4 mt-6">
+          <button onClick={() => go(idx - 1)} aria-label="Previous testimonial"
+            className="text-cream/50 hover:text-gold transition-colors p-1">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <div className="flex items-center gap-2">
+            {items.map((_, i) => (
+              <button key={i} onClick={() => go(i)} aria-label={`Go to testimonial ${i + 1}`}
+                className={`h-2 rounded-full transition-all ${i === idx ? 'w-6 bg-gold' : 'w-2 bg-cream/25 hover:bg-cream/40'}`} />
+            ))}
+          </div>
+          <button onClick={() => go(idx + 1)} aria-label="Next testimonial"
+            className="text-cream/50 hover:text-gold transition-colors p-1">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+          </button>
+        </div>
+      )}
     </section>
   );
 }
