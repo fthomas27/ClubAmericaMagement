@@ -2,8 +2,54 @@
 // Google Calendar "Secret address in iCal format" / public ICS link) and
 // returns the next upcoming events. No external dependencies.
 
+const dns = require('dns').promises;
+const net = require('net');
+
 const cache = new Map(); // url -> { at, events }
 const TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+// ---- SSRF guard -------------------------------------------------------------
+// The calendar URL is operator-configured (privileged), but we still refuse to
+// fetch anything that resolves to a private / loopback / link-local / reserved
+// address, so a misconfigured or malicious feed URL can't be used to probe the
+// internal network or cloud metadata endpoints (169.254.169.254).
+function ipIsPrivate(ip) {
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split('.').map(Number);
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;          // link-local / metadata
+    if (a === 172 && b >= 16 && b <= 31) return true; // private
+    if (a === 192 && b === 168) return true;          // private
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+    if (a >= 224) return true;                         // multicast / reserved
+    return false;
+  }
+  if (net.isIPv6(ip)) {
+    const low = ip.toLowerCase();
+    if (low === '::1' || low === '::') return true;
+    if (low.startsWith('fe80')) return true;          // link-local
+    if (low.startsWith('fc') || low.startsWith('fd')) return true; // unique-local
+    const mapped = low.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    if (mapped) return ipIsPrivate(mapped[1]);
+    return false;
+  }
+  return true; // unparseable → treat as unsafe
+}
+
+async function isSafeFeedUrl(url) {
+  let u;
+  try { u = new URL(url); } catch (_) { return false; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  let host = u.hostname;
+  if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
+  if (net.isIP(host)) return !ipIsPrivate(host);
+  try {
+    const records = await dns.lookup(host, { all: true });
+    return records.length > 0 && records.every((r) => !ipIsPrivate(r.address));
+  } catch (_) {
+    return false;
+  }
+}
 
 // Unfold lines: per RFC 5545, a leading space/tab continues the previous line.
 function unfold(text) {
@@ -54,6 +100,11 @@ async function fetchUpcoming(url, count = 3) {
   const now = Date.now();
   const hit = cache.get(url);
   if (hit && now - hit.at < TTL_MS) return upcoming(hit.events, count);
+
+  // Refuse to fetch URLs that resolve to internal/reserved addresses (SSRF).
+  if (!(await isSafeFeedUrl(url))) {
+    return hit ? upcoming(hit.events, count) : [];
+  }
 
   let ics;
   try {
