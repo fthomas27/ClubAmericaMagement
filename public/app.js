@@ -1824,6 +1824,9 @@ function AdminPanel({ users, reload }) {
   const [first, setFirst] = useState('');
   const [last, setLast] = useState('');
   const [title, setTitle] = useState('');
+  const [positions, setPositions] = useState([]);
+  const [addingPosition, setAddingPosition] = useState(false);
+  const [newPosition, setNewPosition] = useState('');
   const [role, setRole] = useState('member');
   const [managerId, setManagerId] = useState('');
   const [grade, setGrade] = useState('');
@@ -1836,18 +1839,26 @@ function AdminPanel({ users, reload }) {
   const [search, setSearch] = useState('');
   const [confirmEl, confirm] = useConfirm();
 
+  const loadPositions = useCallback(() => {
+    api('/positions').then((d) => setPositions(d.positions || [])).catch(() => {});
+  }, []);
+  useEffect(() => { loadPositions(); }, [loadPositions]);
+
   async function addUser(e) {
     e.preventDefault();
     setNotice('');
     if (!first.trim()) { setError('First name is required.'); return; }
     if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) { setError('Please enter a valid email.'); return; }
     setError(''); setAdding(true);
+    // When adding a brand-new position, the typed value wins over the dropdown.
+    const finalTitle = addingPosition ? newPosition.trim() : title;
     try {
       const d = await api('/admin/users', { method: 'POST', body: {
-        firstName: first.trim(), lastName: last.trim(), title, role, managerId: managerId ? Number(managerId) : null, grade, email,
+        firstName: first.trim(), lastName: last.trim(), title: finalTitle, role, managerId: managerId ? Number(managerId) : null, grade, email,
       }});
       setNotice(`Added ${d.user.displayName} — username "${d.user.username}", default password "${d.defaultPassword}".`);
-      setFirst(''); setLast(''); setTitle(''); setRole('member'); setManagerId(''); setGrade(''); setEmail('');
+      setFirst(''); setLast(''); setTitle(''); setAddingPosition(false); setNewPosition(''); setRole('member'); setManagerId(''); setGrade(''); setEmail('');
+      loadPositions();
       reload();
     } catch (err) { setError(err.message); }
     finally { setAdding(false); }
@@ -1908,7 +1919,26 @@ function AdminPanel({ users, reload }) {
         <div className="sm:col-span-2 font-display text-2xl text-gold">Add a Board Member</div>
         <Field label="First Name"><input className={inputCls} value={first} onChange={(e) => setFirst(e.target.value)} required /></Field>
         <Field label="Last Name"><input className={inputCls} value={last} onChange={(e) => setLast(e.target.value)} /></Field>
-        <Field label="Title / Position"><input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Grade Rep" /></Field>
+        <Field label="Title / Position">
+          {addingPosition ? (
+            <div className="space-y-2">
+              <input className={inputCls} value={newPosition} autoFocus
+                onChange={(e) => setNewPosition(e.target.value)} placeholder="e.g. Grade Rep" />
+              <button type="button" onClick={() => { setAddingPosition(false); setNewPosition(''); }}
+                className="text-xs text-cream/50 hover:text-cream/80">← Pick an existing position</button>
+            </div>
+          ) : (
+            <select className={inputCls} value={title}
+              onChange={(e) => {
+                if (e.target.value === '__new__') { setAddingPosition(true); setNewPosition(''); }
+                else setTitle(e.target.value);
+              }}>
+              <option value="">— none —</option>
+              {positions.map((p) => <option key={p.title} value={p.title}>{p.title}</option>)}
+              <option value="__new__">➕ Add new position…</option>
+            </select>
+          )}
+        </Field>
         <Field label="Role">
           <select className={inputCls} value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="member">Member</option>
