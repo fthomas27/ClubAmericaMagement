@@ -3573,7 +3573,9 @@ function PublicNav({ current, onNavigate, onEnterPortal }) {
         </button>
 
         {/* ── Desktop: horizontal nav bar with overflow into "More" ── */}
-        <nav ref={barRef} className="hidden md:flex flex-1 min-w-0 items-center justify-center mx-2 overflow-hidden">
+        {/* No overflow-clip here: visibleCount is computed before paint, and a
+            clip would also hide the "More" dropdown (it opens below the bar). */}
+        <nav ref={barRef} className="hidden md:flex flex-1 min-w-0 items-center justify-center mx-2">
           {visiblePages.map((p) => (
             <button key={p.key} onClick={() => go(p.key)}
               aria-current={current === p.key ? 'page' : undefined}
