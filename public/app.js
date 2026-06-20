@@ -1,4 +1,4 @@
-const { useState, useEffect, useMemo, useCallback, useRef } = React;
+const { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } = React;
 
 // ---------------------------------------------------------------------------
 // API helper
@@ -3507,21 +3507,63 @@ function PublicSite({ home, events, volunteerEvents, onEnterPortal }) {
   );
 }
 
-// Top navigation: logo (→ home), a dropdown menu listing every page plus the
-// board login, and a prominent Board Login button.
-function PublicNav({ current, onNavigate, onEnterPortal }) {
-  const [open, setOpen] = useState(false);
+// Top navigation. On desktop the pages are laid out as a horizontal bar across
+// the top; any that don't fit collapse into a "More ▾" dropdown (a "priority+"
+// nav). On small screens everything stays in a single dropdown menu. A
+// prominent Board Login button sits at the far right.
+const NAV_LINK_BASE = 'whitespace-nowrap px-3.5 py-2 rounded-lg text-sm font-medium transition-colors';
+const navLinkCls = (active) =>
+  `${NAV_LINK_BASE} ${active ? 'text-gold bg-cream/5' : 'text-cream/80 hover:text-cream hover:bg-cream/5'}`;
 
-  // Close the dropdown on any outside click.
+function PublicNav({ current, onNavigate, onEnterPortal }) {
+  const [moreOpen, setMoreOpen] = useState(false);   // desktop overflow menu
+  const [mobileOpen, setMobileOpen] = useState(false); // small-screen full menu
+  const [visibleCount, setVisibleCount] = useState(PUBLIC_PAGES.length);
+
+  const barRef = useRef(null);     // the visible desktop link row
+  const measureRef = useRef(null); // a hidden row holding every link, used to measure
+
+  // Close any open menu on an outside click.
   useEffect(() => {
-    if (!open) return;
-    const close = () => setOpen(false);
+    if (!moreOpen && !mobileOpen) return;
+    const close = () => { setMoreOpen(false); setMobileOpen(false); };
     window.addEventListener('click', close);
     return () => window.removeEventListener('click', close);
-  }, [open]);
+  }, [moreOpen, mobileOpen]);
 
-  const go = (key) => { setOpen(false); onNavigate(key); };
+  // Work out how many top-level links fit; the remainder go into "More".
+  useLayoutEffect(() => {
+    const recompute = () => {
+      const bar = barRef.current, measure = measureRef.current;
+      if (!bar || !measure) return;
+      const available = bar.clientWidth;
+      const nodes = Array.from(measure.children); // [link0 … linkN, moreBtn]
+      const moreW = nodes.length ? nodes[nodes.length - 1].getBoundingClientRect().width : 0;
+      const widths = nodes.slice(0, PUBLIC_PAGES.length).map((el) => el.getBoundingClientRect().width);
+      const total = widths.reduce((a, b) => a + b, 0);
+      if (total <= available + 0.5) { setVisibleCount(PUBLIC_PAGES.length); return; }
+      // Overflow: reserve room for the "More" button, then fit what we can.
+      let used = moreW, count = 0;
+      for (const w of widths) {
+        if (used + w > available) break;
+        used += w; count++;
+      }
+      setVisibleCount(Math.max(count, 1));
+    };
+    recompute();
+    const ro = new ResizeObserver(recompute);
+    if (barRef.current) ro.observe(barRef.current);
+    window.addEventListener('resize', recompute);
+    // Re-measure once webfonts load, since they change link widths.
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(recompute);
+    return () => { ro.disconnect(); window.removeEventListener('resize', recompute); };
+  }, []);
+
+  const go = (key) => { setMoreOpen(false); setMobileOpen(false); onNavigate(key); };
+  const visiblePages = PUBLIC_PAGES.slice(0, visibleCount);
+  const overflowPages = PUBLIC_PAGES.slice(visibleCount);
   const currentLabel = (PUBLIC_PAGES.find((p) => p.key === current) || PUBLIC_PAGES[0]).label;
+  const overflowActive = overflowPages.some((p) => p.key === current);
 
   return (
     <header className="sticky top-0 z-40 bg-navy/85 backdrop-blur border-b border-cream/10">
@@ -3529,16 +3571,65 @@ function PublicNav({ current, onNavigate, onEnterPortal }) {
         <button onClick={() => go('home')} className="flex items-center shrink-0" aria-label="Club America home">
           <Logo size="nav" />
         </button>
-        <div className="flex items-center gap-2 sm:gap-3">
-          <div className="relative" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open}
+
+        {/* ── Desktop: horizontal nav bar with overflow into "More" ── */}
+        <nav ref={barRef} className="hidden md:flex flex-1 min-w-0 items-center justify-center mx-2 overflow-hidden">
+          {visiblePages.map((p) => (
+            <button key={p.key} onClick={() => go(p.key)}
+              aria-current={current === p.key ? 'page' : undefined}
+              className={navLinkCls(current === p.key)}>
+              {p.label}
+            </button>
+          ))}
+          {overflowPages.length > 0 && (
+            <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+              <button onClick={() => setMoreOpen((v) => !v)} aria-haspopup="menu" aria-expanded={moreOpen}
+                className={`flex items-center gap-1.5 ${navLinkCls(overflowActive)}`}>
+                More
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                  className={`transition-transform ${moreOpen ? 'rotate-180' : ''}`}><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              {moreOpen && (
+                <div role="menu" className="absolute right-0 mt-2 w-56 bg-navy2 border border-cream/15 rounded-xl shadow-xl shadow-black/40 py-1.5 overflow-hidden">
+                  {overflowPages.map((p) => (
+                    <button key={p.key} role="menuitem" onClick={() => go(p.key)}
+                      className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${current === p.key ? 'text-gold bg-cream/5' : 'text-cream/80 hover:text-cream hover:bg-cream/5'}`}>
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </nav>
+
+        {/* Hidden measuring row — renders every link (plus the More button) so
+            we can read their natural widths regardless of what's visible. It's
+            clipped (height:0, overflow:hidden, bounded to the header width) so
+            it can never add to the page's scrollable area; getBoundingClientRect
+            still reports each child's true width through the clip. */}
+        <div ref={measureRef} aria-hidden="true"
+          className="pointer-events-none"
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 0, overflow: 'hidden', visibility: 'hidden', whiteSpace: 'nowrap' }}>
+          {PUBLIC_PAGES.map((p) => (
+            <span key={p.key} className={NAV_LINK_BASE} style={{ display: 'inline-block' }}>{p.label}</span>
+          ))}
+          <span className={`inline-flex items-center gap-1.5 ${NAV_LINK_BASE}`}>
+            More
+            <svg width="14" height="14" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          {/* ── Mobile: single dropdown with every page + login ── */}
+          <div className="relative md:hidden" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => setMobileOpen((v) => !v)} aria-haspopup="menu" aria-expanded={mobileOpen}
               className="flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm text-cream/85 border border-cream/15 hover:text-cream hover:border-cream/30 hover:bg-cream/5 transition-colors">
-              <span className="hidden sm:inline text-cream/45">Menu —</span>
               <span className="font-medium">{currentLabel}</span>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-                className={`transition-transform ${open ? 'rotate-180' : ''}`}><path d="M6 9l6 6 6-6"/></svg>
+                className={`transition-transform ${mobileOpen ? 'rotate-180' : ''}`}><path d="M6 9l6 6 6-6"/></svg>
             </button>
-            {open && (
+            {mobileOpen && (
               <div role="menu" className="absolute right-0 mt-2 w-60 bg-navy2 border border-cream/15 rounded-xl shadow-xl shadow-black/40 py-1.5 overflow-hidden">
                 {PUBLIC_PAGES.map((p) => (
                   <button key={p.key} role="menuitem" onClick={() => go(p.key)}
@@ -3547,7 +3638,7 @@ function PublicNav({ current, onNavigate, onEnterPortal }) {
                   </button>
                 ))}
                 <div className="h-px bg-cream/10 my-1.5" />
-                <button role="menuitem" onClick={() => { setOpen(false); onEnterPortal(); }}
+                <button role="menuitem" onClick={() => { setMobileOpen(false); onEnterPortal(); }}
                   className="w-full text-left px-4 py-2.5 text-sm text-gold hover:bg-cream/5 transition-colors">
                   Board Member Login →
                 </button>
