@@ -3122,19 +3122,30 @@ function MeetTheBoard() {
   );
   if (!members || members.length === 0) return null;
 
-  const tree = buildBoardTree(members);
+  // Full org chart: the hierarchy is built from non-grade-rep members, and the
+  // grade reps are grouped into their own section below (matching the admin
+  // Org Chart). Big Board members get a red ring; tap anyone for their bio.
+  const isGradeRep = (m) => (m.title || '').toLowerCase().includes('grade rep');
+  const gradeReps = members.filter(isGradeRep);
+  const boardMembers = members.filter((m) => !isGradeRep(m));
+  const tree = buildBoardTree(boardMembers);
+
+  const MemberCard = (m) => (
+    <Card3D maxTilt={7}>
+      <button onClick={() => { setSel(m); track('board_profile', m.displayName); }}
+        className={`bg-navy2 border rounded-xl px-4 py-3 flex flex-col items-center gap-2 w-36 hover:-translate-y-1 hover:shadow-md hover:shadow-black/30 transition-all duration-200 ${m.bigBoard ? 'border-red/70 hover:border-red' : 'border-cream/15 hover:border-gold'}`}>
+        <Avatar member={m} size={56} />
+        <div className="text-cream text-sm font-medium text-center leading-tight">{m.displayName}</div>
+        <div className="text-gold/80 text-xs text-center leading-tight">{m.title || roleLabel(m.role)}</div>
+      </button>
+    </Card3D>
+  );
+
   const renderNode = (node, depth = 0) => {
     if (depth > 20) return null;
     return (
       <div key={node.id} className="flex flex-col items-center">
-        <Card3D maxTilt={7}>
-          <button onClick={() => { setSel(node); track('board_profile', node.displayName); }}
-            className="bg-navy2 border border-cream/15 rounded-xl px-4 py-3 flex flex-col items-center gap-2 w-36 hover:border-gold hover:-translate-y-1 hover:shadow-md hover:shadow-black/30 transition-all duration-200">
-            <Avatar member={node} size={56} />
-            <div className="text-cream text-sm font-medium text-center leading-tight">{node.displayName}</div>
-            <div className="text-gold/80 text-xs text-center leading-tight">{node.title || roleLabel(node.role)}</div>
-          </button>
-        </Card3D>
+        {MemberCard(node)}
         {node.children.length > 0 && <div className="w-px h-4 bg-cream/20" />}
         {node.children.length > 0 && (
           <div className="flex flex-wrap justify-center gap-4">{node.children.map((n) => renderNode(n, depth + 1))}</div>
@@ -3146,10 +3157,30 @@ function MeetTheBoard() {
   return (
     <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6">
       <h2 className="font-display text-3xl text-gold mb-1">Meet the Board</h2>
-      <p className="text-cream/60 text-sm mb-6">Tap anyone to learn more about them.</p>
-      <div className="flex flex-col items-center gap-4 overflow-x-auto pb-2">
-        {tree.map(renderNode)}
+      <p className="text-cream/60 text-sm mb-6">Our full org chart — tap anyone to learn more about them.</p>
+      <div className="flex flex-col items-center gap-6 overflow-x-auto pb-2">
+        {tree.map((r, i) => (
+          <React.Fragment key={r.id}>
+            {i > 0 && <div className="w-px h-4 bg-cream/20" />}
+            {renderNode(r)}
+          </React.Fragment>
+        ))}
+
+        {gradeReps.length > 0 && (
+          <div className="w-full mt-4">
+            <div className="font-display text-2xl text-gold text-center mb-4">Grade Representatives</div>
+            <div className="flex flex-wrap justify-center gap-4">
+              {gradeReps.map((m) => <React.Fragment key={m.id}>{MemberCard(m)}</React.Fragment>)}
+            </div>
+          </div>
+        )}
       </div>
+
+      <div className="flex flex-wrap justify-center gap-6 text-xs text-cream/50 mt-6 pt-4 border-t border-cream/10">
+        <span className="flex items-center gap-2"><span className="inline-block w-3 h-3 rounded border-2 border-red" /> Big Board</span>
+        <span className="flex items-center gap-2"><span className="inline-block w-3 h-3 rounded border-2 border-cream/30" /> Board Member</span>
+      </div>
+
       {sel && <BoardModal member={sel} onClose={() => setSel(null)} />}
     </section>
   );
