@@ -318,20 +318,20 @@ app.get('/api/home', async (req, res) => {
 // Returns hasPhoto (boolean) instead of the full base64 blob to keep the payload small.
 app.get('/api/board', (req, res) => {
   const members = db
-    .prepare("SELECT id, displayName, title, role, grade, managerId, bio, photo FROM users WHERE bigBoard = 1 ORDER BY displayName")
+    .prepare("SELECT id, displayName, title, role, grade, managerId, bio, bigBoard, photo FROM users WHERE username != 'logistics' ORDER BY displayName")
     .all()
-    .map(({ photo, ...m }) => ({ ...m, hasPhoto: !!photo }));
+    .map(({ photo, ...m }) => ({ ...m, bigBoard: !!m.bigBoard, hasPhoto: !!photo }));
   res.json({ members });
 });
 
-// Serves a single user's profile photo. Public board members' photos are shown
-// on the public "Meet the Board" page with no auth; every other user's photo
-// requires a valid session, so private profile photos can't be enumerated by
-// id by logged-out visitors.
+// Serves a single user's profile photo. Every board member now appears on the
+// public "Meet the Board" org chart, so their photos are served with no auth.
+// The hidden 'logistics' system account is never a real board member, so its
+// photo (if any) still requires a valid session.
 app.get('/api/users/:id/photo', (req, res) => {
-  const row = db.prepare('SELECT photo, bigBoard FROM users WHERE id = ?').get(Number(req.params.id));
+  const row = db.prepare('SELECT photo, username FROM users WHERE id = ?').get(Number(req.params.id));
   if (!row || !row.photo) return res.status(404).end();
-  if (!row.bigBoard) {
+  if (row.username === 'logistics') {
     const header = req.headers.authorization || '';
     const token = header.startsWith('Bearer ') ? header.slice(7) : null;
     let valid = false;
