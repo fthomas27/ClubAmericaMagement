@@ -2046,6 +2046,7 @@ function AdminPanel({ users, reload }) {
                   { key: 'canEditHome', label: 'Edit Site' },
                   { key: 'canViewLogistics', label: 'View Login Activity' },
                   { key: 'canManageSocial', label: 'Social Media Manager' },
+                  { key: 'smsOptIn', label: 'Text Notifications' },
                 ].map(({ key, label }) => (
                   <label key={key} className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={!!u[key]}
