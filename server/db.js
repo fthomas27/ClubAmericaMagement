@@ -614,6 +614,7 @@ function init() {
   if (!cols.includes('canManageSocial')) db.exec("ALTER TABLE users ADD COLUMN canManageSocial INTEGER NOT NULL DEFAULT 0");
   if (!cols.includes('phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
   if (!cols.includes('hiddenTabs')) db.exec("ALTER TABLE users ADD COLUMN hiddenTabs TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('smsOptIn')) db.exec("ALTER TABLE users ADD COLUMN smsOptIn INTEGER NOT NULL DEFAULT 0");
 
   // Auto-enroll existing users with email addresses into the newsletter list.
   try {

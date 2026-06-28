@@ -18,6 +18,7 @@ process.on('uncaughtException', (err) => {
 const { db, init, seed } = require('./db');
 const { fetchUpcoming, clearCache } = require('./calendar');
 const { notify, escHtml } = require('./email');
+const { notifySms: _sendSms, smsEnabled } = require('./sms');
 const { analyzeTeamHealth, chatWithAI, chatWithHowTo, aiEnabled } = require('./ai');
 const {
   signToken,
@@ -115,6 +116,17 @@ function pushNotification(userId, message, link = '', type = 'info') {
       .run(userId, String(message).slice(0, 500), String(link || '').slice(0, 200), type);
   } catch (e) {
     console.error('[notification] insert failed:', e.message);
+  }
+}
+
+// ---- SMS helper: looks up the user's opt-in preference before sending -------
+function notifySms(userId, message) {
+  if (!userId) return;
+  try {
+    const u = db.prepare('SELECT phone, smsOptIn FROM users WHERE id = ?').get(userId);
+    if (u && u.smsOptIn && u.phone) _sendSms(u.phone, message);
+  } catch (e) {
+    console.error('[sms] lookup failed:', e.message);
   }
 }
 
@@ -377,6 +389,7 @@ app.post('/api/submissions', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name
       `New ${label}`,
       `<b>${escHtml(name)}</b>${grade ? ' (grade ' + escHtml(grade) + ')' : ''} submitted a ${label}.<br/>Email: ${escHtml(email)}${message ? '<br/>Message: ' + escHtml(message) : ''}<br/><br/>See it in the Get Involved inbox.`);
     pushNotification(r.id, `New ${label} from ${name}${grade ? ' (grade ' + grade + ')' : ''}`, 'submissions', 'submission');
+    notifySms(r.id, `Club America: New ${label} from ${name}${grade ? ' (grade ' + grade + ')' : ''}. Check the Get Involved inbox.`);
   }
 
   res.status(201).json({ ok: true });
@@ -616,16 +629,17 @@ app.use('/api', authenticate, requirePasswordChanged);
 
 // ---- Own profile (photo + intro bio) ----------------------------------------
 app.get('/api/me/profile', (req, res) => {
-  const row = db.prepare('SELECT photo, bio, email, phone, profileComplete FROM users WHERE id = ?').get(req.user.id);
-  res.json({ photo: row.photo || '', bio: row.bio || '', email: row.email || '', phone: row.phone || '', profileComplete: !!row.profileComplete });
+  const row = db.prepare('SELECT photo, bio, email, phone, smsOptIn, profileComplete FROM users WHERE id = ?').get(req.user.id);
+  res.json({ photo: row.photo || '', bio: row.bio || '', email: row.email || '', phone: row.phone || '', smsOptIn: !!row.smsOptIn, profileComplete: !!row.profileComplete });
 });
 
 app.put('/api/me/profile', (req, res) => {
-  let { photo, bio, email, phone } = req.body || {};
+  let { photo, bio, email, phone, smsOptIn } = req.body || {};
   photo = typeof photo === 'string' ? photo : '';
   bio = String(bio || '').trim().slice(0, 4000);
   email = String(email || '').trim().slice(0, 200);
   phone = String(phone || '').trim().slice(0, 30);
+  const smsFlag = smsOptIn ? 1 : 0;
   if (photo && !/^data:image\/(png|jpe?g|webp);base64,/.test(photo)) {
     return res.status(400).json({ error: 'Photo must be an image' });
   }
@@ -633,8 +647,8 @@ app.put('/api/me/profile', (req, res) => {
   if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'Please enter a valid email' });
   // An empty photo means "no new photo chosen" — keep the existing one rather
   // than wiping it (there is no remove-photo flow; users replace instead).
-  db.prepare('UPDATE users SET photo = COALESCE(?, photo), bio = ?, email = ?, phone = ?, profileComplete = 1 WHERE id = ?')
-    .run(photo || null, bio, email, phone, req.user.id);
+  db.prepare('UPDATE users SET photo = COALESCE(?, photo), bio = ?, email = ?, phone = ?, smsOptIn = ?, profileComplete = 1 WHERE id = ?')
+    .run(photo || null, bio, email, phone, smsFlag, req.user.id);
   res.json({ user: publicUser(getUser(req.user.id)) });
 });
 
@@ -1235,6 +1249,7 @@ app.post('/api/funding', rateLimit({ windowMs: 60 * 60 * 1000, max: 20, name: 'f
     notify(r.email, 'New funding request', 'Funding request awaiting review',
       `<b>${escHtml(req.user.displayName)}</b> requested funding: <b>${escHtml(safeTitle)}</b> ($${amt}).`);
     pushNotification(r.id, `${req.user.displayName} submitted a funding request: "${safeTitle}" ($${amt})`, 'funding', 'funding');
+    notifySms(r.id, `Club America: ${req.user.displayName} submitted a funding request: "${safeTitle}" ($${amt}). Review it in Funding.`);
   }
   res.status(201).json({ request: db.prepare('SELECT * FROM funding_requests WHERE id=?').get(info.lastInsertRowid) });
 });
@@ -1261,18 +1276,21 @@ app.patch('/api/funding/:id', (req, res) => {
       logApproval('funding', fr.id, 'approved', req.user, reviewNotes || fr.title);
     })();
     pushNotification(fr.submittedById, `Your funding request "${fr.title}" was approved by ${req.user.displayName}`, 'funding', 'funding');
+    notifySms(fr.submittedById, `Club America: Your funding request "${fr.title}" was approved by ${req.user.displayName}.`);
   } else if (action === 'deny') {
     db.transaction(() => {
       db.prepare(`UPDATE funding_requests SET status='denied', reviewedById=?, reviewedAt=datetime('now'), reviewNotes=COALESCE(?,reviewNotes) WHERE id=?`).run(req.user.id, reviewNotes??null, fr.id);
       logApproval('funding', fr.id, 'denied', req.user, reviewNotes || fr.title);
     })();
     pushNotification(fr.submittedById, `Your funding request "${fr.title}" was denied by ${req.user.displayName}`, 'funding', 'funding');
+    notifySms(fr.submittedById, `Club America: Your funding request "${fr.title}" was denied by ${req.user.displayName}.`);
   } else if (action === 'purchased') {
     db.transaction(() => {
       db.prepare(`UPDATE funding_requests SET status='purchased', purchasedById=?, purchasedAt=datetime('now') WHERE id=?`).run(req.user.id, fr.id);
       logApproval('funding', fr.id, 'purchased', req.user, fr.title);
     })();
     pushNotification(fr.submittedById, `Your funding request "${fr.title}" was marked purchased by ${req.user.displayName}`, 'funding', 'funding');
+    notifySms(fr.submittedById, `Club America: Your funding request "${fr.title}" was marked as purchased by ${req.user.displayName}.`);
   }
   res.json({ request: db.prepare('SELECT * FROM funding_requests WHERE id=?').get(fr.id) });
 });
@@ -1309,6 +1327,7 @@ app.post('/api/board-apps', rateLimit({ windowMs: 60 * 60 * 1000, max: 10, name:
     notify(a.email, 'New board application', 'Board application awaiting review',
       `<b>${escHtml(req.user.displayName)}</b> applied for <b>${escHtml(safePosition)}</b>.`);
     pushNotification(a.id, `${req.user.displayName} applied for "${safePosition}"`, 'board-apps', 'board-app');
+    notifySms(a.id, `Club America: ${req.user.displayName} applied for "${safePosition}". Review it in Board Applications.`);
   }
   res.status(201).json({ application: db.prepare('SELECT * FROM board_applications WHERE id=?').get(info.lastInsertRowid) });
 });
@@ -1326,6 +1345,7 @@ app.patch('/api/board-apps/:id', (req, res) => {
       logApproval('board-app', ba.id, status, req.user, ba.positionTitle);
     })();
     pushNotification(ba.userId, `Your application for "${ba.positionTitle}" was ${status} by ${req.user.displayName}`, 'board-apps', 'board-app');
+    notifySms(ba.userId, `Club America: Your application for "${ba.positionTitle}" was ${status} by ${req.user.displayName}.`);
   } else {
     return res.status(400).json({ error: 'Invalid action — use "accept" or "decline"' });
   }
@@ -1485,6 +1505,7 @@ app.post('/api/tasks', rateLimit({ windowMs: 60 * 60 * 1000, max: 60, name: 'tas
         'You have a new task',
         `<b>${escHtml(req.user.displayName)}</b> assigned you a task: <b>${escHtml(taskName)}</b>.`);
       pushNotification(owner.id, `${req.user.displayName} assigned you a task: "${taskName}"`, 'tasks', 'task');
+      notifySms(owner.id, `Club America: ${req.user.displayName} assigned you a task: "${taskName}". Check your Tasks page.`);
     } else if (approverId) {
       // Pending — tell the approver they have something to review.
       const approver = getUser(approverId);
@@ -1492,6 +1513,7 @@ app.post('/api/tasks', rateLimit({ windowMs: 60 * 60 * 1000, max: 60, name: 'tas
         'Task awaiting your approval',
         `<b>${escHtml(req.user.displayName)}</b> wants to assign <b>${escHtml(owner.displayName)}</b> the task <b>${escHtml(taskName)}</b>. Approve it in Pending Approvals.`);
       pushNotification(approverId, `${req.user.displayName} wants to assign ${owner.displayName} the task "${taskName}" — needs your approval`, 'approvals', 'approval');
+      notifySms(approverId, `Club America: ${req.user.displayName} wants to assign ${owner.displayName} the task "${taskName}" — needs your approval.`);
     }
   }
 
@@ -1605,9 +1627,11 @@ app.post('/api/tasks/:id/approve', (req, res) => {
     'You have a new task',
     `${assigner ? '<b>' + escHtml(assigner.displayName) + '</b> assigned' : 'You were assigned'} the task <b>${escHtml(task.name)}</b> (approved by ${escHtml(req.user.displayName)}).`);
   pushNotification(owner && owner.id, `Your task "${task.name}" was approved by ${req.user.displayName}`, 'tasks', 'task');
+  notifySms(owner && owner.id, `Club America: Your task "${task.name}" was approved by ${req.user.displayName}. Check your Tasks page.`);
   // Let the original sender know their assignment went through.
   if (assigner && assigner.id !== owner.id) {
     pushNotification(assigner.id, `${req.user.displayName} approved the task "${task.name}" you assigned to ${owner.displayName}`, 'tasks', 'task');
+    notifySms(assigner.id, `Club America: ${req.user.displayName} approved the task "${task.name}" you assigned to ${owner.displayName}.`);
   }
   res.json({ task: taskWithNames(getTask(task.id)) });
 });
@@ -1624,6 +1648,7 @@ app.post('/api/tasks/:id/reject', (req, res) => {
   // Tell whoever proposed the assignment that it was turned down.
   if (task.assignedById && task.assignedById !== req.user.id) {
     pushNotification(task.assignedById, `${req.user.displayName} rejected the task "${task.name}" you proposed`, 'tasks', 'task');
+    notifySms(task.assignedById, `Club America: ${req.user.displayName} rejected the task "${task.name}" you proposed.`);
   }
   res.json({ ok: true });
 });
@@ -1653,6 +1678,7 @@ app.post('/api/tasks/:id/comments', rateLimit({ windowMs: 60 * 60 * 1000, max: 1
   notifyIds.delete(req.user.id);
   for (const uid of notifyIds) {
     pushNotification(uid, `${req.user.displayName} commented on "${task.name}"`, 'tasks', 'task');
+    notifySms(uid, `Club America: ${req.user.displayName} commented on your task "${task.name}".`);
   }
   res.status(201).json({ comment });
 });
@@ -1931,6 +1957,7 @@ app.post('/api/polls', (req, res) => {
   const allUsers = db.prepare("SELECT id FROM users WHERE username != 'logistics' AND id != ?").all(req.user.id);
   for (const u of allUsers) {
     pushNotification(u.id, `${req.user.displayName} posted a new poll: "${String(question).trim().slice(0, 60)}"`, 'polls', 'info');
+    notifySms(u.id, `Club America: ${req.user.displayName} posted a new poll: "${String(question).trim().slice(0, 60)}". Go vote!`);
   }
   res.status(201).json({ poll: db.prepare('SELECT * FROM polls WHERE id = ?').get(info.lastInsertRowid) });
 });
@@ -2694,6 +2721,7 @@ app.patch('/api/reimbursements/:id', (req, res) => {
     pushNotification(submitter.id,
       `Your reimbursement request ($${Number(r.amount).toFixed(2)} · ${r.category}) was ${status}.`,
       'reimbursements', 'info');
+    notifySms(submitter.id, `Club America: Your reimbursement request ($${Number(r.amount).toFixed(2)} · ${r.category}) was ${status}.`);
   }
   res.json({ ok: true, status });
 });
@@ -2717,6 +2745,7 @@ app.post('/api/checkins/nudge/:userId', (req, res) => {
   const target = getUser(Number(req.params.userId));
   if (!target) return res.status(404).json({ error: 'User not found' });
   pushNotification(target.id, `${req.user.displayName} is reminding you to submit your weekly check-in.`, 'checkin', 'info');
+  notifySms(target.id, `Club America: ${req.user.displayName} is reminding you to submit your weekly check-in.`);
   res.json({ ok: true });
 });
 
@@ -2915,6 +2944,7 @@ app.post('/api/meetings/:id/action-items', (req, res) => {
 
   if (parsedAssignee) {
     pushNotification(parsedAssignee, 'New action item from ' + meeting.title + ': "' + String(text).slice(0, 100) + '"', '', 'info');
+    notifySms(parsedAssignee, `Club America: New action item from ${meeting.title}: "${String(text).slice(0, 100)}"`);
   }
   res.json({ id: result.lastInsertRowid, taskId });
 });
@@ -2975,6 +3005,7 @@ app.post('/api/meetings/:id/action-items/:itemId/promote', (req, res) => {
   );
   db.prepare('UPDATE meeting_action_items SET taskId = ? WHERE id = ?').run(taskResult.lastInsertRowid, itemId);
   pushNotification(item.assigneeId, 'A meeting action item has been converted to a task: "' + item.text.slice(0, 100) + '"', '', 'info');
+  notifySms(item.assigneeId, `Club America: A meeting action item was converted to a task: "${item.text.slice(0, 100)}". Check your Tasks page.`);
   res.json({ taskId: taskResult.lastInsertRowid });
 });
 

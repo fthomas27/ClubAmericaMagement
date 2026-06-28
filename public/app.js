@@ -558,12 +558,13 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
   const [bio, setBio] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [smsOptIn, setSmsOptIn] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [cropping, setCropping] = useState(false);
 
   useEffect(() => {
-    api('/me/profile').then((d) => { setPhoto(d.photo || ''); setBio(d.bio || ''); setEmail(d.email || ''); setPhone(d.phone || ''); }).catch(() => {});
+    api('/me/profile').then((d) => { setPhoto(d.photo || ''); setBio(d.bio || ''); setEmail(d.email || ''); setPhone(d.phone || ''); setSmsOptIn(!!d.smsOptIn); }).catch(() => {});
   }, []);
 
   function onFile(e) {
@@ -593,7 +594,7 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
     if (forced && phone.replace(/\D/g, '').length < 10) { setError('Please add a phone number (at least 10 digits) so the board can reach you.'); return; }
     setLoading(true);
     try {
-      const d = await api('/me/profile', { method: 'PUT', body: { photo, bio, email, phone } });
+      const d = await api('/me/profile', { method: 'PUT', body: { photo, bio, email, phone, smsOptIn } });
       onDone(d.user);
     } catch (err) { setError(err.message); } finally { setLoading(false); }
   }
@@ -633,6 +634,14 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
         <input type="tel" className={inputCls} value={phone}
           onChange={(e) => setPhone(e.target.value)} placeholder="(555) 000-0000" />
       </Field>
+
+      <label className="flex items-center gap-3 cursor-pointer select-none">
+        <input type="checkbox" checked={smsOptIn} onChange={(e) => setSmsOptIn(e.target.checked)}
+          className="w-4 h-4 accent-gold rounded" />
+        <span className="text-sm text-cream/80">
+          Send me text (SMS) notifications for tasks, approvals, and other updates
+        </span>
+      </label>
 
       <Field label="Introduce yourself (a paragraph or two)">
         <textarea className={inputCls + ' min-h-[140px] resize-y'} value={bio}
