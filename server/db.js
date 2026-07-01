@@ -1,7 +1,23 @@
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
+
+// Generate a random, hard-to-guess temporary password for newly created or
+// reset accounts. Never derive the initial password from the username (or any
+// other publicly known value): usernames are deterministic and exposed on the
+// public board/org-chart, so a username-equals-password default would let
+// anyone log into a not-yet-onboarded account. The alphabet drops visually
+// ambiguous characters (0/O, 1/l/I) so the password is easy to read aloud.
+function generateTempPassword(length = 14) {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  let out = '';
+  for (let i = 0; i < length; i++) {
+    out += alphabet[crypto.randomInt(alphabet.length)];
+  }
+  return out;
+}
 
 const DB_PATH =
   process.env.DB_PATH ||
@@ -691,14 +707,20 @@ function seed() {
     VALUES (@username, @firstName, @lastName, @displayName, @passwordHash, @role, @title, 1)
   `);
 
+  // Collect the one-time temporary passwords so the operator running the seed
+  // can distribute them out-of-band. These are printed once to the server
+  // console below and never stored in plaintext.
+  const tempPasswords = [];
   const tx = db.transaction(() => {
     for (const u of SEED_USERS) {
+      const tempPassword = generateTempPassword();
+      tempPasswords.push({ username: u.username, tempPassword });
       insert.run({
         username: u.username,
         firstName: u.firstName,
         lastName: u.lastName,
         displayName: displayNameFor(u),
-        passwordHash: bcrypt.hashSync(u.username, 10),
+        passwordHash: bcrypt.hashSync(tempPassword, 10),
         role: u.role,
         title: u.title,
       });
@@ -726,7 +748,17 @@ function seed() {
     setGrade.run('12', 'bhastings');
   });
   tx();
+
+  // Print the temporary passwords once. This is the only time they exist in
+  // plaintext; the operator must distribute them to each board member, who is
+  // then forced to change their password on first login (firstLogin = 1).
+  console.log('\n\x1b[33m=== Seeded accounts — one-time temporary passwords ===');
+  console.log('Distribute these securely; each user must change it on first login.\x1b[0m');
+  for (const { username, tempPassword } of tempPasswords) {
+    console.log(`  ${username.padEnd(16)} ${tempPassword}`);
+  }
+  console.log('');
   return true;
 }
 
-module.exports = { db, init, seed, SEED_USERS, displayNameFor };
+module.exports = { db, init, seed, SEED_USERS, displayNameFor, generateTempPassword };

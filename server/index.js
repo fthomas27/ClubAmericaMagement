@@ -15,7 +15,7 @@ process.on('uncaughtException', (err) => {
   console.error('Uncaught exception:', err);
 });
 
-const { db, init, seed } = require('./db');
+const { db, init, seed, generateTempPassword } = require('./db');
 const { fetchUpcoming, clearCache } = require('./calendar');
 const { notify, escHtml } = require('./email');
 const { analyzeTeamHealth, chatWithAI, chatWithHowTo, aiEnabled } = require('./ai');
@@ -2261,14 +2261,18 @@ app.post('/api/admin/users', requireAdmin, rateLimit({ windowMs: 60 * 60 * 1000,
     username = base + (++n);
   }
   const displayName = lastName ? `${firstName} ${lastName}` : firstName;
+  // Random, unguessable initial password — never the (publicly derivable)
+  // username. The admin relays this to the new member, who must change it on
+  // first login (firstLogin = 1).
+  const tempPassword = generateTempPassword();
   const info = db
     .prepare(`INSERT INTO users (username, firstName, lastName, displayName, passwordHash, role, title, managerId, grade, email, firstLogin)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
-    .run(username, firstName, lastName, displayName, bcrypt.hashSync(username, 10), role, title || '', managerId || null, grade, email);
+    .run(username, firstName, lastName, displayName, bcrypt.hashSync(tempPassword, 10), role, title || '', managerId || null, grade, email);
 
   if (managerId) refreshRole(Number(managerId));
   if (email) newsletterEnroll(email, displayName, 'auto');
-  res.status(201).json({ user: publicUser(getUser(info.lastInsertRowid)), defaultPassword: username });
+  res.status(201).json({ user: publicUser(getUser(info.lastInsertRowid)), defaultPassword: tempPassword });
 });
 
 app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
@@ -2364,12 +2368,10 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     user.id,
   );
 
-  // If the username changed and the user hasn't set a custom password yet,
-  // keep the default password in sync with the new username.
-  if (newUsername && newUsername !== user.username && user.firstLogin) {
-    db.prepare('UPDATE users SET passwordHash = ? WHERE id = ?')
-      .run(bcrypt.hashSync(newUsername, 10), user.id);
-  }
+  // Note: the initial password is a random temporary secret set at account
+  // creation/reset, independent of the username — so renaming a user must not
+  // touch their password. (Previously the password was re-synced to the new
+  // username, which reintroduced a guessable-credential window.)
 
   // Recompute manager flags for affected supervisors and the edited user themselves.
   if (prevManager) refreshRole(prevManager);
@@ -2402,13 +2404,16 @@ app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
-// Reset a user's password back to their username default (admin convenience).
+// Reset a user's password to a fresh random temporary password (admin
+// convenience). The new password is returned once so the admin can relay it;
+// the user is forced to change it on next login (firstLogin = 1).
 app.post('/api/admin/users/:id/reset-password', requireAdmin, rateLimit({ windowMs: 15 * 60 * 1000, max: 15, name: 'admin-reset-pw' }), (req, res) => {
   const target = getUser(Number(req.params.id));
   if (!target) return res.status(404).json({ error: 'User not found' });
+  const tempPassword = generateTempPassword();
   db.prepare('UPDATE users SET passwordHash = ?, firstLogin = 1 WHERE id = ?')
-    .run(bcrypt.hashSync(target.username, 10), target.id);
-  res.json({ ok: true, defaultPassword: target.username });
+    .run(bcrypt.hashSync(tempPassword, 10), target.id);
+  res.json({ ok: true, defaultPassword: tempPassword });
 });
 
 // ---- AI assistant -----------------------------------------------------------
