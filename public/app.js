@@ -70,6 +70,58 @@ function roleLabel(role) {
   return { admin: 'Admin', manager: 'Manager', member: 'Member' }[role] || role;
 }
 
+// ---------------------------------------------------------------------------
+// Americana accents — small, reusable flag motifs so every page carries the
+// red / white / blue identity without each one inventing its own.
+// ---------------------------------------------------------------------------
+const OLD_GLORY_BLUE = '#3b5bdb';
+
+// Thin old-glory hairline. Sits at the very top of headers and standalone pages.
+function TricolorBar({ className = '' }) {
+  return (
+    <div className={`h-[3px] bg-gradient-to-r from-red via-cream/60 to-[#3b5bdb] ${className}`} aria-hidden="true" />
+  );
+}
+
+// Centered red-bar ★★★ blue-bar divider, used under page and section titles.
+function StarDivider({ className = '', compact = false }) {
+  return (
+    <div className={`flex items-center justify-center gap-3 ${className}`} aria-hidden="true">
+      <span className={`h-[2px] rounded-full bg-red/70 ${compact ? 'w-8' : 'w-12'}`} />
+      <span className={`text-gold/80 tracking-[0.35em] ${compact ? 'text-[10px]' : 'text-xs'}`}>★ ★ ★</span>
+      <span className={`h-[2px] rounded-full ${compact ? 'w-8' : 'w-12'}`} style={{ background: 'rgba(59,91,219,0.75)' }} />
+    </div>
+  );
+}
+
+// Left-aligned miniature flag underline (red / white / blue dashes) for
+// left-aligned headings like the portal greeting.
+function FlagUnderline({ className = '' }) {
+  return (
+    <div className={`flex gap-1.5 ${className}`} aria-hidden="true">
+      <span className="h-[3px] w-10 rounded-full bg-red/80" />
+      <span className="h-[3px] w-10 rounded-full bg-cream/40" />
+      <span className="h-[3px] w-10 rounded-full" style={{ background: 'rgba(59,91,219,0.8)' }} />
+    </div>
+  );
+}
+
+// Full-page patriotic backdrop: faint old-glory glows, a sparse starfield and
+// (optionally) the flag-stripe texture along the bottom. Purely decorative —
+// parent must be `relative`, and content should sit in a `relative` sibling.
+function PatriotBackdrop({ stars = 14, stripes = false }) {
+  return (
+    <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+      <div className="absolute -top-[15%] -left-1/4 w-[60%] h-[45%] rounded-full"
+        style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.10), transparent 60%)', filter: 'blur(50px)' }} />
+      <div className="absolute -bottom-[15%] -right-1/4 w-[60%] h-[45%] rounded-full"
+        style={{ background: 'radial-gradient(circle, rgba(0,40,104,0.30), transparent 60%)', filter: 'blur(50px)' }} />
+      {stripes && <div className="ca-stripes absolute inset-x-0 bottom-0 h-[26%] opacity-[0.06]" />}
+      <Starfield count={stars} />
+    </div>
+  );
+}
+
 function Button({ children, onClick, variant = 'primary', type = 'button', className = '', disabled }) {
   const variants = {
     primary: 'bg-red hover:bg-red/85 text-cream hover:shadow-lg hover:shadow-red/25',
@@ -344,15 +396,17 @@ function Login({ onLogin, onBack }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 ca-fade-in">
-      <div className="w-full max-w-md">
+    <div className="relative min-h-screen flex items-center justify-center p-4 ca-fade-in">
+      <PatriotBackdrop stripes />
+      <div className="relative w-full max-w-md">
         <div className="mb-8 ca-slide-up">
           <Logo size="login" />
         </div>
         <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-slide-up" style={{ animationDelay: '60ms' }}>
           <div className="text-center">
             <div className="font-display text-2xl text-gold">Board Portal</div>
-            <p className="text-cream/50 text-sm mt-1">Sign in with your board account. This area is for board members only.</p>
+            <StarDivider compact className="mt-2" />
+            <p className="text-cream/50 text-sm mt-2">Sign in with your board account. This area is for board members only.</p>
           </div>
           <Field label="Username">
             <input className={inputCls} value={username} autoFocus
@@ -414,8 +468,9 @@ function ChangePassword({ user, onDone, forced }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 ca-fade-in">
-      <form onSubmit={submit} className="w-full max-w-md bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-scale-in">
+    <div className="relative min-h-screen flex items-center justify-center p-4 ca-fade-in">
+      <PatriotBackdrop />
+      <form onSubmit={submit} className="relative w-full max-w-md bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-scale-in">
         <div className="font-display text-3xl text-gold">{forced ? 'Set Your Password' : 'Change Password'}</div>
         {forced && (
           <p className="text-sm text-cream/60">
@@ -672,7 +727,7 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
   );
 
   if (forced) {
-    return <>{cropModal}<form onSubmit={submit} className="min-h-screen flex items-center justify-center p-4 ca-fade-in">{card}</form></>;
+    return <>{cropModal}<form onSubmit={submit} className="relative min-h-screen flex items-center justify-center p-4 ca-fade-in"><PatriotBackdrop /><div className="relative w-full flex justify-center">{card}</div></form></>;
   }
   return <>{cropModal}<form onSubmit={submit} className="max-w-lg">{card}</form></>;
 }
@@ -3415,6 +3470,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
           <div className="relative">
             <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3 ca-fade-in">Park City High School</p>
             <h1 className="ca-hero-title font-display text-6xl sm:text-8xl text-cream leading-none">CLUB AMERICA</h1>
+            <StarDivider className="mt-4 ca-fade-in" />
             <p className="text-cream/65 max-w-lg mx-auto mt-4 text-base leading-relaxed ca-fade-in" style={{ animationDelay: '160ms' }}>
               Faith, freedom, and community — standing up for America's founding principles at Park City High School.
             </p>
@@ -3620,6 +3676,7 @@ function PublicNav({ current, onNavigate, onEnterPortal }) {
 
   return (
     <header className="sticky top-0 z-40 bg-navy/85 backdrop-blur border-b border-cream/10">
+      <TricolorBar />
       <div className="max-w-5xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between gap-3">
         <button onClick={() => go('home')} className="flex items-center shrink-0" aria-label="Club America home">
           <Logo size="nav" />
@@ -3707,7 +3764,8 @@ function PublicNav({ current, onNavigate, onEnterPortal }) {
   );
 }
 
-// Shared wrapper for the inner pages: faint background glows + a centered title.
+// Shared wrapper for the inner pages: old-glory glows, a sparse starfield,
+// faint flag stripes along the bottom, and a centered title over a star divider.
 function PublicPageShell({ title, subtitle, children }) {
   return (
     <div className="relative">
@@ -3716,12 +3774,15 @@ function PublicPageShell({ title, subtitle, children }) {
           style={{ background: 'radial-gradient(circle, rgba(0,40,104,0.20), transparent 60%)', filter: 'blur(50px)' }} />
         <div className="absolute bottom-[8%] -right-1/4 w-[55%] h-[30%] rounded-full"
           style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.10), transparent 60%)', filter: 'blur(50px)' }} />
+        <div className="ca-stripes absolute inset-x-0 bottom-0 h-[22%] opacity-[0.05]" />
+        <Starfield count={20} />
       </div>
       <main className="relative max-w-5xl mx-auto px-4 sm:px-6 pt-10 pb-20 space-y-8">
         {title && (
           <div className="text-center">
             <h1 className="font-display text-4xl sm:text-5xl text-cream">{title}</h1>
-            {subtitle && <p className="text-cream/55 mt-2">{subtitle}</p>}
+            <StarDivider className="mt-4" />
+            {subtitle && <p className="text-cream/55 mt-3">{subtitle}</p>}
           </div>
         )}
         {children}
@@ -3885,8 +3946,9 @@ function InterestSurvey({ onBack }) {
 
   if (submitted) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="w-full max-w-md text-center">
+      <div className="relative min-h-screen flex items-center justify-center p-4">
+        <PatriotBackdrop />
+        <div className="relative w-full max-w-md text-center">
           <SuccessMark className="mb-4" />
           <div className="font-display text-4xl text-gold mb-3">Thanks for your interest!</div>
           <p className="text-cream/70 mb-6">
@@ -3899,8 +3961,9 @@ function InterestSurvey({ onBack }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
+    <div className="relative min-h-screen flex items-center justify-center p-4">
+      <PatriotBackdrop stripes />
+      <div className="relative w-full max-w-md">
         <div className="mb-6">
           <Logo size="login" />
         </div>
@@ -6342,8 +6405,9 @@ function VolunteerSignUpPage({ eventId }) {
   );
 
   if (submitted) return (
-    <div className="min-h-screen flex items-center justify-center p-8" style={{ background: '#0d1b2e' }}>
-      <div className="text-center max-w-sm">
+    <div className="relative min-h-screen flex items-center justify-center p-8" style={{ background: '#0d1b2e' }}>
+      <PatriotBackdrop stripes />
+      <div className="relative text-center max-w-sm">
         {submitted === 'waitlisted' ? (
           <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-cream/5 border border-cream/20 flex items-center justify-center">
             <AppIcon name="clock" size={24} className="text-cream/60" />
@@ -6367,8 +6431,9 @@ function VolunteerSignUpPage({ eventId }) {
   const GRADES = ['9th', '10th', '11th', '12th', 'Other'];
 
   return (
-    <div className="min-h-screen py-10 px-4" style={{ background: '#0d1b2e' }}>
-      <div className="max-w-lg mx-auto">
+    <div className="relative min-h-screen py-10 px-4" style={{ background: '#0d1b2e' }}>
+      <PatriotBackdrop />
+      <div className="relative max-w-lg mx-auto">
         <a href="/" className="text-sm text-cream/40 hover:text-cream/70 mb-6 inline-block">← Back to home</a>
         <div className="bg-navy2 border border-cream/10 rounded-2xl p-6 mb-6">
           <div className="text-xs text-gold/60 uppercase tracking-wider mb-1">Volunteer Sign-Up</div>
@@ -6898,8 +6963,10 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
   let tileIndex = 0;
 
   return (
-    <div className="min-h-screen flex flex-col ca-fade-in" style={{ background: '#0d1b2e' }}>
-      <header className="px-6 py-5 flex items-center justify-between border-b border-cream/10">
+    <div className="relative min-h-screen flex flex-col ca-fade-in" style={{ background: '#0d1b2e' }}>
+      <PatriotBackdrop stars={16} stripes />
+      <TricolorBar className="relative" />
+      <header className="relative px-6 py-5 flex items-center justify-between border-b border-cream/10">
         <Logo size="sidebar" />
         <div className="flex items-center gap-4">
           <button onClick={onSearch} aria-label="Search" title="Search (⌘K or /)"
@@ -6918,16 +6985,18 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
           </div>
         </div>
       </header>
-      <div className="flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 py-8">
+      <div className="relative flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 py-8">
         <div className="mb-6">
           <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">{greeting}, {me.firstName || me.displayName}</h1>
           <p className="text-cream/40 text-sm mt-1.5">{dateLine}</p>
+          <FlagUnderline className="mt-3" />
         </div>
         <HomeSummaryCard me={me} onNavigate={onNavigate} />
         <div className="space-y-8">
           {sections.map((section) => (
             <div key={section.title}>
               <div className="flex items-center gap-3 mb-3">
+                <span className="text-gold/50 text-[10px]" aria-hidden="true">★</span>
                 <span className="text-xs font-semibold text-cream/40 uppercase tracking-widest">{section.title}</span>
                 <div className="flex-1 h-px bg-cream/10" />
               </div>
@@ -7477,8 +7546,11 @@ function App() {
       {showWelcomeIntro && <WelcomeIntroModal me={me} navTiles={navTiles} onDone={introDismiss} />}
       {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={bump} />}
       {searchOpen && <SearchModal me={me} reports={reports} tiles={navTiles} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
-      <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
-        <header className="sticky top-0 z-20 flex items-center gap-3 bg-navy2/95 backdrop-blur border-b border-cream/10 px-4 py-3">
+      <div className="relative min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
+        {view.type !== 'home' && <PatriotBackdrop stars={10} />}
+        <header className="sticky top-0 z-20 bg-navy2/95 backdrop-blur border-b border-cream/10">
+          <TricolorBar />
+          <div className="flex items-center gap-3 px-4 py-3">
           <button onClick={() => navigate({ type: 'apphome' })} aria-label="Back to home"
             className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-cream hover:bg-navy3 transition-colors">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -7497,8 +7569,9 @@ function App() {
               <span className="absolute -top-1 -right-1 bg-gold text-navy text-[9px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-0.5">{aiNotesCount}</span>
             )}
           </button>
+          </div>
         </header>
-        <main className={`flex-1 overflow-x-hidden ${view.type === 'home' ? '' : 'p-4 sm:p-6 lg:p-8'}`}>
+        <main className={`relative flex-1 overflow-x-hidden ${view.type === 'home' ? '' : 'p-4 sm:p-6 lg:p-8'}`}>
           <div key={view.type + (view.userId || '')} className="ca-slide-up">
             {view.type !== 'home' && <TabIntroBanner userId={me.id} tabType={view.type} />}
             {content}
@@ -9860,8 +9933,9 @@ function TestimonialSubmitPage({ token }) {
   );
 
   if (done) return (
-    <div className="min-h-screen flex items-center justify-center p-6 text-center" style={{ background: '#0d1b2e' }}>
-      <div>
+    <div className="relative min-h-screen flex items-center justify-center p-6 text-center" style={{ background: '#0d1b2e' }}>
+      <PatriotBackdrop stripes />
+      <div className="relative">
         <SuccessMark className="mb-4" />
         <div className="font-display text-3xl text-gold mb-2">Thanks{form.name ? `, ${form.name}` : ''}!</div>
         <p className="text-cream/60 max-w-sm">Your testimonial has been submitted and is under review. We'll publish it once approved.</p>
@@ -9870,11 +9944,13 @@ function TestimonialSubmitPage({ token }) {
   );
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6" style={{ background: '#0d1b2e' }}>
-      <div className="w-full max-w-lg">
+    <div className="relative min-h-screen flex items-center justify-center p-6" style={{ background: '#0d1b2e' }}>
+      <PatriotBackdrop />
+      <div className="relative w-full max-w-lg">
         <div className="text-center mb-8">
           <Logo size="sidebar" className="mb-4 mx-auto" />
           <h1 className="font-display text-3xl text-gold">Share Your Story</h1>
+          <StarDivider compact className="mt-2" />
           <p className="text-cream/60 text-sm mt-1">
             {token && prefill
               ? `Hi ${prefill.name}! Tell the world what Club America means to you.`
