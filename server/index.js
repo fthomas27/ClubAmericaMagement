@@ -79,7 +79,11 @@ app.use((req, res, next) => {
   const isTestimonial = (req.method === 'POST' || req.method === 'PATCH') &&
     (req.path === '/api/admin/testimonials' || req.path.startsWith('/api/admin/testimonials/') ||
      req.path === '/api/public/testimonial-submit' || req.path.startsWith('/api/public/testimonial-submit/'));
-  const limit = isProfilePhoto || isEventPhoto || isIgHighlight || isTestimonial ? '6mb' : '50kb';
+  // Speaker applications can carry a completed PDF form as a base64 data URL
+  // (5 MB file ≈ 7 MB of JSON once base64-encoded).
+  const isSpeakerApply = req.method === 'POST' && req.path === '/api/public/speaker-apply';
+  const limit = isSpeakerApply ? '8mb'
+    : isProfilePhoto || isEventPhoto || isIgHighlight || isTestimonial ? '6mb' : '50kb';
   express.json({ limit })(req, res, next);
 });
 
@@ -610,6 +614,104 @@ app.post('/api/newsletter/subscribe',
     res.json({ ok: true });
   }
 );
+
+// ---- Public Speaker Application form ------------------------------------------
+// The question list is VP-managed (speaker_form_config); the public form and
+// the server-side validation below are both driven by the same stored config.
+const { DEFAULT_SPEAKER_FORM, sanitizeQuestions, sanitizeUpload } = require('./speakerForm');
+
+function getSpeakerForm() {
+  const row = db.prepare('SELECT * FROM speaker_form_config WHERE id = 1').get();
+  if (!row) {
+    return { ...DEFAULT_SPEAKER_FORM, updatedAt: null };
+  }
+  let questions = [];
+  let upload = DEFAULT_SPEAKER_FORM.upload;
+  try { questions = JSON.parse(row.questions || '[]'); } catch (_) {}
+  try { upload = { ...upload, ...JSON.parse(row.upload || '{}') }; } catch (_) {}
+  return {
+    title: row.title || DEFAULT_SPEAKER_FORM.title,
+    intro: row.intro || '',
+    questions,
+    upload,
+    updatedAt: row.updatedAt,
+  };
+}
+
+// Public: the current form definition (rendered by /apply-to-speak).
+app.get('/api/public/speaker-form', (req, res) => {
+  res.json({ form: getSpeakerForm() });
+});
+
+// Public: submit a speaker application. Validation is driven by the stored
+// question config — required questions, select options, and the conditional
+// PDF requirement are all enforced here, not just in the browser.
+const SPEAKER_PDF_MAX = 7 * 1024 * 1024; // ~5 MB file after base64 encoding
+app.post('/api/public/speaker-apply', rateLimit({ windowMs: 60 * 60 * 1000, max: 10, name: 'speaker-apply' }), (req, res) => {
+  const form = getSpeakerForm();
+  const body = req.body || {};
+  const rawAnswers = body.answers && typeof body.answers === 'object' ? body.answers : {};
+
+  const snapshot = [];       // [{id, label, answer}] in question order
+  let applicantName = '';
+  let applicantEmail = '';
+  let needsLogistics = false;
+
+  for (const q of form.questions) {
+    const answer = String(rawAnswers[q.id] ?? '').trim().slice(0, 4000);
+    if (q.required && !answer) {
+      return res.status(400).json({ error: `Please answer: ${q.label}` });
+    }
+    if (answer && q.type === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(answer)) {
+      return res.status(400).json({ error: `Please enter a valid email for: ${q.label}` });
+    }
+    if (answer && q.type === 'select' && Array.isArray(q.options) && !q.options.includes(answer)) {
+      return res.status(400).json({ error: `Invalid choice for: ${q.label}` });
+    }
+    if (q.type === 'yesno' && answer && answer !== 'Yes' && answer !== 'No') {
+      return res.status(400).json({ error: `Invalid answer for: ${q.label}` });
+    }
+    if (q.type === 'yesno' && q.triggersUpload && answer === 'Yes') needsLogistics = true;
+    if (!applicantName && q.type === 'text' && /name/i.test(q.label) && answer) applicantName = answer.slice(0, 120);
+    if (!applicantEmail && q.type === 'email' && answer) applicantEmail = answer.slice(0, 200);
+    snapshot.push({ id: q.id, label: q.label, answer });
+  }
+
+  // Conditional requirement: a "Yes" on the trigger question means the signed
+  // logistics PDF must be attached before the application is accepted.
+  let pdfFile = '';
+  let pdfFileName = '';
+  if (needsLogistics) {
+    pdfFile = typeof body.pdfFile === 'string' ? body.pdfFile : '';
+    pdfFileName = String(body.pdfFileName || 'logistics-form.pdf').replace(/[^\w. -]/g, '').slice(0, 120) || 'logistics-form.pdf';
+    if (!/^data:application\/pdf;base64,/.test(pdfFile)) {
+      return res.status(400).json({ error: 'Please upload your completed logistics form as a PDF before submitting.' });
+    }
+    if (pdfFile.length > SPEAKER_PDF_MAX) {
+      return res.status(400).json({ error: 'That PDF is too large — please keep it under 5 MB.' });
+    }
+  }
+
+  const info = db.prepare(`INSERT INTO speaker_applications
+    (applicantName, applicantEmail, answers, needsLogistics, pdfFile, pdfFileName)
+    VALUES (?, ?, ?, ?, ?, ?)`)
+    .run(applicantName, applicantEmail, JSON.stringify(snapshot), needsLogistics ? 1 : 0, pdfFile, pdfFileName);
+
+  // Route new applications to the President/VP: in-app bell + email.
+  const admins = db.prepare("SELECT id, email FROM users WHERE role = 'admin'").all();
+  const who = applicantName || 'Someone';
+  for (const a of admins) {
+    pushNotification(a.id, `New speaker application from ${who}`, 'speaker', 'submission');
+    notify(a.email, 'New speaker application',
+      'New speaker application',
+      `<b>${escHtml(who)}</b> applied to speak at Club America.` +
+      (applicantEmail ? `<br/>Email: ${escHtml(applicantEmail)}` : '') +
+      (needsLogistics ? '<br/>Requires AV/travel logistics — signed form attached in the portal.' : '') +
+      '<br/><br/>Review it under Speaker Events → Applications.');
+  }
+
+  res.status(201).json({ ok: true, id: info.lastInsertRowid });
+});
 
 // Everything past this point requires a changed password.
 app.use('/api', authenticate, requirePasswordChanged);
@@ -2169,6 +2271,68 @@ app.patch('/api/speaker-events/:id', (req, res) => {
 app.delete('/api/speaker-events/:id', (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Not allowed' });
   db.prepare('DELETE FROM speaker_events WHERE id=?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+// ---- Speaker Application Form management --------------------------------------
+// The VP (admin) edits the public application form's title, intro, and question
+// list here; the /apply-to-speak page re-renders from the stored config.
+app.put('/api/speaker-form', requireAdmin, (req, res) => {
+  const { title, intro, questions, upload } = req.body || {};
+  const cleanQuestions = sanitizeQuestions(questions);
+  if (cleanQuestions.length === 0) {
+    return res.status(400).json({ error: 'The form needs at least one valid question' });
+  }
+  db.prepare(`UPDATE speaker_form_config SET
+      title = ?, intro = ?, questions = ?, upload = ?, updatedById = ?, updatedAt = datetime('now')
+    WHERE id = 1`)
+    .run(String(title || '').trim().slice(0, 200) || DEFAULT_SPEAKER_FORM.title,
+         String(intro || '').trim().slice(0, 2000),
+         JSON.stringify(cleanQuestions),
+         JSON.stringify(sanitizeUpload(upload)),
+         req.user.id);
+  res.json({ form: getSpeakerForm() });
+});
+
+// Applications inbox (managers + admins). The PDF blob is withheld from the
+// list payload; it's fetched per-application via the download route below.
+app.get('/api/speaker-applications', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const rows = db.prepare(`SELECT id, applicantName, applicantEmail, answers, needsLogistics,
+      pdfFileName, handled, createdAt,
+      CASE WHEN pdfFile != '' THEN 1 ELSE 0 END AS hasPdf
+    FROM speaker_applications ORDER BY handled ASC, createdAt DESC`).all();
+  const applications = rows.map((r) => {
+    let answers = [];
+    try { answers = JSON.parse(r.answers || '[]'); } catch (_) {}
+    return { ...r, answers, needsLogistics: !!r.needsLogistics, handled: !!r.handled, hasPdf: !!r.hasPdf };
+  });
+  res.json({ applications });
+});
+
+// Download the signed logistics PDF attached to an application.
+app.get('/api/speaker-applications/:id/pdf', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const row = db.prepare('SELECT pdfFile, pdfFileName FROM speaker_applications WHERE id = ?').get(Number(req.params.id));
+  if (!row || !row.pdfFile) return res.status(404).json({ error: 'No PDF attached' });
+  const m = String(row.pdfFile).match(/^data:application\/pdf;base64,(.+)$/s);
+  if (!m) return res.status(404).json({ error: 'No PDF attached' });
+  res.set('Content-Type', 'application/pdf');
+  res.set('Content-Disposition', `attachment; filename="${(row.pdfFileName || 'logistics-form.pdf').replace(/"/g, '')}"`);
+  res.send(Buffer.from(m[1], 'base64'));
+});
+
+app.post('/api/speaker-applications/:id/handled', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const row = db.prepare('SELECT id, handled FROM speaker_applications WHERE id = ?').get(Number(req.params.id));
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  db.prepare('UPDATE speaker_applications SET handled = ? WHERE id = ?').run(row.handled ? 0 : 1, row.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/speaker-applications/:id', (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Not allowed' });
+  db.prepare('DELETE FROM speaker_applications WHERE id = ?').run(Number(req.params.id));
   res.json({ ok: true });
 });
 
