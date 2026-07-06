@@ -135,6 +135,9 @@ where task approvals and the audit log live.
 ### Get Involved
 The inbox of public submissions — students who filled out the join/interest form or
 applied. Review and act on them. (Grade Reps see their grade's submissions.)
+New submissions also land on the recipient's task page automatically: a club-join
+request gives that grade's reps a "Reach out to new member ___" to-do, and a board
+application gives the admins a "Review board application" to-do.
 
 ### Roster
 The recruiting pipeline. Track prospective members through stages
@@ -150,7 +153,8 @@ roles/slots with caps, and review who signed up.
 
 ### Speaker Events
 Plan speaker events with a logistics checklist (AV needs, room confirmation,
-promotion, budget, attendance, post-event notes).
+promotion, budget, attendance, post-event notes). Submitting a new speaker request
+automatically adds a "Review speaker request" to-do to the Vice President's task page.
 
 ### Grant Tracker
 Track grant applications (title, purpose, amount requested, submission date, status).

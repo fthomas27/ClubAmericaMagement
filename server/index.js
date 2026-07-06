@@ -214,8 +214,22 @@ function taskWithNames(t) {
   return {
     ...t,
     ownerName: owner ? owner.displayName : null,
-    assignedByName: assigner ? assigner.displayName : 'Self',
+    assignedByName: assigner ? assigner.displayName : 'System',
   };
+}
+
+// Drop an auto-generated to-do onto a user's task page — used when a public
+// submission or internal request is routed to someone (e.g. a grade rep gets
+// "Reach out to new member ___"). Lands pre-approved with no assigner, so it
+// shows up immediately as "Assigned by System".
+function createAutoTask(userId, name, description) {
+  try {
+    db.prepare(`INSERT INTO tasks (userId, name, description, status, assignedById, approvalStatus)
+                VALUES (?, ?, ?, 'Not Started', NULL, 'approved')`)
+      .run(userId, String(name).trim().slice(0, 300), String(description || '').trim().slice(0, 5000));
+  } catch (e) {
+    console.error('[auto-task] insert failed:', e.message);
+  }
 }
 
 function getPageSettings(userId) {
@@ -367,9 +381,9 @@ app.post('/api/submissions', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name
   //  - board application → admins only
   let recipients;
   if (type === 'club' && grade) {
-    recipients = db.prepare("SELECT id, email FROM users WHERE role = 'admin' OR grade = ?").all(grade);
+    recipients = db.prepare("SELECT id, email, role, grade FROM users WHERE role = 'admin' OR grade = ?").all(grade);
   } else {
-    recipients = db.prepare("SELECT id, email FROM users WHERE role = 'admin'").all();
+    recipients = db.prepare("SELECT id, email, role, grade FROM users WHERE role = 'admin'").all();
   }
   const label = type === 'board' ? 'board application' : 'club-join request';
   for (const r of recipients) {
@@ -378,6 +392,24 @@ app.post('/api/submissions', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name
       `<b>${escHtml(name)}</b>${grade ? ' (grade ' + escHtml(grade) + ')' : ''} submitted a ${label}.<br/>Email: ${escHtml(email)}${message ? '<br/>Message: ' + escHtml(message) : ''}<br/><br/>See it in the Get Involved inbox.`);
     pushNotification(r.id, `New ${label} from ${name}${grade ? ' (grade ' + grade + ')' : ''}`, 'submissions', 'submission');
   }
+
+  // Put the submission on the right person's to-do page, not just their inbox:
+  //  - club-join → that grade's grade reps get "Reach out to new member ___"
+  //    (falls back to admins if that grade has no rep, so nothing is dropped)
+  //  - board application → admins get "Review board application from ___"
+  const gradeReps = recipients.filter((r) => r.role !== 'admin' && grade && r.grade === grade);
+  const taskOwners = type === 'club' && gradeReps.length
+    ? gradeReps
+    : recipients.filter((r) => r.role === 'admin');
+  const taskName = type === 'board'
+    ? `Review board application from ${name}`
+    : `Reach out to new member ${name}`;
+  const taskDesc =
+    `${name}${grade ? ' (grade ' + grade + ')' : ''} submitted a ${label} on the public site.\n` +
+    `Email: ${email}` +
+    (message ? `\nMessage: ${message}` : '') +
+    `\n\nFull details are in the Get Involved inbox.`;
+  for (const r of taskOwners) createAutoTask(r.id, taskName, taskDesc);
 
   res.status(201).json({ ok: true });
 });
@@ -2134,6 +2166,24 @@ app.post('/api/speaker-events', (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     title.trim(), speakerName||'', speakerOrg||'', topic||'', eventDate||null,
     location||'', Number(expectedAttendance)||0, avNeeds||'', materialsRequested||'', Number(budgetEstimate)||0, req.user.id);
+
+  // A new speaker request lands on the VP's to-do page (falling back to all
+  // admins if no one holds the Vice President title). The creator is skipped —
+  // no point assigning them a to-do to review their own request.
+  const vp = db.prepare("SELECT id FROM users WHERE title LIKE '%Vice President%' ORDER BY id LIMIT 1").get();
+  const reviewers = vp ? [vp] : db.prepare("SELECT id FROM users WHERE role = 'admin'").all();
+  const taskDesc =
+    `${req.user.displayName} submitted a speaker request: "${title.trim()}".` +
+    (speakerName ? `\nSpeaker: ${speakerName}${speakerOrg ? ' — ' + speakerOrg : ''}` : '') +
+    (topic ? `\nTopic: ${topic}` : '') +
+    (eventDate ? `\nEvent date: ${eventDate}` : '') +
+    `\n\nFull details are on the Speaker Events page.`;
+  for (const r of reviewers) {
+    if (r.id === req.user.id) continue;
+    createAutoTask(r.id, `Review speaker request: ${title.trim()}`, taskDesc);
+    pushNotification(r.id, `New speaker request "${title.trim()}" from ${req.user.displayName} — added to your to-do list`, 'tasks', 'task');
+  }
+
   res.status(201).json({ event: db.prepare('SELECT * FROM speaker_events WHERE id=?').get(info.lastInsertRowid) });
 });
 
