@@ -70,6 +70,58 @@ function roleLabel(role) {
   return { admin: 'Admin', manager: 'Manager', member: 'Member' }[role] || role;
 }
 
+// ---------------------------------------------------------------------------
+// Americana accents — small, reusable flag motifs so every page carries the
+// red / white / blue identity without each one inventing its own.
+// ---------------------------------------------------------------------------
+const OLD_GLORY_BLUE = '#3b5bdb';
+
+// Thin old-glory hairline. Sits at the very top of headers and standalone pages.
+function TricolorBar({ className = '' }) {
+  return (
+    <div className={`h-[3px] bg-gradient-to-r from-red via-cream/60 to-[#3b5bdb] ${className}`} aria-hidden="true" />
+  );
+}
+
+// Centered red-bar ★★★ blue-bar divider, used under page and section titles.
+function StarDivider({ className = '', compact = false }) {
+  return (
+    <div className={`flex items-center justify-center gap-3 ${className}`} aria-hidden="true">
+      <span className={`h-[2px] rounded-full bg-red/70 ${compact ? 'w-8' : 'w-12'}`} />
+      <span className={`text-gold/80 tracking-[0.35em] ${compact ? 'text-[10px]' : 'text-xs'}`}>★ ★ ★</span>
+      <span className={`h-[2px] rounded-full ${compact ? 'w-8' : 'w-12'}`} style={{ background: 'rgba(59,91,219,0.75)' }} />
+    </div>
+  );
+}
+
+// Left-aligned miniature flag underline (red / white / blue dashes) for
+// left-aligned headings like the portal greeting.
+function FlagUnderline({ className = '' }) {
+  return (
+    <div className={`flex gap-1.5 ${className}`} aria-hidden="true">
+      <span className="h-[3px] w-10 rounded-full bg-red/80" />
+      <span className="h-[3px] w-10 rounded-full bg-cream/40" />
+      <span className="h-[3px] w-10 rounded-full" style={{ background: 'rgba(59,91,219,0.8)' }} />
+    </div>
+  );
+}
+
+// Full-page patriotic backdrop: faint old-glory glows, a sparse starfield and
+// (optionally) the flag-stripe texture along the bottom. Purely decorative —
+// parent must be `relative`, and content should sit in a `relative` sibling.
+function PatriotBackdrop({ stars = 14, stripes = false }) {
+  return (
+    <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+      <div className="absolute -top-[15%] -left-1/4 w-[60%] h-[45%] rounded-full"
+        style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.10), transparent 60%)', filter: 'blur(50px)' }} />
+      <div className="absolute -bottom-[15%] -right-1/4 w-[60%] h-[45%] rounded-full"
+        style={{ background: 'radial-gradient(circle, rgba(0,40,104,0.30), transparent 60%)', filter: 'blur(50px)' }} />
+      {stripes && <div className="ca-stripes absolute inset-x-0 bottom-0 h-[26%] opacity-[0.06]" />}
+      <Starfield count={stars} />
+    </div>
+  );
+}
+
 function Button({ children, onClick, variant = 'primary', type = 'button', className = '', disabled }) {
   const variants = {
     primary: 'bg-red hover:bg-red/85 text-cream hover:shadow-lg hover:shadow-red/25',
@@ -122,11 +174,15 @@ function Loading({ label = 'Loading…' }) {
   );
 }
 
-// Friendly empty state with an optional call-to-action.
-function EmptyState({ icon = '📭', title, hint, action, className = '' }) {
+// Friendly empty state with an optional call-to-action. `icon` is an AppIcon
+// name (see AppIcon below), keeping empty states on the same line-icon system
+// as the rest of the app.
+function EmptyState({ icon = 'inbox', title, hint, action, className = '' }) {
   return (
     <div className={`text-center py-10 px-4 border border-dashed border-cream/15 rounded-lg ${className}`}>
-      <div className="text-3xl mb-2 opacity-70">{icon}</div>
+      <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-cream/5 border border-cream/10 flex items-center justify-center">
+        <AppIcon name={icon} size={22} className="text-cream/40" />
+      </div>
       {title && <div className="text-cream/80 font-medium">{title}</div>}
       {hint && <div className="text-sm text-cream/50 mt-1 max-w-md mx-auto">{hint}</div>}
       {action && <div className="mt-4 flex justify-center">{action}</div>}
@@ -138,9 +194,21 @@ function EmptyState({ icon = '📭', title, hint, action, className = '' }) {
 function ErrorState({ message = 'Something went wrong.', onRetry }) {
   return (
     <div className="text-center py-8 px-4 border border-dashed border-red/30 rounded-lg">
-      <div className="text-2xl mb-2">⚠️</div>
+      <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-red/10 border border-red/25 flex items-center justify-center">
+        <AppIcon name="warning" size={22} className="text-red/80" />
+      </div>
       <div className="text-cream/80 text-sm">{message}</div>
       {onRetry && <div className="mt-4 flex justify-center"><Button variant="ghost" onClick={onRetry}>Try again</Button></div>}
+    </div>
+  );
+}
+
+// Gold star-in-a-ring shown on "thanks / success" screens — the brand's answer
+// to a confetti emoji.
+function SuccessMark({ className = '' }) {
+  return (
+    <div className={`w-14 h-14 mx-auto rounded-full bg-gold/15 border border-gold/40 flex items-center justify-center ${className}`}>
+      <AppIcon name="star" size={26} className="text-gold" />
     </div>
   );
 }
@@ -328,15 +396,17 @@ function Login({ onLogin, onBack }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 ca-fade-in">
-      <div className="w-full max-w-md">
+    <div className="relative min-h-screen flex items-center justify-center p-4 ca-fade-in">
+      <PatriotBackdrop stripes />
+      <div className="relative w-full max-w-md">
         <div className="mb-8 ca-slide-up">
           <Logo size="login" />
         </div>
         <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-slide-up" style={{ animationDelay: '60ms' }}>
           <div className="text-center">
             <div className="font-display text-2xl text-gold">Board Portal</div>
-            <p className="text-cream/50 text-sm mt-1">Sign in with your board account. This area is for board members only.</p>
+            <StarDivider compact className="mt-2" />
+            <p className="text-cream/50 text-sm mt-2">Sign in with your board account. This area is for board members only.</p>
           </div>
           <Field label="Username">
             <input className={inputCls} value={username} autoFocus
@@ -398,8 +468,9 @@ function ChangePassword({ user, onDone, forced }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 ca-fade-in">
-      <form onSubmit={submit} className="w-full max-w-md bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-scale-in">
+    <div className="relative min-h-screen flex items-center justify-center p-4 ca-fade-in">
+      <PatriotBackdrop />
+      <form onSubmit={submit} className="relative w-full max-w-md bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-scale-in">
         <div className="font-display text-3xl text-gold">{forced ? 'Set Your Password' : 'Change Password'}</div>
         {forced && (
           <p className="text-sm text-cream/60">
@@ -656,7 +727,7 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
   );
 
   if (forced) {
-    return <>{cropModal}<form onSubmit={submit} className="min-h-screen flex items-center justify-center p-4 ca-fade-in">{card}</form></>;
+    return <>{cropModal}<form onSubmit={submit} className="relative min-h-screen flex items-center justify-center p-4 ca-fade-in"><PatriotBackdrop /><div className="relative w-full flex justify-center">{card}</div></form></>;
   }
   return <>{cropModal}<form onSubmit={submit} className="max-w-lg">{card}</form></>;
 }
@@ -980,7 +1051,7 @@ function BannerSection({ title, url }) {
 function AnnouncementSection({ text }) {
   return (
     <div className="bg-red/10 border-l-4 border-red rounded-r-xl px-5 py-4 mb-6 flex gap-3 items-start">
-      <span className="text-xl mt-0.5 shrink-0">📌</span>
+      <span className="mt-1 shrink-0 text-red/90"><AppIcon name="pin" size={18} /></span>
       <div className="text-cream whitespace-pre-wrap">{text}</div>
     </div>
   );
@@ -1003,7 +1074,7 @@ function CopyableFormSection({ title, fields }) {
 
   async function copyToClipboard() {
     const heading = title || 'Form Submission';
-    const lines = [`📋 ${heading}`, ''];
+    const lines = [heading, ''];
     for (const f of parsedFields) {
       lines.push(`${f}: ${values[f] || '—'}`);
     }
@@ -1080,7 +1151,7 @@ function PageAdminControls({ targetUser, onUpdated }) {
         onClick={() => setOpen(true)}
         className="text-sm text-gold/60 hover:text-gold flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gold/20 hover:border-gold/50 transition-all duration-150 active:scale-95"
       >
-        ⚙ Page Settings
+        Page Settings
       </button>
     </div>
   );
@@ -1200,7 +1271,7 @@ function TeamAnnouncementsDisplay({ announcements }) {
     <div className="space-y-3 mb-6">
       {announcements.map((a) => (
         <div key={a.id} className="bg-gold/10 border border-gold/40 rounded-xl px-5 py-4 flex gap-3 items-start">
-          <span className="text-xl mt-0.5 shrink-0">📢</span>
+          <span className="mt-1 shrink-0 text-gold/80"><AppIcon name="megaphone" size={18} /></span>
           <div>
             <div className="text-xs text-gold/70 mb-1">{a.authorName}{a.authorTitle ? ` · ${a.authorTitle}` : ''}</div>
             <div className="text-cream whitespace-pre-wrap">{a.text}</div>
@@ -1285,7 +1356,7 @@ function TeamAnnouncementView({ me, reports }) {
         <div className="mt-6">
           <div className="text-xs text-cream/50 uppercase tracking-wider mb-2">How reports see it</div>
           <div className="bg-gold/10 border border-gold/40 rounded-xl px-5 py-4 flex gap-3 items-start">
-            <span className="text-xl mt-0.5 shrink-0">📢</span>
+            <span className="mt-1 shrink-0 text-gold/80"><AppIcon name="megaphone" size={18} /></span>
             <div>
               <div className="text-xs text-gold/70 mb-1">{me.displayName}{me.title ? ` · ${me.title}` : ''}</div>
               <div className="text-cream whitespace-pre-wrap">{text}</div>
@@ -1401,7 +1472,7 @@ function TaskPage({ me, userId, users, refreshSignal }) {
 
       {tasks.length === 0 && (
         <EmptyState
-          icon="✅"
+          icon="check"
           title={isSelf ? 'No tasks yet' : `${user.displayName.split(' ')[0]} has no tasks yet`}
           hint={isSelf ? 'Use “+ New Task” above to add your first one, or send a task to a teammate.' : 'Use “+ New Task” above to assign them something to work on.'}
         />
@@ -1460,7 +1531,7 @@ function Approvals({ onChanged, refreshSignal }) {
       {error && <div className="mb-4"><ErrorState message={error} onRetry={load} /></div>}
       {items === null && !error && <Loading label="Loading approvals…" />}
       {items !== null && items.length === 0 && (
-        <EmptyState icon="🎉" title="You're all caught up" hint="Tasks waiting for your approval will show up here." />
+        <EmptyState icon="check" title="You're all caught up" hint="Tasks waiting for your approval will show up here." />
       )}
       <div className="space-y-3">
         {(items || []).map((t) => (
@@ -1521,7 +1592,7 @@ function SubmissionsInbox({ onChanged, refreshSignal }) {
       {error && <div className="mb-4"><ErrorState message={error} onRetry={load} /></div>}
       {items === null && !error && <Loading label="Loading submissions…" />}
       {items !== null && items.length === 0 && (
-        <EmptyState icon="📨" title="No submissions yet" hint="Club-join requests and board applications from the public homepage will appear here." />
+        <EmptyState icon="inbox" title="No submissions yet" hint="Club-join requests and board applications from the public homepage will appear here." />
       )}
       <div className="space-y-3">
         {(items || []).map((s) => (
@@ -1762,7 +1833,7 @@ function EditMemberModal({ user, onSaved, onClose }) {
               {/* Include the member's current title even if it isn't in the list yet. */}
               {title && !positions.some((p) => p.title === title) && <option value={title}>{title}</option>}
               {positions.map((p) => <option key={p.title} value={p.title}>{p.title}</option>)}
-              <option value="__new__">➕ Add new position…</option>
+              <option value="__new__">+ Add new position…</option>
             </select>
           )}
         </Field>
@@ -1936,7 +2007,7 @@ function AdminPanel({ users, reload }) {
               }}>
               <option value="">— none —</option>
               {positions.map((p) => <option key={p.title} value={p.title}>{p.title}</option>)}
-              <option value="__new__">➕ Add new position…</option>
+              <option value="__new__">+ Add new position…</option>
             </select>
           )}
         </Field>
@@ -1977,7 +2048,7 @@ function AdminPanel({ users, reload }) {
           value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
       {q && visibleUsers.length === 0 && (
-        <EmptyState icon="🔍" title="No members match" hint="Try a different name, username, title, or role." />
+        <EmptyState icon="search" title="No members match" hint="Try a different name, username, title, or role." />
       )}
       <div className="space-y-3">
         {visibleUsers.map((u) => (
@@ -2259,7 +2330,7 @@ function MeetingCard({ home, events, volunteerEvents = [] }) {
     <section className="h-full bg-navy2 border border-gold/30 rounded-2xl p-6 hover:border-gold/50 hover:shadow-lg hover:shadow-black/20 transition-all duration-200">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-3xl text-gold">{hasEvents ? 'Upcoming Events' : 'Next Meeting'}</h2>
-        <span className="text-red text-xl">📅</span>
+        <span className="text-gold/50"><AppIcon name="calendar" size={22} /></span>
       </div>
       {hasEvents ? (
         <ul className="mt-4 space-y-3">
@@ -2311,12 +2382,12 @@ function PodcastCard({ home }) {
     <section className="h-full bg-navy2 border border-red/30 rounded-2xl p-6 hover:border-red/50 hover:shadow-lg hover:shadow-black/20 transition-all duration-200">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-3xl text-red">The Podcast</h2>
-        <span className="text-xl">🎙️</span>
+        <span className="text-red/60"><AppIcon name="speaker" size={22} /></span>
       </div>
 
       {!home.podcastEnabled ? (
         <div className="mt-4 aspect-video w-full rounded-lg overflow-hidden bg-navy3 flex flex-col items-center justify-center text-center px-4">
-          <span className="text-4xl mb-2">🚧</span>
+          <span className="text-gold/50 mb-3"><AppIcon name="speaker" size={30} /></span>
           <div className="font-display text-2xl text-gold">Under Construction</div>
           <div className="text-cream/40 text-sm mt-1">The podcast is coming soon — check back later.</div>
         </div>
@@ -2500,7 +2571,7 @@ function GetInvolved() {
 
       {done ? (
         <div className="text-center py-6 ca-slide-up">
-          <div className="text-4xl mb-2">🎉</div>
+          <SuccessMark className="mb-3" />
           <div className="font-display text-2xl text-gold">Thanks, {form.name.split(' ')[0] || 'friend'}!</div>
           <p className="text-cream/70 mt-1">
             {tab === 'club'
@@ -2543,7 +2614,7 @@ function HomeAnnouncementBanner({ home }) {
   if (!home.homeAnnouncementEnabled || !home.homeAnnouncement) return null;
   return (
     <div className="bg-red/15 border border-red/50 rounded-xl px-5 py-4 flex gap-3 items-start">
-      <span className="text-xl mt-0.5 shrink-0">📣</span>
+      <span className="mt-0.5 shrink-0 text-red/90"><AppIcon name="megaphone" size={20} /></span>
       <div className="text-cream whitespace-pre-wrap">{home.homeAnnouncement}</div>
     </div>
   );
@@ -2578,9 +2649,8 @@ function ValuesSection() {
 // part of (see "Powered by TPUSA" in the footer).
 function CharlieKirkTribute() {
   return (
-    <Card3D maxTilt={2}>
     <section className="relative overflow-hidden bg-navy2 border border-gold/25 rounded-2xl p-8 sm:p-10 text-center">
-      <div className="ca-breathe absolute inset-0 pointer-events-none" aria-hidden="true"
+      <div className="absolute inset-0 pointer-events-none" aria-hidden="true"
         style={{ background: 'radial-gradient(420px 200px at 50% 0%, rgba(201,168,76,0.08), transparent 70%)' }} />
       <div className="relative">
         <div className="text-gold/80 tracking-[0.5em] text-base mb-3">★ ★ ★</div>
@@ -2593,7 +2663,6 @@ function CharlieKirkTribute() {
         </p>
       </div>
     </section>
-    </Card3D>
   );
 }
 
@@ -2659,7 +2728,7 @@ function EventPhotos() {
         <button
           onClick={() => { setShowForm((v) => !v); setDone(false); }}
           className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-red hover:bg-red/85 text-cream text-sm font-semibold transition-colors active:scale-95">
-          📷 Share your photos
+          <AppIcon name="camera" size={16} className="text-cream" /> Share your photos
         </button>
       </div>
       <p className="text-cream/60 text-sm mb-5">Snap something great at one of our events? Share it — photos go live once a board member approves them.</p>
@@ -2668,7 +2737,7 @@ function EventPhotos() {
         <div className="mb-6 bg-navy border border-cream/15 rounded-xl p-5 ca-slide-down">
           {done ? (
             <div className="text-center py-4 ca-slide-up">
-              <div className="text-4xl mb-2">🎉</div>
+              <SuccessMark className="mb-3" />
               <div className="font-display text-2xl text-gold">Thanks for sharing!</div>
               <p className="text-cream/70 mt-1 text-sm">Your photo was submitted — it'll appear in the gallery once a board member approves it.</p>
               <button className="mt-4 text-gold/80 hover:text-gold text-sm" onClick={() => setDone(false)}>Share another</button>
@@ -2706,7 +2775,9 @@ function EventPhotos() {
         <Loading label="Loading photos…" />
       ) : list.length === 0 ? (
         <div className="text-center py-8 text-cream/50">
-          <div className="text-4xl mb-2">🖼️</div>
+          <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-cream/5 border border-cream/10 flex items-center justify-center">
+            <AppIcon name="photo" size={22} className="text-cream/40" />
+          </div>
           <p className="text-sm">No photos yet — be the first to share one from an event!</p>
         </div>
       ) : (
@@ -2943,7 +3014,7 @@ function PhotoModerationPage({ me }) {
         <p className="text-cream/50 text-sm">Photos visitors shared from the homepage. Approve to publish them to the public gallery.</p>
       </div>
       {pending.length === 0 ? (
-        <EmptyState icon="✅" title="Nothing to review" hint="New photo submissions will show up here." />
+        <EmptyState icon="check" title="Nothing to review" hint="New photo submissions will show up here." />
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {pending.map((p) => (
@@ -3192,24 +3263,29 @@ function MeetTheBoard() {
 
 // Field of randomly placed twinkling stars. Positions are memoized so the
 // sky doesn't reshuffle on re-render.
+// Most stars are static points at a fixed opacity; only a few twinkle, slowly.
+// A field where everything flickers reads as noise rather than a night sky.
 function Starfield({ count = 42 }) {
   const stars = useMemo(() => Array.from({ length: count }, () => ({
     left: Math.random() * 100,
     top: Math.random() * 100,
     size: 1 + Math.random() * 1.8,
-    dur: 2.5 + Math.random() * 4.5,
-    delay: Math.random() * 6,
+    dur: 5 + Math.random() * 5,
+    delay: Math.random() * 8,
     min: 0.05 + Math.random() * 0.15,
-    max: 0.45 + Math.random() * 0.5,
+    max: 0.45 + Math.random() * 0.4,
     gold: Math.random() < 0.18,
+    twinkle: Math.random() < 0.3,
   })), [count]);
   return (
     <>
       {stars.map((s, i) => (
-        <span key={i} className="ca-star" style={{
+        <span key={i} className={`ca-star ${s.twinkle ? 'ca-star-twinkle' : ''}`} style={{
           left: s.left + '%', top: s.top + '%', width: s.size, height: s.size,
           background: s.gold ? '#C9A84C' : '#F5F0E8',
-          '--ca-dur': s.dur + 's', '--ca-delay': s.delay + 's', '--ca-min': s.min, '--ca-max': s.max,
+          ...(s.twinkle
+            ? { '--ca-dur': s.dur + 's', '--ca-delay': s.delay + 's', '--ca-min': s.min, '--ca-max': s.max }
+            : { opacity: (s.min + s.max) / 2 }),
         }} />
       ))}
     </>
@@ -3236,8 +3312,9 @@ function ParallaxLayer({ speed = 0.2, className = '', children }) {
   return <div ref={ref} className={className} aria-hidden="true">{children}</div>;
 }
 
-// Ring of 13 stars (Betsy Ross flag) — rendered faint and slowly rotating
-// behind the hero headline.
+// Ring of 13 stars (Betsy Ross flag) — rendered faint behind the hero
+// headline; it shifts with the pointer-driven hero tilt but doesn't
+// animate on its own.
 function StarRing({ size = 540, className = '' }) {
   const stars = Array.from({ length: 13 }, (_, i) => {
     const a = (i / 13) * 2 * Math.PI - Math.PI / 2;
@@ -3386,13 +3463,14 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
       <div className="min-h-screen">
         <section className="relative overflow-hidden max-w-5xl mx-auto px-4 sm:px-6 pt-12 pb-12 text-center">
           <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
-            <div className="ca-aurora-a absolute -top-1/2 left-1/4 w-[60%] h-[120%] rounded-full"
+            <div className="absolute -top-1/2 left-1/4 w-[60%] h-[120%] rounded-full"
               style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.12), transparent 60%)', filter: 'blur(40px)' }} />
             <Starfield count={14} />
           </div>
           <div className="relative">
             <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3 ca-fade-in">Park City High School</p>
             <h1 className="ca-hero-title font-display text-6xl sm:text-8xl text-cream leading-none">CLUB AMERICA</h1>
+            <StarDivider className="mt-4 ca-fade-in" />
             <p className="text-cream/65 max-w-lg mx-auto mt-4 text-base leading-relaxed ca-fade-in" style={{ animationDelay: '160ms' }}>
               Faith, freedom, and community — standing up for America's founding principles at Park City High School.
             </p>
@@ -3598,6 +3676,7 @@ function PublicNav({ current, onNavigate, onEnterPortal }) {
 
   return (
     <header className="sticky top-0 z-40 bg-navy/85 backdrop-blur border-b border-cream/10">
+      <TricolorBar />
       <div className="max-w-5xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between gap-3">
         <button onClick={() => go('home')} className="flex items-center shrink-0" aria-label="Club America home">
           <Logo size="nav" />
@@ -3685,7 +3764,8 @@ function PublicNav({ current, onNavigate, onEnterPortal }) {
   );
 }
 
-// Shared wrapper for the inner pages: faint background glows + a centered title.
+// Shared wrapper for the inner pages: old-glory glows, a sparse starfield,
+// faint flag stripes along the bottom, and a centered title over a star divider.
 function PublicPageShell({ title, subtitle, children }) {
   return (
     <div className="relative">
@@ -3694,12 +3774,15 @@ function PublicPageShell({ title, subtitle, children }) {
           style={{ background: 'radial-gradient(circle, rgba(0,40,104,0.20), transparent 60%)', filter: 'blur(50px)' }} />
         <div className="absolute bottom-[8%] -right-1/4 w-[55%] h-[30%] rounded-full"
           style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.10), transparent 60%)', filter: 'blur(50px)' }} />
+        <div className="ca-stripes absolute inset-x-0 bottom-0 h-[22%] opacity-[0.05]" />
+        <Starfield count={20} />
       </div>
       <main className="relative max-w-5xl mx-auto px-4 sm:px-6 pt-10 pb-20 space-y-8">
         {title && (
           <div className="text-center">
             <h1 className="font-display text-4xl sm:text-5xl text-cream">{title}</h1>
-            {subtitle && <p className="text-cream/55 mt-2">{subtitle}</p>}
+            <StarDivider className="mt-4" />
+            {subtitle && <p className="text-cream/55 mt-3">{subtitle}</p>}
           </div>
         )}
         {children}
@@ -3717,9 +3800,9 @@ function PublicHomePage({ home, cards, onNavigate }) {
       <div className="relative min-h-[calc(100vh-5rem)] flex flex-col overflow-hidden">
         {/* Ambient background layers — old-glory red and blue, kept quiet */}
         <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
-          <div className="ca-aurora-a absolute -top-1/4 -left-1/4 w-[80%] h-[80%] rounded-full"
+          <div className="absolute -top-1/4 -left-1/4 w-[80%] h-[80%] rounded-full"
             style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.16), transparent 60%)', filter: 'blur(40px)' }} />
-          <div className="ca-aurora-b absolute -bottom-1/3 -right-1/4 w-[85%] h-[85%] rounded-full"
+          <div className="absolute -bottom-1/3 -right-1/4 w-[85%] h-[85%] rounded-full"
             style={{ background: 'radial-gradient(circle, rgba(0,40,104,0.35), transparent 60%)', filter: 'blur(40px)' }} />
           <div className="ca-stripes absolute inset-x-0 bottom-0 h-[42%] opacity-10" />
         </div>
@@ -3730,7 +3813,7 @@ function PublicHomePage({ home, cards, onNavigate }) {
           <TiltScene className="relative w-full" innerClassName="relative flex flex-col items-center text-center">
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none" aria-hidden="true"
               style={{ transform: 'translateZ(-90px)' }}>
-              <StarRing className="ca-spin-slow opacity-[0.07] w-[min(85vw,540px)] h-auto" />
+              <StarRing className="opacity-[0.07] w-[min(85vw,540px)] h-auto" />
             </div>
             <p className="font-display text-sm tracking-[0.6em] text-gold/70 uppercase mb-4 ca-fade-in"
               style={{ animationDelay: '500ms', animationDuration: '0.8s', transform: 'translateZ(25px)' }}>
@@ -3827,10 +3910,7 @@ function BioSection({ text }) {
   if (!text) return null;
   return (
     <div className="bg-navy2 border border-cream/10 rounded-xl p-5 mb-6">
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-lg">👤</span>
-        <div className="font-display text-2xl text-gold">About</div>
-      </div>
+      <div className="font-display text-2xl text-gold mb-3">About</div>
       <div className="text-cream/80 whitespace-pre-wrap leading-relaxed">{text}</div>
     </div>
   );
@@ -3866,9 +3946,10 @@ function InterestSurvey({ onBack }) {
 
   if (submitted) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="w-full max-w-md text-center">
-          <div className="text-5xl mb-4">🎉</div>
+      <div className="relative min-h-screen flex items-center justify-center p-4">
+        <PatriotBackdrop />
+        <div className="relative w-full max-w-md text-center">
+          <SuccessMark className="mb-4" />
           <div className="font-display text-4xl text-gold mb-3">Thanks for your interest!</div>
           <p className="text-cream/70 mb-6">
             We've received your information. A Club America representative will be in touch soon.
@@ -3880,8 +3961,9 @@ function InterestSurvey({ onBack }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
+    <div className="relative min-h-screen flex items-center justify-center p-4">
+      <PatriotBackdrop stripes />
+      <div className="relative w-full max-w-md">
         <div className="mb-6">
           <Logo size="login" />
         </div>
@@ -4279,13 +4361,12 @@ function GradeRepLeaderboard({ me }) {
   const leader = board[0];
   const myEntry = board.find((r) => r.id === me.id);
 
-  const medals = ['🥇', '🥈', '🥉'];
 
   return (
     <div className="bg-navy2 border-2 border-gold/60 rounded-2xl p-5 mb-8">
       {/* Prize banner */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <div className="text-3xl">🏆</div>
+        <div className="text-gold"><AppIcon name="trophy" size={30} /></div>
         <div className="flex-1 min-w-0">
           <div className="font-display text-2xl text-gold leading-tight">Grade Rep Recruitment Challenge</div>
           <div className="text-cream/70 text-sm mt-0.5">
@@ -4314,7 +4395,7 @@ function GradeRepLeaderboard({ me }) {
                 isMe ? 'bg-navy border border-cream/20 hover:border-cream/30' : 'bg-navy/40 hover:bg-navy/60'
               }`}>
               <div className={`font-display text-xl w-8 text-center shrink-0 ${isLeader ? 'text-gold' : 'text-cream/40'}`}>
-                {medals[i] || `${i + 1}`}
+                {i + 1}
               </div>
               <div className="flex-1 min-w-0">
                 <span className={`font-medium ${isMe ? 'text-gold' : 'text-cream'}`}>
@@ -4470,7 +4551,7 @@ function RosterPage({ me }) {
         {!loaded && <Loading label="Loading roster…" />}
         {loaded && tabFilteredMembers.length === 0 && (
           <EmptyState
-            icon="🧑‍🤝‍🧑"
+            icon="team"
             title={tab === 'all' ? 'No one on the roster yet' : 'Nothing in this view'}
             hint={(isPrivileged || !!me.canManageRoster)
               ? 'Add a prospect with “+ Add Member” below to start building the pipeline.'
@@ -4701,7 +4782,7 @@ function FundingRequestPage({ me }) {
 
       {requests === null && !error && <Loading label="Loading requests…" />}
       {requests !== null && requests.length === 0 && (
-        <EmptyState icon="💰" title="No funding requests yet" hint={isPrivileged ? 'Requests submitted by the board will appear here for review.' : 'Use “+ New Funding Request” above to submit your first one.'} />
+        <EmptyState icon="funding" title="No funding requests yet" hint={isPrivileged ? 'Requests submitted by the board will appear here for review.' : 'Use “+ New Funding Request” above to submit your first one.'} />
       )}
       <div className="space-y-3">
         {(requests || []).map((r) => (
@@ -4830,7 +4911,7 @@ function BoardApplicationsPage({ me }) {
 
       {apps === null && !error && <Loading label="Loading applications…" />}
       {apps !== null && apps.length === 0 && (
-        <EmptyState icon="📝" title="No applications yet" hint={isPrivileged ? 'Leadership applications from the board will appear here.' : 'Use “+ Apply for a Position” above to submit yours.'} />
+        <EmptyState icon="apply" title="No applications yet" hint={isPrivileged ? 'Leadership applications from the board will appear here.' : 'Use “+ Apply for a Position” above to submit yours.'} />
       )}
       <div className="space-y-3">
         {(apps || []).map((a) => (
@@ -4986,7 +5067,7 @@ function AdminDashboardPage({ me }) {
         <div className="space-y-6">
           {teamTasks === null && <Loading label="Loading team tasks…" />}
           {teamTasks !== null && teamTasks.length === 0 && (
-            <EmptyState icon="✅" title="No team tasks" hint="Your direct reports have no approved tasks yet." />
+            <EmptyState icon="check" title="No team tasks" hint="Your direct reports have no approved tasks yet." />
           )}
           {(teamTasks || []).map((group) => {
             const today = new Date().toISOString().slice(0, 10);
@@ -5099,7 +5180,7 @@ function AdminDashboardPage({ me }) {
             {checkinWeekOf && <span className="text-cream/40 text-base ml-2">· due Friday {fmtDate(checkinWeekOf)}</span>}
           </div>
           {missingCheckins.length === 0
-            ? <div className="text-emerald-300 text-sm">🎉 Everyone has checked in this week.</div>
+            ? <div className="text-emerald-300 text-sm">Everyone has checked in this week.</div>
             : (
               <div className="bg-navy2 border border-orange-300/20 rounded-xl p-4 flex flex-wrap gap-2">
                 {missingCheckins.map((u) => (
@@ -5499,7 +5580,7 @@ function LogisticsPage() {
           .sort((a, b) => b.count - a.count);
         const boardMax = boardRows[0]?.count || 1;
 
-        const eventLabel = (e) => e === 'podcast_watch' ? '▶ Podcast' : e === 'board_profile' ? '👤 Profile' : e;
+        const eventLabel = (e) => e === 'podcast_watch' ? '▶ Podcast' : e === 'board_profile' ? 'Profile' : e;
 
         return (
           <div className="space-y-8 max-w-2xl">
@@ -5967,7 +6048,7 @@ function HomeSummaryCard({ me, onNavigate }) {
           <button onClick={() => onNavigate({ type: 'checkin' })}
             className={`border rounded-xl p-3 text-left hover:brightness-110 transition-all active:scale-95 ${checkinSubmitted ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red/30 bg-red/5'}`}>
             <div className="text-cream/50 text-[10px] uppercase tracking-wide mb-1">Check-In</div>
-            <div className={`text-sm font-medium ${checkinSubmitted ? 'text-emerald-300' : 'text-red'}`}>{checkinSubmitted ? '✓ Submitted' : '⚠ Not yet'}</div>
+            <div className={`text-sm font-medium ${checkinSubmitted ? 'text-emerald-300' : 'text-red'}`}>{checkinSubmitted ? '✓ Submitted' : 'Not yet'}</div>
           </button>
         )}
         <button onClick={() => onNavigate({ type: 'meetings' })}
@@ -5990,7 +6071,7 @@ function HomeSummaryCard({ me, onNavigate }) {
       {/* Announcement banner */}
       {announcement && announcement.text && (
         <div className="bg-gold/10 border border-gold/30 rounded-xl px-4 py-3 flex items-start gap-3">
-          <span className="text-gold text-lg shrink-0">📢</span>
+          <span className="mt-0.5 text-gold/80 shrink-0"><AppIcon name="megaphone" size={17} /></span>
           <div className="flex-1 min-w-0">
             <div className="text-xs text-gold/70 uppercase tracking-wide mb-0.5">Team Announcement</div>
             <div className="text-sm text-cream/85 leading-relaxed">{announcement.text}</div>
@@ -6214,7 +6295,7 @@ function ResourceHubPage({ me }) {
 
       {!loaded && <Loading label="Loading resources…" />}
       {loaded && filtered.length === 0 && (
-        <EmptyState icon="📚" title="No resources yet" hint={isManager ? 'Add links your team uses daily — templates, forms, policies.' : 'Resources shared by your managers will appear here.'} />
+        <EmptyState icon="resources" title="No resources yet" hint={isManager ? 'Add links your team uses daily — templates, forms, policies.' : 'Resources shared by your managers will appear here.'} />
       )}
 
       <div className="space-y-5">
@@ -6313,7 +6394,9 @@ function VolunteerSignUpPage({ eventId }) {
   if (error && !event) return (
     <div className="min-h-screen flex items-center justify-center p-8" style={{ background: '#0d1b2e' }}>
       <div className="text-center max-w-sm">
-        <div className="text-4xl mb-4">🚫</div>
+        <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-red/10 border border-red/30 flex items-center justify-center">
+          <AppIcon name="warning" size={24} className="text-red/80" />
+        </div>
         <div className="text-cream/70 text-lg mb-2">Sign-ups Unavailable</div>
         <div className="text-cream/40 text-sm">{error}</div>
         <a href="/" className="mt-4 inline-block text-gold/60 hover:text-gold text-sm underline">← Back to home</a>
@@ -6322,9 +6405,14 @@ function VolunteerSignUpPage({ eventId }) {
   );
 
   if (submitted) return (
-    <div className="min-h-screen flex items-center justify-center p-8" style={{ background: '#0d1b2e' }}>
-      <div className="text-center max-w-sm">
-        <div className="text-5xl mb-4">{submitted === 'waitlisted' ? '⏳' : '🎉'}</div>
+    <div className="relative min-h-screen flex items-center justify-center p-8" style={{ background: '#0d1b2e' }}>
+      <PatriotBackdrop stripes />
+      <div className="relative text-center max-w-sm">
+        {submitted === 'waitlisted' ? (
+          <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-cream/5 border border-cream/20 flex items-center justify-center">
+            <AppIcon name="clock" size={24} className="text-cream/60" />
+          </div>
+        ) : <SuccessMark className="mb-4" />}
         <div className="text-2xl font-semibold text-cream mb-2">
           {submitted === 'waitlisted'
             ? (selectedRoleObj ? `You're on the waitlist for ${selectedRoleObj.roleName}!` : "You're on the waitlist!")
@@ -6343,8 +6431,9 @@ function VolunteerSignUpPage({ eventId }) {
   const GRADES = ['9th', '10th', '11th', '12th', 'Other'];
 
   return (
-    <div className="min-h-screen py-10 px-4" style={{ background: '#0d1b2e' }}>
-      <div className="max-w-lg mx-auto">
+    <div className="relative min-h-screen py-10 px-4" style={{ background: '#0d1b2e' }}>
+      <PatriotBackdrop />
+      <div className="relative max-w-lg mx-auto">
         <a href="/" className="text-sm text-cream/40 hover:text-cream/70 mb-6 inline-block">← Back to home</a>
         <div className="bg-navy2 border border-cream/10 rounded-2xl p-6 mb-6">
           <div className="text-xs text-gold/60 uppercase tracking-wider mb-1">Volunteer Sign-Up</div>
@@ -6699,40 +6788,53 @@ function VolunteerManagerPage({ me }) {
 
 // Per-tile accent colors so the grid is scannable at a glance instead of a
 // monotone wall. Keys match AppIcon names.
+// Tile accents stay inside the brand palette (gold / red / blue / green /
+// cream) instead of giving every tile its own hue. Roughly: gold = personal &
+// club voice, blue = pages and content, green = money, red = admin/oversight,
+// cream = people & structure.
+const TILE_TONE_CLASSES = {
+  gold:  { icon: 'text-gold',        bg: 'bg-gold/10' },
+  red:   { icon: 'text-red',         bg: 'bg-red/10' },
+  blue:  { icon: 'text-sky-300',     bg: 'bg-sky-500/10' },
+  green: { icon: 'text-emerald-300', bg: 'bg-emerald-500/10' },
+  cream: { icon: 'text-cream/70',    bg: 'bg-cream/10' },
+};
 const TILE_TONES = {
-  person:         { icon: 'text-gold',        bg: 'bg-gold/10' },
-  home:           { icon: 'text-sky-300',     bg: 'bg-sky-500/10' },
-  edit:           { icon: 'text-violet-300',  bg: 'bg-violet-500/10' },
-  megaphone:      { icon: 'text-amber-300',   bg: 'bg-amber-500/10' },
-  team:           { icon: 'text-teal-300',    bg: 'bg-teal-500/10' },
-  check:          { icon: 'text-emerald-300', bg: 'bg-emerald-500/10' },
-  inbox:          { icon: 'text-orange-300',  bg: 'bg-orange-500/10' },
-  roster:         { icon: 'text-cyan-300',    bg: 'bg-cyan-500/10' },
-  calendar:       { icon: 'text-rose-300',    bg: 'bg-rose-500/10' },
-  funding:        { icon: 'text-emerald-300', bg: 'bg-emerald-500/10' },
-  apply:          { icon: 'text-indigo-300',  bg: 'bg-indigo-500/10' },
-  dashboard:      { icon: 'text-fuchsia-300', bg: 'bg-fuchsia-500/10' },
-  attendance:     { icon: 'text-teal-300',    bg: 'bg-teal-500/10' },
-  poll:           { icon: 'text-violet-300',  bg: 'bg-violet-500/10' },
-  meetings:       { icon: 'text-sky-300',     bg: 'bg-sky-500/10' },
-  volunteer:      { icon: 'text-emerald-300', bg: 'bg-emerald-500/10' },
-  speaker:        { icon: 'text-amber-300',   bg: 'bg-amber-500/10' },
-  grants:         { icon: 'text-lime-300',    bg: 'bg-lime-500/10' },
-  social:         { icon: 'text-pink-300',    bg: 'bg-pink-500/10' },
-  budget:         { icon: 'text-green-300',   bg: 'bg-green-500/10' },
-  grades:         { icon: 'text-cyan-300',    bg: 'bg-cyan-500/10' },
-  reimbursements: { icon: 'text-orange-300',  bg: 'bg-orange-500/10' },
-  resources:      { icon: 'text-blue-300',    bg: 'bg-blue-500/10' },
-  directory:      { icon: 'text-indigo-300',  bg: 'bg-indigo-500/10' },
-  org:            { icon: 'text-cream/70',    bg: 'bg-cream/10' },
-  admin:          { icon: 'text-red',         bg: 'bg-red/10' },
-  activity:       { icon: 'text-rose-300',    bg: 'bg-rose-500/10' },
-  ai:             { icon: 'text-purple-300',  bg: 'bg-purple-500/10' },
-  bell:           { icon: 'text-gold',        bg: 'bg-gold/10' },
+  person:         TILE_TONE_CLASSES.gold,
+  home:           TILE_TONE_CLASSES.blue,
+  edit:           TILE_TONE_CLASSES.blue,
+  megaphone:      TILE_TONE_CLASSES.gold,
+  team:           TILE_TONE_CLASSES.cream,
+  check:          TILE_TONE_CLASSES.green,
+  inbox:          TILE_TONE_CLASSES.gold,
+  roster:         TILE_TONE_CLASSES.cream,
+  calendar:       TILE_TONE_CLASSES.blue,
+  funding:        TILE_TONE_CLASSES.green,
+  apply:          TILE_TONE_CLASSES.cream,
+  dashboard:      TILE_TONE_CLASSES.blue,
+  attendance:     TILE_TONE_CLASSES.cream,
+  poll:           TILE_TONE_CLASSES.gold,
+  meetings:       TILE_TONE_CLASSES.blue,
+  volunteer:      TILE_TONE_CLASSES.green,
+  speaker:        TILE_TONE_CLASSES.gold,
+  grants:         TILE_TONE_CLASSES.green,
+  social:         TILE_TONE_CLASSES.blue,
+  budget:         TILE_TONE_CLASSES.green,
+  grades:         TILE_TONE_CLASSES.cream,
+  reimbursements: TILE_TONE_CLASSES.green,
+  resources:      TILE_TONE_CLASSES.blue,
+  directory:      TILE_TONE_CLASSES.cream,
+  org:            TILE_TONE_CLASSES.cream,
+  admin:          TILE_TONE_CLASSES.red,
+  activity:       TILE_TONE_CLASSES.red,
+  ai:             TILE_TONE_CLASSES.gold,
+  bell:           TILE_TONE_CLASSES.gold,
+  testimonial:    TILE_TONE_CLASSES.blue,
+  newsletter:     TILE_TONE_CLASSES.blue,
 };
 
-function AppIcon({ name, className }) {
-  const p = { width: 26, height: 26, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', className: className || 'text-cream/60' };
+function AppIcon({ name, className, size = 26 }) {
+  const p = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', className: className || 'text-cream/60' };
   switch (name) {
     case 'person':    return <svg {...p}><circle cx="12" cy="8" r="3.5"/><path d="M4 20c0-3.866 3.582-7 8-7s8 3.134 8 7"/></svg>;
     case 'home':      return <svg {...p}><path d="M3 11.5 12 3l9 8.5"/><path d="M5 10.5v10h5v-5h4v5h5v-10"/></svg>;
@@ -6766,6 +6868,13 @@ function AppIcon({ name, className }) {
     case 'volunteer':    return <svg {...p}><path d="M19.5 12.572 12 20l-7.5-7.428A5 5 0 1 1 12 6.006a5 5 0 1 1 7.5 6.566"/><path d="m9 12 2 2 4-4"/></svg>;
     case 'testimonial':  return <svg {...p}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg>;
     case 'newsletter':   return <svg {...p}><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>;
+    case 'star':         return <svg {...p}><path d="m12 2.5 2.9 5.9 6.5.95-4.7 4.58 1.1 6.47L12 17.35 6.2 20.4l1.1-6.47L2.6 9.35l6.5-.95Z"/></svg>;
+    case 'trophy':       return <svg {...p}><path d="M8 21h8M12 17v4"/><path d="M7 4h10v5a5 5 0 0 1-10 0Z"/><path d="M7 5H4v2a3 3 0 0 0 3 3M17 5h3v2a3 3 0 0 1-3 3"/></svg>;
+    case 'camera':       return <svg {...p}><path d="M3 8a2 2 0 0 1 2-2h2l2-3h6l2 3h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>;
+    case 'photo':        return <svg {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>;
+    case 'pin':          return <svg {...p}><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>;
+    case 'clock':        return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>;
+    case 'warning':      return <svg {...p}><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg>;
     default:             return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
   }
 }
@@ -6854,8 +6963,10 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
   let tileIndex = 0;
 
   return (
-    <div className="min-h-screen flex flex-col ca-fade-in" style={{ background: '#0d1b2e' }}>
-      <header className="px-6 py-5 flex items-center justify-between border-b border-cream/10">
+    <div className="relative min-h-screen flex flex-col ca-fade-in" style={{ background: '#0d1b2e' }}>
+      <PatriotBackdrop stars={16} stripes />
+      <TricolorBar className="relative" />
+      <header className="relative px-6 py-5 flex items-center justify-between border-b border-cream/10">
         <Logo size="sidebar" />
         <div className="flex items-center gap-4">
           <button onClick={onSearch} aria-label="Search" title="Search (⌘K or /)"
@@ -6874,16 +6985,18 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
           </div>
         </div>
       </header>
-      <div className="flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 py-8">
+      <div className="relative flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 py-8">
         <div className="mb-6">
           <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">{greeting}, {me.firstName || me.displayName}</h1>
           <p className="text-cream/40 text-sm mt-1.5">{dateLine}</p>
+          <FlagUnderline className="mt-3" />
         </div>
         <HomeSummaryCard me={me} onNavigate={onNavigate} />
         <div className="space-y-8">
           {sections.map((section) => (
             <div key={section.title}>
               <div className="flex items-center gap-3 mb-3">
+                <span className="text-gold/50 text-[10px]" aria-hidden="true">★</span>
                 <span className="text-xs font-semibold text-cream/40 uppercase tracking-widest">{section.title}</span>
                 <div className="flex-1 h-px bg-cream/10" />
               </div>
@@ -6988,7 +7101,7 @@ function NotificationBell({ onNavigate, refreshSignal }) {
               {unread > 0 && <button onClick={markAll} className="text-xs text-gold/70 hover:text-gold">Mark all read</button>}
             </div>
             {items.length === 0 ? (
-              <div className="px-4 py-10 text-center text-cream/40 text-sm">You're all caught up. 🎉</div>
+              <div className="px-4 py-10 text-center text-cream/40 text-sm">You're all caught up.</div>
             ) : items.map((n) => (
               <button key={n.id} onClick={() => openItem(n)}
                 className={`block w-full text-left px-4 py-3 border-b border-cream/5 hover:bg-navy3 transition-all duration-150 ${n.isRead ? '' : 'bg-gold/5'}`}>
@@ -7433,8 +7546,11 @@ function App() {
       {showWelcomeIntro && <WelcomeIntroModal me={me} navTiles={navTiles} onDone={introDismiss} />}
       {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={bump} />}
       {searchOpen && <SearchModal me={me} reports={reports} tiles={navTiles} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
-      <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
-        <header className="sticky top-0 z-20 flex items-center gap-3 bg-navy2/95 backdrop-blur border-b border-cream/10 px-4 py-3">
+      <div className="relative min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
+        {view.type !== 'home' && <PatriotBackdrop stars={10} />}
+        <header className="sticky top-0 z-20 bg-navy2/95 backdrop-blur border-b border-cream/10">
+          <TricolorBar />
+          <div className="flex items-center gap-3 px-4 py-3">
           <button onClick={() => navigate({ type: 'apphome' })} aria-label="Back to home"
             className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-cream hover:bg-navy3 transition-colors">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -7453,8 +7569,9 @@ function App() {
               <span className="absolute -top-1 -right-1 bg-gold text-navy text-[9px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-0.5">{aiNotesCount}</span>
             )}
           </button>
+          </div>
         </header>
-        <main className={`flex-1 overflow-x-hidden ${view.type === 'home' ? '' : 'p-4 sm:p-6 lg:p-8'}`}>
+        <main className={`relative flex-1 overflow-x-hidden ${view.type === 'home' ? '' : 'p-4 sm:p-6 lg:p-8'}`}>
           <div key={view.type + (view.userId || '')} className="ca-slide-up">
             {view.type !== 'home' && <TabIntroBanner userId={me.id} tabType={view.type} />}
             {content}
@@ -7648,11 +7765,11 @@ function MeetingsPage({ me }) {
         <div>
           {!calLoaded && <Loading label="Loading club meetings…" />}
           {calLoaded && !calConfigured && (
-            <EmptyState icon="📅" title="No calendar connected"
+            <EmptyState icon="calendar" title="No calendar connected"
               hint={isManager ? 'Connect a calendar URL in Edit Website to auto-populate club meetings.' : 'No calendar has been connected yet.'} />
           )}
           {calLoaded && calConfigured && calEvents.length === 0 && (
-            <EmptyState icon="📅" title="No upcoming club meetings" hint="No events found in the next few weeks on the connected calendar." />
+            <EmptyState icon="calendar" title="No upcoming club meetings" hint="No events found in the next few weeks on the connected calendar." />
           )}
           <div className="space-y-3">
             {calEvents.map((e, i) => (
@@ -7691,7 +7808,7 @@ function MeetingsPage({ me }) {
           )}
           {!loaded && <Loading label="Loading board meetings…" />}
           {loaded && meetings.length === 0 && (
-            <EmptyState icon="📋" title="No board meetings yet" hint={isManager ? 'Create the first board meeting record above.' : 'Board meeting records will appear here once added.'} />
+            <EmptyState icon="meetings" title="No board meetings yet" hint={isManager ? 'Create the first board meeting record above.' : 'Board meeting records will appear here once added.'} />
           )}
           <div className="space-y-3">
             {meetings.map((m) => (
@@ -7844,7 +7961,7 @@ function GrantsPage({ me }) {
       )}
 
       {!loaded && <Loading label="Loading grants…" />}
-      {loaded && grants.length === 0 && <EmptyState icon="💰" title="No grant applications yet" hint="Track grants submitted to TPUSA national or other funders." />}
+      {loaded && grants.length === 0 && <EmptyState icon="grants" title="No grant applications yet" hint="Track grants submitted to TPUSA national or other funders." />}
       <div className="space-y-3">
         {grants.map((g) => (
           <div key={g.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors">
@@ -7991,7 +8108,7 @@ function SpeakerEventsPage({ me }) {
       )}
 
       {!loaded && <Loading label="Loading speaker events…" />}
-      {loaded && events.length === 0 && <EmptyState icon="🎤" title="No speaker events yet" hint={isManager ? 'Plan your first speaker event above.' : 'Speaker events will appear here once planned.'} />}
+      {loaded && events.length === 0 && <EmptyState icon="speaker" title="No speaker events yet" hint={isManager ? 'Plan your first speaker event above.' : 'Speaker events will appear here once planned.'} />}
       <div className="space-y-3">
         {events.map((ev) => {
           const done = CHECKLIST.filter((c) => ev[c.key]).length;
@@ -8007,7 +8124,7 @@ function SpeakerEventsPage({ me }) {
                     </div>
                     <div className="text-xs text-cream/40 mt-1 flex flex-wrap gap-x-3">
                       {ev.eventDate && <span>{fmtShortDate(ev.eventDate)}</span>}
-                      {ev.location && <span>📍 {ev.location}</span>}
+                      {ev.location && <span className="inline-flex items-center gap-1"><AppIcon name="pin" size={12} className="text-cream/40" />{ev.location}</span>}
                       {ev.expectedAttendance > 0 && <span>~{ev.expectedAttendance} expected</span>}
                       {ev.budgetEstimate > 0 && <span>${ev.budgetEstimate.toLocaleString()} budget</span>}
                     </div>
@@ -8145,7 +8262,7 @@ function SocialTrackerPage({ me }) {
 
       {daysSince !== null && daysSince >= 3 && (
         <div className="mb-4 bg-red/10 border border-red/30 rounded-xl px-4 py-3 flex items-start gap-3">
-          <span className="text-xl shrink-0">⚠️</span>
+          <span className="mt-0.5 text-red/80 shrink-0"><AppIcon name="warning" size={18} /></span>
           <div>
             <div className="text-cream font-medium text-sm">No posts logged in {daysSince === 999 ? 'a while' : `${daysSince} day${daysSince === 1 ? '' : 's'}`}</div>
             <div className="text-cream/60 text-xs mt-0.5">The socials manager should log or schedule a new post soon to keep the chapter visible.</div>
@@ -8188,7 +8305,7 @@ function SocialTrackerPage({ me }) {
       {!loaded && <Loading label="Loading posts…" />}
 
       {loaded && posts.length === 0 && (
-        <EmptyState icon="📱" title="No posts tracked yet" hint={canPost ? 'Plan your first post with "+ Add Post" above.' : 'Planned posts will show up here.'} />
+        <EmptyState icon="social" title="No posts tracked yet" hint={canPost ? 'Plan your first post with "+ Add Post" above.' : 'Planned posts will show up here.'} />
       )}
 
       {planned.length > 0 && (
@@ -8203,8 +8320,8 @@ function SocialTrackerPage({ me }) {
                     {p.captionDraft && <div className="text-sm text-cream/80 whitespace-pre-wrap">{p.captionDraft}</div>}
                     {p.imageDescription && <div className="text-xs text-cream/40 mt-1 italic">Visual: {p.imageDescription}</div>}
                     <div className="text-xs text-cream/40 mt-1 flex gap-3 flex-wrap">
-                      {p.scheduledDate && <span>📅 {fmtShortDate(p.scheduledDate)}</span>}
-                      {p.assignedToName && <span>👤 {p.assignedToName}</span>}
+                      {p.scheduledDate && <span className="inline-flex items-center gap-1"><AppIcon name="calendar" size={12} className="text-cream/40" />{fmtShortDate(p.scheduledDate)}</span>}
+                      {p.assignedToName && <span className="inline-flex items-center gap-1"><AppIcon name="person" size={12} className="text-cream/40" />{p.assignedToName}</span>}
                     </div>
                   </div>
                   {canPost && (
@@ -8291,7 +8408,7 @@ function TaskComments({ taskId, me }) {
         onClick={() => setOpen((o) => !o)}
         className="text-xs text-cream/50 hover:text-gold transition-colors flex items-center gap-1"
       >
-        💬 {count !== null ? count : '…'} comment{count !== 1 ? 's' : ''} {open ? '▲' : '▼'}
+        <AppIcon name="testimonial" size={13} className="text-cream/40" /> {count !== null ? count : '…'} comment{count !== 1 ? 's' : ''} {open ? '▲' : '▼'}
       </button>
 
       {open && (
@@ -8481,7 +8598,7 @@ function SearchModal({ me, reports = [], tiles = [], onNavigate, onClose }) {
                 <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-cream/40 font-semibold">Announcements</div>
                 {results.announcements.map((a) => (
                   <div key={a.id} className="px-4 py-2.5 flex items-start gap-3">
-                    <span className="mt-0.5 text-gold/60 text-xs shrink-0">📢</span>
+                    <span className="mt-0.5 text-gold/60 shrink-0"><AppIcon name="megaphone" size={13} /></span>
                     <div className="min-w-0">
                       <div className="text-cream/45 text-xs">{a.authorName}</div>
                       <div className="text-cream text-sm truncate">{a.text}</div>
@@ -8628,7 +8745,7 @@ function GradePipelinePage({ me }) {
       <div>
         <div className="font-display text-2xl text-gold mb-3">Active Prospects & Contacted ({prospects.length})</div>
         {prospects.length === 0
-          ? <EmptyState icon="🎯" title="No active prospects" hint="Add prospects to the roster to start tracking." />
+          ? <EmptyState icon="grades" title="No active prospects" hint="Add prospects to the roster to start tracking." />
           : (
             <div className="space-y-2">
               {prospects.map((p) => {
@@ -8643,7 +8760,7 @@ function GradePipelinePage({ me }) {
                           {p.email && <span>{p.email}</span>}
                           {p.phone && <span>{p.phone}</span>}
                           <Badge tone={p.status === 'Contacted' ? 'blue' : 'slate'}>{p.status}</Badge>
-                          <span className={stale ? 'text-red font-medium' : 'text-cream/40'}>{days} day{days !== 1 ? 's' : ''} in pipeline{stale ? ' ⚠' : ''}</span>
+                          <span className={stale ? 'text-red font-medium' : 'text-cream/40'}>{days} day{days !== 1 ? 's' : ''} in pipeline</span>
                         </div>
                       </div>
                       <div className="flex gap-2 shrink-0">
@@ -8674,7 +8791,6 @@ function GradePipelinePage({ me }) {
 // Expense Reimbursements
 // ---------------------------------------------------------------------------
 const REIMBURSEMENT_CATEGORIES = ['Supplies', 'Food', 'Printing', 'Travel', 'Other'];
-const REIMBURSEMENT_CATEGORY_ICONS = { Supplies: '📦', Food: '🍕', Printing: '🖨', Travel: '🚗', Other: '📎' };
 
 function ReimbursementsPage({ me }) {
   const [items, setItems] = useState(null);
@@ -8772,7 +8888,7 @@ function ReimbursementsPage({ me }) {
               <div key={r.id} className="bg-navy2 border border-gold/20 rounded-xl p-4">
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div>
-                    <div className="font-medium text-cream">{fmt(r.amount)} · {REIMBURSEMENT_CATEGORY_ICONS[r.category] || ''} {r.category}</div>
+                    <div className="font-medium text-cream">{fmt(r.amount)} · {r.category}</div>
                     {r.description && <div className="text-sm text-cream/60 mt-0.5">{r.description}</div>}
                     <div className="text-xs text-cream/40 mt-1">By {r.submitterName}{r.submitterTitle ? ` · ${r.submitterTitle}` : ''} · purchased {r.purchaseDate}</div>
                   </div>
@@ -8803,13 +8919,13 @@ function ReimbursementsPage({ me }) {
         {items === null && <Loading label="Loading…" />}
         {items !== null && (
           (isManager ? items : mine).length === 0
-            ? <EmptyState icon="💳" title="No reimbursements yet" hint="Submit a request when you make a purchase for the club." />
+            ? <EmptyState icon="reimbursements" title="No reimbursements yet" hint="Submit a request when you make a purchase for the club." />
             : (
               <div className="space-y-2">
                 {(isManager ? items : mine).map((r) => (
                 <div key={r.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 flex items-center justify-between gap-3 flex-wrap">
                   <div className="min-w-0">
-                    <div className="text-cream text-sm font-medium">{fmt(r.amount)} · {REIMBURSEMENT_CATEGORY_ICONS[r.category] || ''} {r.category}</div>
+                    <div className="text-cream text-sm font-medium">{fmt(r.amount)} · {r.category}</div>
                     {r.description && <div className="text-xs text-cream/50 truncate">{r.description}</div>}
                     <div className="text-xs text-cream/40 mt-0.5">
                       {isManager && r.submitterName ? `${r.submitterName} · ` : ''}purchased {r.purchaseDate}
@@ -8869,7 +8985,7 @@ function DirectoryPage({ me }) {
 
       {users === null && <Loading label="Loading directory…" />}
       {users !== null && filtered.length === 0 && (
-        <EmptyState icon="👥" title="No members found" hint="Try a different search term." />
+        <EmptyState icon="team" title="No members found" hint="Try a different search term." />
       )}
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -9114,7 +9230,7 @@ function AttendancePage({ me }) {
         <div className="md:col-span-2 space-y-2">
           {events === null && <Loading label="Loading events…" />}
           {events !== null && events.length === 0 && (
-            <EmptyState icon="📅" title="No events yet" hint="Create an event to start tracking attendance." />
+            <EmptyState icon="calendar" title="No events yet" hint="Create an event to start tracking attendance." />
           )}
           {(events || []).map((ev) => (
             <div key={ev.id} className={`bg-navy2 border rounded-xl transition-all duration-150 ${activeEvent === ev.id ? 'border-gold/60 bg-navy3' : 'border-cream/10'}`}>
@@ -9138,7 +9254,7 @@ function AttendancePage({ me }) {
                 <div className="px-4 pb-3">
                   <button onClick={() => setRollCallEvent(ev.id)}
                     className="text-xs text-gold/70 hover:text-gold border border-gold/30 hover:border-gold/60 rounded px-2.5 py-1 transition-colors">
-                    📋 Roll Call
+                    Roll Call
                   </button>
                 </div>
               )}
@@ -9407,7 +9523,7 @@ function PollsPage({ me }) {
       )}
 
       {polls === null && <Loading label="Loading polls…" />}
-      {polls !== null && polls.length === 0 && <EmptyState icon="🗳️" title="No polls yet" hint={canCreate ? 'Create a poll to get the board\'s opinion on something.' : 'No active polls from the President.'} />}
+      {polls !== null && polls.length === 0 && <EmptyState icon="poll" title="No polls yet" hint={canCreate ? 'Create a poll to get the board\'s opinion on something.' : 'No active polls from the President.'} />}
 
       <div className="space-y-4">
         {(polls || []).map((poll) => {
@@ -9559,7 +9675,7 @@ function TestimonialsSection({ bare = false }) {
     return bare ? <div className="flex items-center justify-center gap-2 text-cream/50 py-12"><Spinner /> Loading…</div> : null;
   }
   if (items.length === 0) {
-    return bare ? <EmptyState icon="💬" title="No testimonials yet" hint="Check back soon to hear what our members have to say." /> : null;
+    return bare ? <EmptyState icon="testimonial" title="No testimonials yet" hint="Check back soon to hear what our members have to say." /> : null;
   }
 
   const grid = (
@@ -9620,7 +9736,7 @@ function TestimonialsCarousel({ onNavigate }) {
     if (paused || count <= 1) return;
     const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (reduce) return;
-    const id = setInterval(() => setIdx((i) => (i + 1) % count), 6500);
+    const id = setInterval(() => setIdx((i) => (i + 1) % count), 9000);
     return () => clearInterval(id);
   }, [paused, count]);
 
@@ -9715,7 +9831,9 @@ function NewsletterSignup() {
   if (done) {
     return (
       <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6 text-center">
-        <div className="text-3xl mb-2">✉️</div>
+        <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-gold/15 border border-gold/40 flex items-center justify-center">
+          <AppIcon name="newsletter" size={22} className="text-gold" />
+        </div>
         <div className="font-display text-2xl text-gold mb-1">You're subscribed!</div>
         <p className="text-cream/60 text-sm">We'll keep you in the loop on Club America news and events.</p>
       </section>
@@ -9799,7 +9917,9 @@ function TestimonialSubmitPage({ token }) {
   if (tokenError) return (
     <div className="min-h-screen flex items-center justify-center p-6 text-center" style={{ background: '#0d1b2e' }}>
       <div>
-        <div className="text-5xl mb-4">🔗</div>
+        <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-red/10 border border-red/30 flex items-center justify-center">
+          <AppIcon name="warning" size={24} className="text-red/80" />
+        </div>
         <div className="font-display text-3xl text-gold mb-2">Link Not Valid</div>
         <p className="text-cream/60 max-w-sm">{tokenError}</p>
       </div>
@@ -9813,9 +9933,10 @@ function TestimonialSubmitPage({ token }) {
   );
 
   if (done) return (
-    <div className="min-h-screen flex items-center justify-center p-6 text-center" style={{ background: '#0d1b2e' }}>
-      <div>
-        <div className="text-5xl mb-4">🎉</div>
+    <div className="relative min-h-screen flex items-center justify-center p-6 text-center" style={{ background: '#0d1b2e' }}>
+      <PatriotBackdrop stripes />
+      <div className="relative">
+        <SuccessMark className="mb-4" />
         <div className="font-display text-3xl text-gold mb-2">Thanks{form.name ? `, ${form.name}` : ''}!</div>
         <p className="text-cream/60 max-w-sm">Your testimonial has been submitted and is under review. We'll publish it once approved.</p>
       </div>
@@ -9823,11 +9944,13 @@ function TestimonialSubmitPage({ token }) {
   );
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6" style={{ background: '#0d1b2e' }}>
-      <div className="w-full max-w-lg">
+    <div className="relative min-h-screen flex items-center justify-center p-6" style={{ background: '#0d1b2e' }}>
+      <PatriotBackdrop />
+      <div className="relative w-full max-w-lg">
         <div className="text-center mb-8">
           <Logo size="sidebar" className="mb-4 mx-auto" />
           <h1 className="font-display text-3xl text-gold">Share Your Story</h1>
+          <StarDivider compact className="mt-2" />
           <p className="text-cream/60 text-sm mt-1">
             {token && prefill
               ? `Hi ${prefill.name}! Tell the world what Club America means to you.`
@@ -10131,7 +10254,7 @@ function TestimonialsAdminPage({ me }) {
       <div>
         <div className="font-display text-2xl text-gold mb-3">Published ({approved.length})</div>
         {approved.length === 0 ? (
-          <EmptyState icon="💬" title="No published testimonials yet" hint="Approve a submission above, or add one directly." />
+          <EmptyState icon="testimonial" title="No published testimonials yet" hint="Approve a submission above, or add one directly." />
         ) : (
           <div className="space-y-2">
             {approved.map((t, idx) => (
@@ -10307,7 +10430,7 @@ function NewsletterAdminPage({ me }) {
         </div>
         <div className="flex flex-wrap gap-3">
           <Button variant="gold" onClick={copyEmails} disabled={allActive.length === 0}>
-            📋 Copy All Emails ({allActive.length})
+            Copy All Emails ({allActive.length})
           </Button>
           <Button variant="ghost" onClick={exportCSV} disabled={allActive.length === 0}>
             ↓ Export CSV
@@ -10370,7 +10493,7 @@ function NewsletterAdminPage({ me }) {
           );
         })}
         {visibleList.length === 0 && subscribers && (
-          <EmptyState icon="✉️" title="No subscribers yet" hint="Subscribers appear here once members or visitors sign up." />
+          <EmptyState icon="newsletter" title="No subscribers yet" hint="Subscribers appear here once members or visitors sign up." />
         )}
       </div>
     </div>
@@ -10386,7 +10509,9 @@ class ErrorBoundary extends React.Component {
     if (this.state.err) {
       return (
         <div className="min-h-screen flex flex-col items-center justify-center text-center gap-3 p-6">
-          <div className="text-4xl">⚠️</div>
+          <div className="w-14 h-14 rounded-full bg-red/10 border border-red/30 flex items-center justify-center">
+            <AppIcon name="warning" size={26} className="text-red/80" />
+          </div>
           <div className="font-display text-2xl text-gold">Something went wrong</div>
           <div className="text-cream/70 max-w-md text-sm">{String((this.state.err && this.state.err.message) || this.state.err)}</div>
           <button onClick={() => location.reload()} className="mt-2 bg-red text-cream px-4 py-2 rounded-md text-sm">Reload</button>
