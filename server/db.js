@@ -540,10 +540,24 @@ function init() {
       needsLogistics INTEGER NOT NULL DEFAULT 0,
       pdfFile        TEXT NOT NULL DEFAULT '',
       pdfFileName    TEXT NOT NULL DEFAULT '',
+      uploads        TEXT NOT NULL DEFAULT '[]',
       handled        INTEGER NOT NULL DEFAULT 0,
       createdAt      TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_speaker_apps ON speaker_applications(handled, createdAt DESC);
+
+    -- PDF templates admins attach to individual triggersUpload questions on the
+    -- speaker application form (one row per question id). Applicants download
+    -- these before they can upload the signed copy back. A question with no row
+    -- here has no template configured yet (except the original 'needsLogistics'
+    -- question, which falls back to the shipped speaker-logistics-form.pdf).
+    CREATE TABLE IF NOT EXISTS speaker_form_templates (
+      questionId  TEXT PRIMARY KEY,
+      fileName    TEXT NOT NULL DEFAULT '',
+      fileData    TEXT NOT NULL DEFAULT '',
+      updatedById INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      updatedAt   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
 
     -- Newsletter subscriber list. Members are auto-enrolled; public visitors can sign up.
     CREATE TABLE IF NOT EXISTS newsletter_subscribers (
@@ -673,6 +687,10 @@ function init() {
   if (!upsCols.includes('bioEnabled'))  db.exec("ALTER TABLE user_page_settings ADD COLUMN bioEnabled INTEGER NOT NULL DEFAULT 0");
   if (!upsCols.includes('bioText'))     db.exec("ALTER TABLE user_page_settings ADD COLUMN bioText TEXT NOT NULL DEFAULT ''");
 
+  // speaker_applications column migrations (multi-question PDF uploads).
+  const speakerAppCols = db.prepare("PRAGMA table_info(speaker_applications)").all().map((c) => c.name);
+  if (!speakerAppCols.includes('uploads')) db.exec("ALTER TABLE speaker_applications ADD COLUMN uploads TEXT NOT NULL DEFAULT '[]'");
+
   // Ensure the homepage row exists.
   db.prepare(`INSERT OR IGNORE INTO site_settings (id, meetingDate, meetingTime, meetingLocation, podcastUrl)
               VALUES (1, 'To be announced', 'To be announced', 'To be announced', '')`).run();
@@ -681,9 +699,9 @@ function init() {
   // the row doesn't exist yet — VP edits are never overwritten on restart).
   const { DEFAULT_SPEAKER_FORM } = require('./speakerForm');
   db.prepare(`INSERT OR IGNORE INTO speaker_form_config (id, title, intro, questions, upload)
-              VALUES (1, ?, ?, ?, ?)`)
+              VALUES (1, ?, ?, ?, '{}')`)
     .run(DEFAULT_SPEAKER_FORM.title, DEFAULT_SPEAKER_FORM.intro,
-         JSON.stringify(DEFAULT_SPEAKER_FORM.questions), JSON.stringify(DEFAULT_SPEAKER_FORM.upload));
+         JSON.stringify(DEFAULT_SPEAKER_FORM.questions));
 }
 
 // ---- Seed data ---------------------------------------------------------------
