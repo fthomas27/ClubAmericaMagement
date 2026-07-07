@@ -515,6 +515,36 @@ function init() {
     );
     CREATE INDEX IF NOT EXISTS idx_testimonials_status ON testimonials(status, sortOrder, createdAt DESC);
 
+    -- Speaker Application Form: single-row, VP-editable question configuration.
+    -- The public /apply-to-speak form renders whatever is stored here, so the
+    -- VP can reorder/add/edit questions without touching code (see
+    -- server/speakerForm.js for the question shape and the seeded defaults).
+    CREATE TABLE IF NOT EXISTS speaker_form_config (
+      id          INTEGER PRIMARY KEY CHECK (id = 1),
+      title       TEXT NOT NULL DEFAULT '',
+      intro       TEXT NOT NULL DEFAULT '',
+      questions   TEXT NOT NULL DEFAULT '[]',
+      upload      TEXT NOT NULL DEFAULT '{}',
+      updatedById INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      updatedAt   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Public speaker applications submitted from /apply-to-speak. Answers are
+    -- stored as a JSON array of {id, label, answer} snapshots so submissions
+    -- stay readable even after the VP later edits the question list.
+    CREATE TABLE IF NOT EXISTS speaker_applications (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      applicantName  TEXT NOT NULL DEFAULT '',
+      applicantEmail TEXT NOT NULL DEFAULT '',
+      answers        TEXT NOT NULL DEFAULT '[]',
+      needsLogistics INTEGER NOT NULL DEFAULT 0,
+      pdfFile        TEXT NOT NULL DEFAULT '',
+      pdfFileName    TEXT NOT NULL DEFAULT '',
+      handled        INTEGER NOT NULL DEFAULT 0,
+      createdAt      TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_speaker_apps ON speaker_applications(handled, createdAt DESC);
+
     -- Newsletter subscriber list. Members are auto-enrolled; public visitors can sign up.
     CREATE TABLE IF NOT EXISTS newsletter_subscribers (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -646,6 +676,14 @@ function init() {
   // Ensure the homepage row exists.
   db.prepare(`INSERT OR IGNORE INTO site_settings (id, meetingDate, meetingTime, meetingLocation, podcastUrl)
               VALUES (1, 'To be announced', 'To be announced', 'To be announced', '')`).run();
+
+  // Seed the speaker application form with its default questions (only when
+  // the row doesn't exist yet — VP edits are never overwritten on restart).
+  const { DEFAULT_SPEAKER_FORM } = require('./speakerForm');
+  db.prepare(`INSERT OR IGNORE INTO speaker_form_config (id, title, intro, questions, upload)
+              VALUES (1, ?, ?, ?, ?)`)
+    .run(DEFAULT_SPEAKER_FORM.title, DEFAULT_SPEAKER_FORM.intro,
+         JSON.stringify(DEFAULT_SPEAKER_FORM.questions), JSON.stringify(DEFAULT_SPEAKER_FORM.upload));
 }
 
 // ---- Seed data ---------------------------------------------------------------

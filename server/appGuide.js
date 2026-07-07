@@ -155,6 +155,10 @@ roles/slots with caps, and review who signed up.
 Plan speaker events with a logistics checklist (AV needs, room confirmation,
 promotion, budget, attendance, post-event notes). Submitting a new speaker request
 automatically adds a "Review speaker request" to-do to the Vice President's task page.
+The Applications tab collects public speaker applications submitted at
+/apply-to-speak (applicants who need AV or travel attach a signed logistics PDF you
+can download). Admins can edit the public application's questions, order, and
+wording on the Application Form tab — no code changes needed.
 
 ### Grant Tracker
 Track grant applications (title, purpose, amount requested, submission date, status).

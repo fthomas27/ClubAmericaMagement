@@ -2610,6 +2610,204 @@ function GetInvolved() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Speaker Application Form (public, /apply-to-speak)
+//
+// The questions are NOT hardcoded here: the form renders whatever question
+// config the VP has saved (Speaker Events → Application Form in the portal,
+// stored server-side; defaults live in server/speakerForm.js). Answering
+// "Yes" to a question flagged `triggersUpload` reveals a section where the
+// applicant must download the logistics PDF template and upload the signed
+// copy before the form can be submitted.
+// ---------------------------------------------------------------------------
+const SPEAKER_PDF_MAX_BYTES = 5 * 1024 * 1024;
+
+function SpeakerQuestionInput({ q, value, onChange }) {
+  if (q.type === 'textarea') {
+    return <textarea className={inputCls + ' min-h-[110px]'} value={value} placeholder={q.placeholder || ''}
+      onChange={(e) => onChange(e.target.value)} />;
+  }
+  if (q.type === 'select') {
+    return (
+      <select className={inputCls} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Select…</option>
+        {(q.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
+    );
+  }
+  if (q.type === 'yesno') {
+    return (
+      <div className="flex gap-2">
+        {['Yes', 'No'].map((opt) => (
+          <button key={opt} type="button" onClick={() => onChange(opt)}
+            className={`px-6 py-2 rounded-md text-sm transition-all active:scale-95 ${value === opt
+              ? 'bg-red text-cream shadow-md shadow-red/20'
+              : 'bg-navy border border-cream/20 text-cream/70 hover:border-gold hover:text-cream/90'}`}>
+            {opt}
+          </button>
+        ))}
+      </div>
+    );
+  }
+  return <input type={q.type === 'email' ? 'email' : 'text'} className={inputCls} value={value}
+    placeholder={q.placeholder || ''} onChange={(e) => onChange(e.target.value)} />;
+}
+
+function SpeakerApplicationForm() {
+  const [form, setForm] = useState(null);      // question config from the server
+  const [loadError, setLoadError] = useState('');
+  const [answers, setAnswers] = useState({});
+  const [pdf, setPdf] = useState(null);        // { dataUrl, name } once attached
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const fileRef = useRef(null);
+
+  const load = useCallback(async () => {
+    setLoadError('');
+    try { const d = await api('/public/speaker-form'); setForm(d.form); }
+    catch (e) { setLoadError(e.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  if (loadError) return <ErrorState message={loadError} onRetry={load} />;
+  if (!form) return <Loading label="Loading application…" />;
+
+  const setAnswer = (id, val) => setAnswers((a) => ({ ...a, [id]: val }));
+  // The conditional PDF requirement: any triggersUpload question answered "Yes".
+  const needsUpload = form.questions.some((q) => q.triggersUpload && answers[q.id] === 'Yes');
+
+  function onFile(e) {
+    setError('');
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+    if (!isPdf) { setError('Please upload a PDF file (the completed logistics form).'); e.target.value = ''; return; }
+    if (file.size > SPEAKER_PDF_MAX_BYTES) { setError('That PDF is too large — please keep it under 5 MB.'); e.target.value = ''; return; }
+    const reader = new FileReader();
+    reader.onload = () => setPdf({ dataUrl: reader.result, name: file.name });
+    reader.readAsDataURL(file);
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    setError('');
+    for (const q of form.questions) {
+      if (q.required && !String(answers[q.id] || '').trim()) {
+        setError(`Please answer: ${q.label}`); return;
+      }
+      if (q.type === 'email' && String(answers[q.id] || '').trim() &&
+          !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(answers[q.id]).trim())) {
+        setError(`Please enter a valid email for: ${q.label}`); return;
+      }
+    }
+    if (needsUpload && !pdf) {
+      setError('Please download, complete, and upload the logistics form (PDF) before submitting.'); return;
+    }
+    setBusy(true);
+    try {
+      await api('/public/speaker-apply', { method: 'POST', body: {
+        answers,
+        ...(needsUpload && pdf ? { pdfFile: pdf.dataUrl, pdfFileName: pdf.name } : {}),
+      } });
+      track('speaker_application_submitted');
+      setDone(true);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  if (done) {
+    return (
+      <section className="bg-navy2 border border-gold/30 rounded-2xl p-8 text-center ca-slide-up">
+        <div className="text-4xl mb-2">🎤</div>
+        <div className="font-display text-3xl text-gold">Application received!</div>
+        <p className="text-cream/70 mt-2 max-w-md mx-auto">
+          Thanks for offering to speak at Club America — our Vice President will review your
+          application and reach out to you soon.
+        </p>
+        <button className="mt-5 text-gold/80 hover:text-gold text-sm"
+          onClick={() => { setAnswers({}); setPdf(null); setDone(false); }}>
+          Submit another application
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="bg-navy2 border border-gold/30 rounded-2xl p-6 sm:p-8">
+      <div className="text-center mb-6">
+        <h1 className="font-display text-4xl sm:text-5xl text-cream">{form.title}</h1>
+        {form.intro && <p className="text-cream/60 mt-3 max-w-2xl mx-auto leading-relaxed">{form.intro}</p>}
+      </div>
+
+      <form onSubmit={submit} className="max-w-2xl mx-auto space-y-5">
+        {form.questions.map((q) => (
+          <div key={q.id}>
+            <Field label={<>{q.label}{q.required && <span className="text-red ml-1">*</span>}</>}>
+              {q.helpText && <p className="text-xs text-cream/45 mb-1.5 -mt-0.5 normal-case tracking-normal">{q.helpText}</p>}
+              <SpeakerQuestionInput q={q} value={answers[q.id] || ''} onChange={(v) => setAnswer(q.id, v)} />
+            </Field>
+          </div>
+        ))}
+
+        {/* Conditional PDF section — only after a "Yes" on the trigger question */}
+        {needsUpload && (
+          <div className="border border-red/40 bg-red/5 rounded-xl p-5 space-y-4 ca-slide-up">
+            <div className="font-display text-xl text-gold">{form.upload.heading}</div>
+            <p className="text-sm text-cream/70 leading-relaxed">{form.upload.instructions}</p>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <a href={form.upload.templateUrl} download
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-gold/50 text-gold hover:bg-gold/10 text-sm font-medium transition-colors"
+                onClick={() => track('speaker_pdf_template_downloaded')}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+                1. Download the form (PDF)
+              </a>
+              <button type="button" onClick={() => fileRef.current && fileRef.current.click()}
+                className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${pdf
+                  ? 'border border-emerald-500/50 text-emerald-300 bg-emerald-500/10'
+                  : 'border border-cream/30 text-cream/80 hover:border-gold hover:text-gold'}`}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>
+                {pdf ? 'Replace uploaded PDF' : '2. Upload the signed PDF'}
+              </button>
+              <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={onFile} />
+            </div>
+            {pdf ? (
+              <div className="flex items-center gap-2 text-sm text-emerald-300">
+                <span>✓</span><span className="truncate">{pdf.name}</span>
+                <button type="button" className="text-cream/40 hover:text-red ml-1" onClick={() => { setPdf(null); if (fileRef.current) fileRef.current.value = ''; }}>remove</button>
+              </div>
+            ) : (
+              <p className="text-xs text-cream/45">No file uploaded yet — the completed PDF is required before you can submit.</p>
+            )}
+          </div>
+        )}
+
+        {error && <div className="text-red text-sm">{error}</div>}
+        <Button type="submit" variant="gold" disabled={busy || (needsUpload && !pdf)} className="w-full sm:w-auto">
+          {busy ? <span className="flex items-center gap-2"><Spinner /> Submitting…</span> : 'Submit Application'}
+        </Button>
+        {needsUpload && !pdf && <p className="text-xs text-cream/40 -mt-2">Upload your completed logistics form to enable submission.</p>}
+      </form>
+    </section>
+  );
+}
+
+// Homepage call-to-action pointing at the speaker application page.
+function SpeakerCTA({ onNavigate }) {
+  return (
+    <section className="bg-navy2 border border-red/30 rounded-2xl p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-5 text-center sm:text-left">
+      <div>
+        <h2 className="font-display text-3xl text-cream">🎤 Want to speak at Club America?</h2>
+        <p className="text-cream/60 text-sm mt-1 max-w-xl">
+          We host speakers all year — activists, veterans, business leaders, and voices for faith
+          and freedom. Tell us about your talk and our VP will follow up.
+        </p>
+      </div>
+      <Button variant="gold" className="shrink-0" onClick={() => onNavigate('speak')}>Apply to Speak →</Button>
+    </section>
+  );
+}
+
 function HomeAnnouncementBanner({ home }) {
   if (!home.homeAnnouncementEnabled || !home.homeAnnouncement) return null;
   return (
@@ -3534,9 +3732,9 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
 
 // ---------------------------------------------------------------------------
 // Public site shell — a top bar with a dropdown menu, then one page at a time.
-// Pages are real paths (/, /about, /board, /testimonials, /get-involved) so
-// they survive a refresh and the browser back button (the server's SPA
-// fallback serves index.html for these extension-less routes).
+// Pages are real paths (/, /about, /board, /testimonials, /get-involved,
+// /apply-to-speak) so they survive a refresh and the browser back button (the
+// server's SPA fallback serves index.html for these extension-less routes).
 // ---------------------------------------------------------------------------
 const PUBLIC_PAGES = [
   { key: 'home',         label: 'Home',                   path: '/' },
@@ -3544,6 +3742,7 @@ const PUBLIC_PAGES = [
   { key: 'board',        label: 'Meet the Board',         path: '/board' },
   { key: 'testimonials', label: 'What People Are Saying', path: '/testimonials' },
   { key: 'involved',     label: 'Get Involved',           path: '/get-involved' },
+  { key: 'speak',        label: 'Apply to Speak',         path: '/apply-to-speak' },
 ];
 
 function publicPageFromPath(pathname) {
@@ -3608,6 +3807,12 @@ function PublicSite({ home, events, volunteerEvents, onEnterPortal }) {
             <EventPhotos />
             <InstagramFeed home={home} />
             <NewsletterSignup />
+          </PublicPageShell>
+        )}
+
+        {page === 'speak' && (
+          <PublicPageShell>
+            <SpeakerApplicationForm />
           </PublicPageShell>
         )}
       </div>
@@ -3870,6 +4075,7 @@ function PublicHomePage({ home, cards, onNavigate }) {
           {home.homeAnnouncementEnabled && home.homeAnnouncement && <Reveal><HomeAnnouncementBanner home={home} /></Reveal>}
           {home.memberCount > 0 && <Reveal><MemberStatsBar memberCount={home.memberCount} /></Reveal>}
           <Reveal>{cards}</Reveal>
+          <Reveal><SpeakerCTA onNavigate={onNavigate} /></Reveal>
           <Reveal><TestimonialsCarousel onNavigate={onNavigate} /></Reveal>
         </main>
       </div>
@@ -8013,7 +8219,9 @@ const SPEAKER_STATUSES = ['Planning','Confirmed','Completed','Cancelled'];
 const SPEAKER_STATUS_TONES = { Planning: 'slate', Confirmed: 'blue', Completed: 'green', Cancelled: 'red' };
 
 function SpeakerEventsPage({ me }) {
+  const [tab, setTab] = useState('events'); // events | applications | form
   const [events, setEvents] = useState([]);
+  const [pendingApps, setPendingApps] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -8023,7 +8231,14 @@ function SpeakerEventsPage({ me }) {
   const isManager = me.role === 'admin' || me.role === 'manager';
 
   const load = useCallback(async () => {
-    try { const d = await api('/speaker-events'); setEvents(d.events || []); }
+    try {
+      const [d, a] = await Promise.all([
+        api('/speaker-events'),
+        api('/speaker-applications').catch(() => ({ applications: [] })),
+      ]);
+      setEvents(d.events || []);
+      setPendingApps((a.applications || []).filter((x) => !x.handled).length);
+    }
     catch (e) { setError(e.message); }
     finally { setLoaded(true); }
   }, [setError]);
@@ -8073,13 +8288,34 @@ function SpeakerEventsPage({ me }) {
     { key: 'tpusaNotified',  label: 'TPUSA national notified' },
   ];
 
+  const TabBtn = ({ id, children }) => (
+    <button type="button" onClick={() => setTab(id)}
+      className={`px-4 py-2 rounded-md text-sm transition-all duration-150 active:scale-95 ${tab === id
+        ? 'bg-red text-cream shadow-md shadow-red/20'
+        : 'bg-navy border border-cream/20 text-cream/70 hover:border-gold hover:text-cream/90'}`}>
+      {children}
+    </button>
+  );
+
   return (
     <div className="max-w-3xl">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h1 className="font-display text-4xl sm:text-5xl text-cream">Speaker Events</h1>
-        {isManager && !showForm && <Button variant="gold" onClick={openCreate}>+ New Event</Button>}
+        {tab === 'events' && isManager && !showForm && <Button variant="gold" onClick={openCreate}>+ New Event</Button>}
       </div>
 
+      <div className="flex gap-2 mb-6 flex-wrap">
+        <TabBtn id="events">Events</TabBtn>
+        <TabBtn id="applications">
+          Applications{pendingApps > 0 && <span className="ml-1.5 inline-block bg-gold text-navy text-xs font-bold rounded-full px-1.5">{pendingApps}</span>}
+        </TabBtn>
+        {me.role === 'admin' && <TabBtn id="form">Application Form</TabBtn>}
+      </div>
+
+      {tab === 'applications' && <SpeakerApplicationsInbox me={me} onChanged={load} />}
+      {tab === 'form' && me.role === 'admin' && <SpeakerFormEditor />}
+
+      {tab === 'events' && <>
       {showForm && (
         <form onSubmit={save} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
           <div className="font-display text-xl text-gold">{editId ? 'Edit Speaker Event' : 'New Speaker Event'}</div>
@@ -8187,6 +8423,254 @@ function SpeakerEventsPage({ me }) {
             </div>
           );
         })}
+      </div>
+      </>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Speaker Applications inbox + VP form editor (Speaker Events sub-tabs)
+// ---------------------------------------------------------------------------
+function SpeakerApplicationsInbox({ me, onChanged }) {
+  const [apps, setApps] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+  const [error, setError] = useState('');
+  const [confirmEl, confirm] = useConfirm();
+
+  const load = useCallback(async () => {
+    try { const d = await api('/speaker-applications'); setApps(d.applications || []); }
+    catch (e) { setError(e.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function toggleHandled(a) {
+    try { await api(`/speaker-applications/${a.id}/handled`, { method: 'POST' }); load(); onChanged && onChanged(); }
+    catch (e) { setError(e.message); }
+  }
+
+  async function remove(a) {
+    if (!(await confirm({ message: `Delete the application from ${a.applicantName || 'this applicant'}? This cannot be undone.`, danger: true, confirmLabel: 'Delete' }))) return;
+    try { await api(`/speaker-applications/${a.id}`, { method: 'DELETE' }); load(); onChanged && onChanged(); }
+    catch (e) { setError(e.message); }
+  }
+
+  // Authenticated download: fetch the PDF with the bearer token, then hand the
+  // bytes to the browser as a normal file download.
+  async function downloadPdf(a) {
+    try {
+      const token = localStorage.getItem(TOKEN_KEY);
+      const res = await fetch(`/api/speaker-applications/${a.id}/pdf`, { headers: { Authorization: 'Bearer ' + token } });
+      if (!res.ok) throw new Error('Could not download the PDF');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = a.pdfFileName || 'logistics-form.pdf';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) { setError(e.message); }
+  }
+
+  if (error && !apps) return <ErrorState message={error} onRetry={load} />;
+  if (!apps) return <Loading label="Loading applications…" />;
+  if (apps.length === 0) {
+    return <EmptyState icon="🎤" title="No speaker applications yet"
+      hint={<span>Share the public link: <span className="text-gold">{window.location.origin}/apply-to-speak</span></span>} />;
+  }
+
+  return (
+    <div className="space-y-3">
+      {confirmEl}
+      {error && <div className="text-red text-sm">{error}</div>}
+      {apps.map((a) => {
+        const isExpanded = expanded === a.id;
+        return (
+          <div key={a.id} className={`bg-navy2 border rounded-xl overflow-hidden transition-colors ${a.handled ? 'border-cream/10 opacity-70' : 'border-gold/25'}`}>
+            <div className="p-4 flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="font-medium text-cream flex items-center gap-2 flex-wrap">
+                  {a.applicantName || 'Unnamed applicant'}
+                  {a.needsLogistics && <Badge tone="red">AV / travel</Badge>}
+                  {a.handled && <Badge tone="green">Handled</Badge>}
+                </div>
+                <div className="text-xs text-cream/40 mt-1 flex flex-wrap gap-x-3">
+                  {a.applicantEmail && <span>{a.applicantEmail}</span>}
+                  <span>{timeAgo(a.createdAt)}</span>
+                </div>
+              </div>
+              <button onClick={() => setExpanded(isExpanded ? null : a.id)}
+                className="text-xs text-cream/50 hover:text-cream shrink-0">
+                {isExpanded ? 'Close' : 'View answers'}
+              </button>
+            </div>
+
+            {isExpanded && (
+              <div className="border-t border-cream/10 p-4 space-y-3 bg-navy/30">
+                {a.answers.map((ans) => (
+                  <div key={ans.id} className="text-sm">
+                    <div className="text-cream/40">{ans.label}</div>
+                    <div className="text-cream/85 whitespace-pre-wrap">{ans.answer || <span className="text-cream/30">—</span>}</div>
+                  </div>
+                ))}
+                <div className="flex gap-3 flex-wrap pt-2 border-t border-cream/10">
+                  {a.hasPdf && (
+                    <button onClick={() => downloadPdf(a)} className="text-xs text-gold/70 hover:text-gold">
+                      ⬇ Download signed logistics PDF
+                    </button>
+                  )}
+                  <button onClick={() => toggleHandled(a)} className="text-xs text-cream/50 hover:text-cream">
+                    {a.handled ? 'Mark as new' : 'Mark handled'}
+                  </button>
+                  {me.role === 'admin' && (
+                    <button onClick={() => remove(a)} className="text-xs text-red/60 hover:text-red">Delete</button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// VP editor for the public application form: title, intro, and the question
+// list (labels, types, order, required flags, and the PDF-trigger question)
+// are all edited here and stored server-side — no code changes needed.
+const SPEAKER_Q_TYPES = [
+  ['text', 'Short answer'],
+  ['textarea', 'Paragraph'],
+  ['email', 'Email'],
+  ['select', 'Dropdown'],
+  ['yesno', 'Yes / No'],
+];
+
+function SpeakerFormEditor() {
+  const [title, setTitle] = useState('');
+  const [intro, setIntro] = useState('');
+  const [upload, setUpload] = useState({ heading: '', instructions: '', templateUrl: '' });
+  const [questions, setQuestions] = useState(null); // options held as comma-separated optionsText while editing
+  const [savedAt, setSavedAt] = useState(null);
+  const { loading, error, setError, run } = useAction();
+
+  const load = useCallback(async () => {
+    try {
+      const d = await api('/public/speaker-form');
+      setTitle(d.form.title);
+      setIntro(d.form.intro || '');
+      setUpload(d.form.upload || { heading: '', instructions: '', templateUrl: '' });
+      setQuestions(d.form.questions.map((q) => ({ ...q, optionsText: (q.options || []).join(', ') })));
+    } catch (e) { setError(e.message); }
+  }, [setError]);
+  useEffect(() => { load(); }, [load]);
+
+  if (!questions) return error ? <ErrorState message={error} onRetry={load} /> : <Loading label="Loading form settings…" />;
+
+  const setQ = (i, patch) => setQuestions((qs) => qs.map((q, idx) => idx === i ? { ...q, ...patch } : q));
+  const move = (i, dir) => setQuestions((qs) => {
+    const j = i + dir;
+    if (j < 0 || j >= qs.length) return qs;
+    const next = qs.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    return next;
+  });
+  const removeQ = (i) => setQuestions((qs) => qs.filter((_, idx) => idx !== i));
+  const addQ = () => setQuestions((qs) => [...qs, { id: '', label: '', type: 'text', required: false, optionsText: '' }]);
+
+  async function save() {
+    setSavedAt(null);
+    const payload = {
+      title, intro, upload,
+      questions: questions.map(({ optionsText, ...q }) => ({
+        ...q,
+        options: q.type === 'select' ? String(optionsText || '').split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+        triggersUpload: q.type === 'yesno' ? !!q.triggersUpload : undefined,
+      })),
+    };
+    try {
+      const d = await run(() => api('/speaker-form', { method: 'PUT', body: payload }));
+      setQuestions(d.form.questions.map((q) => ({ ...q, optionsText: (q.options || []).join(', ') })));
+      setSavedAt(Date.now());
+    } catch (_) {}
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-navy2 border border-cream/10 rounded-xl p-5 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="font-display text-xl text-gold">Public Application Form</div>
+          <a href="/apply-to-speak" target="_blank" rel="noopener" className="text-xs text-gold/60 hover:text-gold">Preview live form ↗</a>
+        </div>
+        <p className="text-xs text-cream/45">
+          Changes here update the public form at <span className="text-gold">/apply-to-speak</span> immediately —
+          reorder, reword, add, or remove questions without touching code.
+        </p>
+        <Field label="Form Title"><input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} /></Field>
+        <Field label="Intro Text"><textarea className={inputCls + ' min-h-[70px]'} value={intro} onChange={(e) => setIntro(e.target.value)} /></Field>
+      </div>
+
+      <div className="space-y-3">
+        {questions.map((q, i) => (
+          <div key={i} className="bg-navy2 border border-cream/10 rounded-xl p-4 space-y-3">
+            <div className="flex items-start gap-2">
+              <div className="flex-1 min-w-0">
+                <Field label={`Question ${i + 1}`}>
+                  <input className={inputCls} value={q.label} placeholder="Question text…" onChange={(e) => setQ(i, { label: e.target.value })} />
+                </Field>
+              </div>
+              <div className="flex flex-col gap-1 pt-5 shrink-0">
+                <button onClick={() => move(i, -1)} disabled={i === 0} className="text-cream/40 hover:text-gold disabled:opacity-20 leading-none" title="Move up">▲</button>
+                <button onClick={() => move(i, 1)} disabled={i === questions.length - 1} className="text-cream/40 hover:text-gold disabled:opacity-20 leading-none" title="Move down">▼</button>
+              </div>
+              <button onClick={() => removeQ(i)} className="text-red/50 hover:text-red pt-5 shrink-0" title="Remove question">✕</button>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+              <label className="flex items-center gap-2 text-sm text-cream/70">
+                Type
+                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-sm text-cream/80"
+                  value={q.type} onChange={(e) => setQ(i, { type: e.target.value })}>
+                  {SPEAKER_Q_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-sm text-cream/70 cursor-pointer">
+                <input type="checkbox" className="w-4 h-4 accent-gold" checked={!!q.required} onChange={(e) => setQ(i, { required: e.target.checked })} />
+                Required
+              </label>
+              {q.type === 'yesno' && (
+                <label className="flex items-center gap-2 text-sm text-cream/70 cursor-pointer">
+                  <input type="checkbox" className="w-4 h-4 accent-gold" checked={!!q.triggersUpload} onChange={(e) => setQ(i, { triggersUpload: e.target.checked })} />
+                  “Yes” requires the signed PDF
+                </label>
+              )}
+            </div>
+            {q.type === 'select' && (
+              <Field label="Choices (comma-separated)">
+                <input className={inputCls} value={q.optionsText} placeholder="Option one, Option two, Option three"
+                  onChange={(e) => setQ(i, { optionsText: e.target.value })} />
+              </Field>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <Button variant="ghost" onClick={addQ}>+ Add Question</Button>
+
+      <div className="bg-navy2 border border-cream/10 rounded-xl p-5 space-y-3">
+        <div className="font-display text-lg text-gold">PDF Upload Section</div>
+        <p className="text-xs text-cream/45">Shown when an applicant answers “Yes” to a question flagged above. The template served is <span className="text-gold">{upload.templateUrl || '/speaker-logistics-form.pdf'}</span>.</p>
+        <Field label="Heading"><input className={inputCls} value={upload.heading} onChange={(e) => setUpload((u) => ({ ...u, heading: e.target.value }))} /></Field>
+        <Field label="Instructions"><textarea className={inputCls + ' min-h-[70px]'} value={upload.instructions} onChange={(e) => setUpload((u) => ({ ...u, instructions: e.target.value }))} /></Field>
+      </div>
+
+      {error && <div className="text-red text-sm">{error}</div>}
+      <div className="flex items-center gap-3">
+        <Button variant="gold" onClick={save} disabled={loading}>
+          {loading ? <span className="flex items-center gap-2"><Spinner /> Saving…</span> : 'Save Form'}
+        </Button>
+        {savedAt && <span className="text-emerald-300 text-sm ca-fade-in">✓ Saved — the public form is updated</span>}
       </div>
     </div>
   );
