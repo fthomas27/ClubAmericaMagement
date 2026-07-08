@@ -2653,15 +2653,63 @@ function SpeakerQuestionInput({ q, value, onChange }) {
     placeholder={q.placeholder || ''} onChange={(e) => onChange(e.target.value)} />;
 }
 
+// One question's conditional "download the template, upload it signed" block.
+// Each triggersUpload question manages its own file independently, so a form
+// can have several of these active at once.
+function SpeakerUploadSection({ q, file, onFile, onRemove }) {
+  const fileRef = useRef(null);
+
+  function handleFile(e) {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+    if (!isPdf) { onFile(null, 'Please upload a PDF file.'); e.target.value = ''; return; }
+    if (f.size > SPEAKER_PDF_MAX_BYTES) { onFile(null, 'That PDF is too large — please keep it under 5 MB.'); e.target.value = ''; return; }
+    const reader = new FileReader();
+    reader.onload = () => onFile({ dataUrl: reader.result, name: f.name }, '');
+    reader.readAsDataURL(f);
+  }
+
+  return (
+    <div className="border border-red/40 bg-red/5 rounded-xl p-5 space-y-4 ca-slide-up">
+      <div className="font-display text-xl text-gold">{q.uploadHeading}</div>
+      <p className="text-sm text-cream/70 leading-relaxed">{q.uploadInstructions}</p>
+      <div className="flex flex-col sm:flex-row gap-3">
+        <a href={`/api/public/speaker-form/template/${encodeURIComponent(q.id)}`} download
+          className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-gold/50 text-gold hover:bg-gold/10 text-sm font-medium transition-colors"
+          onClick={() => track('speaker_pdf_template_downloaded')}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+          1. Download the form (PDF)
+        </a>
+        <button type="button" onClick={() => fileRef.current && fileRef.current.click()}
+          className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${file
+            ? 'border border-emerald-500/50 text-emerald-300 bg-emerald-500/10'
+            : 'border border-cream/30 text-cream/80 hover:border-gold hover:text-gold'}`}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>
+          {file ? 'Replace uploaded PDF' : '2. Upload the signed PDF'}
+        </button>
+        <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={handleFile} />
+      </div>
+      {file ? (
+        <div className="flex items-center gap-2 text-sm text-emerald-300">
+          <span>✓</span><span className="truncate">{file.name}</span>
+          <button type="button" className="text-cream/40 hover:text-red ml-1" onClick={() => { onRemove(); if (fileRef.current) fileRef.current.value = ''; }}>remove</button>
+        </div>
+      ) : (
+        <p className="text-xs text-cream/45">No file uploaded yet — the completed PDF is required before you can submit.</p>
+      )}
+    </div>
+  );
+}
+
 function SpeakerApplicationForm() {
   const [form, setForm] = useState(null);      // question config from the server
   const [loadError, setLoadError] = useState('');
   const [answers, setAnswers] = useState({});
-  const [pdf, setPdf] = useState(null);        // { dataUrl, name } once attached
+  const [files, setFiles] = useState({});      // { [questionId]: { dataUrl, name } }
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
-  const fileRef = useRef(null);
 
   const load = useCallback(async () => {
     setLoadError('');
@@ -2674,20 +2722,10 @@ function SpeakerApplicationForm() {
   if (!form) return <Loading label="Loading application…" />;
 
   const setAnswer = (id, val) => setAnswers((a) => ({ ...a, [id]: val }));
-  // The conditional PDF requirement: any triggersUpload question answered "Yes".
-  const needsUpload = form.questions.some((q) => q.triggersUpload && answers[q.id] === 'Yes');
-
-  function onFile(e) {
-    setError('');
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
-    if (!isPdf) { setError('Please upload a PDF file (the completed logistics form).'); e.target.value = ''; return; }
-    if (file.size > SPEAKER_PDF_MAX_BYTES) { setError('That PDF is too large — please keep it under 5 MB.'); e.target.value = ''; return; }
-    const reader = new FileReader();
-    reader.onload = () => setPdf({ dataUrl: reader.result, name: file.name });
-    reader.readAsDataURL(file);
-  }
+  // Each triggersUpload question independently requires its own signed PDF
+  // once answered "Yes" — a form can have several of these at once.
+  const triggeredQuestions = form.questions.filter((q) => q.triggersUpload && answers[q.id] === 'Yes');
+  const missingUpload = triggeredQuestions.some((q) => !files[q.id]);
 
   async function submit(e) {
     e.preventDefault();
@@ -2701,15 +2739,14 @@ function SpeakerApplicationForm() {
         setError(`Please enter a valid email for: ${q.label}`); return;
       }
     }
-    if (needsUpload && !pdf) {
-      setError('Please download, complete, and upload the logistics form (PDF) before submitting.'); return;
+    if (missingUpload) {
+      setError('Please download, complete, and upload the required form(s) before submitting.'); return;
     }
     setBusy(true);
     try {
-      await api('/public/speaker-apply', { method: 'POST', body: {
-        answers,
-        ...(needsUpload && pdf ? { pdfFile: pdf.dataUrl, pdfFileName: pdf.name } : {}),
-      } });
+      const uploads = {};
+      for (const q of triggeredQuestions) uploads[q.id] = { fileName: files[q.id].name, fileData: files[q.id].dataUrl };
+      await api('/public/speaker-apply', { method: 'POST', body: { answers, uploads } });
       track('speaker_application_submitted');
       setDone(true);
     } catch (err) { setError(err.message); }
@@ -2726,7 +2763,7 @@ function SpeakerApplicationForm() {
           application and reach out to you soon.
         </p>
         <button className="mt-5 text-gold/80 hover:text-gold text-sm"
-          onClick={() => { setAnswers({}); setPdf(null); setDone(false); }}>
+          onClick={() => { setAnswers({}); setFiles({}); setDone(false); }}>
           Submit another application
         </button>
       </section>
@@ -2747,46 +2784,23 @@ function SpeakerApplicationForm() {
               {q.helpText && <p className="text-xs text-cream/45 mb-1.5 -mt-0.5 normal-case tracking-normal">{q.helpText}</p>}
               <SpeakerQuestionInput q={q} value={answers[q.id] || ''} onChange={(v) => setAnswer(q.id, v)} />
             </Field>
+
+            {/* Conditional PDF section for this question — only after "Yes" */}
+            {q.triggersUpload && answers[q.id] === 'Yes' && (
+              <div className="mt-3">
+                <SpeakerUploadSection q={q} file={files[q.id]}
+                  onFile={(f, err) => { if (err) setError(err); setFiles((fs) => ({ ...fs, [q.id]: f })); }}
+                  onRemove={() => setFiles((fs) => { const next = { ...fs }; delete next[q.id]; return next; })} />
+              </div>
+            )}
           </div>
         ))}
 
-        {/* Conditional PDF section — only after a "Yes" on the trigger question */}
-        {needsUpload && (
-          <div className="border border-red/40 bg-red/5 rounded-xl p-5 space-y-4 ca-slide-up">
-            <div className="font-display text-xl text-gold">{form.upload.heading}</div>
-            <p className="text-sm text-cream/70 leading-relaxed">{form.upload.instructions}</p>
-            <div className="flex flex-col sm:flex-row gap-3">
-              <a href={form.upload.templateUrl} download
-                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-gold/50 text-gold hover:bg-gold/10 text-sm font-medium transition-colors"
-                onClick={() => track('speaker_pdf_template_downloaded')}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
-                1. Download the form (PDF)
-              </a>
-              <button type="button" onClick={() => fileRef.current && fileRef.current.click()}
-                className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${pdf
-                  ? 'border border-emerald-500/50 text-emerald-300 bg-emerald-500/10'
-                  : 'border border-cream/30 text-cream/80 hover:border-gold hover:text-gold'}`}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>
-                {pdf ? 'Replace uploaded PDF' : '2. Upload the signed PDF'}
-              </button>
-              <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={onFile} />
-            </div>
-            {pdf ? (
-              <div className="flex items-center gap-2 text-sm text-emerald-300">
-                <span>✓</span><span className="truncate">{pdf.name}</span>
-                <button type="button" className="text-cream/40 hover:text-red ml-1" onClick={() => { setPdf(null); if (fileRef.current) fileRef.current.value = ''; }}>remove</button>
-              </div>
-            ) : (
-              <p className="text-xs text-cream/45">No file uploaded yet — the completed PDF is required before you can submit.</p>
-            )}
-          </div>
-        )}
-
         {error && <div className="text-red text-sm">{error}</div>}
-        <Button type="submit" variant="gold" disabled={busy || (needsUpload && !pdf)} className="w-full sm:w-auto">
+        <Button type="submit" variant="gold" disabled={busy || missingUpload} className="w-full sm:w-auto">
           {busy ? <span className="flex items-center gap-2"><Spinner /> Submitting…</span> : 'Submit Application'}
         </Button>
-        {needsUpload && !pdf && <p className="text-xs text-cream/40 -mt-2">Upload your completed logistics form to enable submission.</p>}
+        {missingUpload && <p className="text-xs text-cream/40 -mt-2">Upload the required form(s) above to enable submission.</p>}
       </form>
     </section>
   );
@@ -8457,16 +8471,16 @@ function SpeakerApplicationsInbox({ me, onChanged }) {
 
   // Authenticated download: fetch the PDF with the bearer token, then hand the
   // bytes to the browser as a normal file download.
-  async function downloadPdf(a) {
+  async function downloadUpload(a, u) {
     try {
       const token = localStorage.getItem(TOKEN_KEY);
-      const res = await fetch(`/api/speaker-applications/${a.id}/pdf`, { headers: { Authorization: 'Bearer ' + token } });
+      const res = await fetch(`/api/speaker-applications/${a.id}/upload/${encodeURIComponent(u.questionId)}`, { headers: { Authorization: 'Bearer ' + token } });
       if (!res.ok) throw new Error('Could not download the PDF');
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = a.pdfFileName || 'logistics-form.pdf';
+      link.download = u.fileName || 'form.pdf';
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -8516,11 +8530,11 @@ function SpeakerApplicationsInbox({ me, onChanged }) {
                   </div>
                 ))}
                 <div className="flex gap-3 flex-wrap pt-2 border-t border-cream/10">
-                  {a.hasPdf && (
-                    <button onClick={() => downloadPdf(a)} className="text-xs text-gold/70 hover:text-gold">
-                      ⬇ Download signed logistics PDF
+                  {(a.uploads || []).map((u) => (
+                    <button key={u.questionId} onClick={() => downloadUpload(a, u)} className="text-xs text-gold/70 hover:text-gold">
+                      ⬇ Download signed PDF — {u.label}
                     </button>
-                  )}
+                  ))}
                   <button onClick={() => toggleHandled(a)} className="text-xs text-cream/50 hover:text-cream">
                     {a.handled ? 'Mark as new' : 'Mark handled'}
                   </button>
@@ -8548,10 +8562,72 @@ const SPEAKER_Q_TYPES = [
   ['yesno', 'Yes / No'],
 ];
 
+const SPEAKER_TEMPLATE_MAX_BYTES = 5 * 1024 * 1024;
+
+// PDF template manager for one triggersUpload question. Uploading/removing a
+// template saves immediately (independent of the main "Save Form" button)
+// since the file lives in its own server-side table keyed by question id.
+function SpeakerTemplateUploader({ questionId, fileName, available, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const fileRef = useRef(null);
+
+  function pickFile(e) {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    setError('');
+    const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+    if (!isPdf) { setError('Please upload a PDF file.'); return; }
+    if (f.size > SPEAKER_TEMPLATE_MAX_BYTES) { setError('That PDF is too large — please keep it under 5 MB.'); return; }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      setBusy(true);
+      try {
+        await api(`/speaker-form/template/${encodeURIComponent(questionId)}`, {
+          method: 'PUT', body: { fileName: f.name, fileData: reader.result },
+        });
+        onChanged();
+      } catch (err) { setError(err.message); }
+      finally { setBusy(false); }
+    };
+    reader.readAsDataURL(f);
+  }
+
+  async function removeTemplate() {
+    setBusy(true); setError('');
+    try {
+      await api(`/speaker-form/template/${encodeURIComponent(questionId)}`, { method: 'DELETE' });
+      onChanged();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-3 flex-wrap">
+        {available ? (
+          <span className="text-xs text-emerald-300 truncate">✓ Template: {fileName || 'uploaded'}</span>
+        ) : (
+          <span className="text-xs text-cream/45">No template uploaded yet</span>
+        )}
+        <button type="button" disabled={busy} onClick={() => fileRef.current && fileRef.current.click()}
+          className="text-xs text-gold/70 hover:text-gold disabled:opacity-40">
+          {busy ? 'Saving…' : available ? 'Replace PDF' : 'Upload PDF'}
+        </button>
+        {available && (
+          <button type="button" disabled={busy} onClick={removeTemplate} className="text-xs text-red/60 hover:text-red disabled:opacity-40">Remove</button>
+        )}
+        <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={pickFile} />
+      </div>
+      {error && <div className="text-red text-xs">{error}</div>}
+    </div>
+  );
+}
+
 function SpeakerFormEditor() {
   const [title, setTitle] = useState('');
   const [intro, setIntro] = useState('');
-  const [upload, setUpload] = useState({ heading: '', instructions: '', templateUrl: '' });
   const [questions, setQuestions] = useState(null); // options held as comma-separated optionsText while editing
   const [savedAt, setSavedAt] = useState(null);
   const { loading, error, setError, run } = useAction();
@@ -8561,7 +8637,6 @@ function SpeakerFormEditor() {
       const d = await api('/public/speaker-form');
       setTitle(d.form.title);
       setIntro(d.form.intro || '');
-      setUpload(d.form.upload || { heading: '', instructions: '', templateUrl: '' });
       setQuestions(d.form.questions.map((q) => ({ ...q, optionsText: (q.options || []).join(', ') })));
     } catch (e) { setError(e.message); }
   }, [setError]);
@@ -8583,8 +8658,8 @@ function SpeakerFormEditor() {
   async function save() {
     setSavedAt(null);
     const payload = {
-      title, intro, upload,
-      questions: questions.map(({ optionsText, ...q }) => ({
+      title, intro,
+      questions: questions.map(({ optionsText, templateFileName, templateAvailable, ...q }) => ({
         ...q,
         options: q.type === 'select' ? String(optionsText || '').split(',').map((s) => s.trim()).filter(Boolean) : undefined,
         triggersUpload: q.type === 'yesno' ? !!q.triggersUpload : undefined,
@@ -8642,7 +8717,7 @@ function SpeakerFormEditor() {
               {q.type === 'yesno' && (
                 <label className="flex items-center gap-2 text-sm text-cream/70 cursor-pointer">
                   <input type="checkbox" className="w-4 h-4 accent-gold" checked={!!q.triggersUpload} onChange={(e) => setQ(i, { triggersUpload: e.target.checked })} />
-                  “Yes” requires the signed PDF
+                  “Yes” requires a signed PDF
                 </label>
               )}
             </div>
@@ -8652,18 +8727,22 @@ function SpeakerFormEditor() {
                   onChange={(e) => setQ(i, { optionsText: e.target.value })} />
               </Field>
             )}
+            {q.type === 'yesno' && q.triggersUpload && (
+              <div className="border-t border-cream/10 pt-3 space-y-3">
+                <Field label="Upload Section Heading"><input className={inputCls} value={q.uploadHeading || ''} placeholder="e.g. AV & Travel Logistics Form (required)" onChange={(e) => setQ(i, { uploadHeading: e.target.value })} /></Field>
+                <Field label="Upload Section Instructions"><textarea className={inputCls + ' min-h-[60px]'} value={q.uploadInstructions || ''} onChange={(e) => setQ(i, { uploadInstructions: e.target.value })} /></Field>
+                {q.id ? (
+                  <SpeakerTemplateUploader questionId={q.id} fileName={q.templateFileName} available={q.templateAvailable} onChanged={load} />
+                ) : (
+                  <p className="text-xs text-cream/45">Save the form once to attach a PDF template for this question.</p>
+                )}
+              </div>
+            )}
           </div>
         ))}
       </div>
 
       <Button variant="ghost" onClick={addQ}>+ Add Question</Button>
-
-      <div className="bg-navy2 border border-cream/10 rounded-xl p-5 space-y-3">
-        <div className="font-display text-lg text-gold">PDF Upload Section</div>
-        <p className="text-xs text-cream/45">Shown when an applicant answers “Yes” to a question flagged above. The template served is <span className="text-gold">{upload.templateUrl || '/speaker-logistics-form.pdf'}</span>.</p>
-        <Field label="Heading"><input className={inputCls} value={upload.heading} onChange={(e) => setUpload((u) => ({ ...u, heading: e.target.value }))} /></Field>
-        <Field label="Instructions"><textarea className={inputCls + ' min-h-[70px]'} value={upload.instructions} onChange={(e) => setUpload((u) => ({ ...u, instructions: e.target.value }))} /></Field>
-      </div>
 
       {error && <div className="text-red text-sm">{error}</div>}
       <div className="flex items-center gap-3">

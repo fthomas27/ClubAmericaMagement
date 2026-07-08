@@ -9,20 +9,32 @@
 //
 // Question shape:
 //   {
-//     id:             stable key, auto-slugged from the label if omitted
-//     label:          the question text shown to the applicant
-//     type:           'text' | 'email' | 'textarea' | 'select' | 'yesno'
-//     required:       true/false
-//     placeholder:    optional input hint (text/email/textarea)
-//     helpText:       optional smaller line under the label
-//     options:        array of choices (select only)
-//     triggersUpload: yesno only — answering "Yes" requires the applicant to
-//                     download, complete, and re-upload the PDF logistics form
-//                     before the application can be submitted
+//     id:                stable key, auto-slugged from the label if omitted
+//     label:              the question text shown to the applicant
+//     type:               'text' | 'email' | 'textarea' | 'select' | 'yesno'
+//     required:           true/false
+//     placeholder:        optional input hint (text/email/textarea)
+//     helpText:           optional smaller line under the label
+//     options:            array of choices (select only)
+//     triggersUpload:     yesno only — answering "Yes" requires the applicant
+//                         to download, complete, and re-upload a signed PDF
+//                         before the application can be submitted. Any number
+//                         of questions can set this, each with its own PDF
+//                         template (stored in speaker_form_templates, managed
+//                         from the editor) and its own heading/instructions.
+//     uploadHeading:      yesno + triggersUpload only — heading shown above
+//                         this question's upload section
+//     uploadInstructions: yesno + triggersUpload only — instructions shown
+//                         above the download/upload buttons
 //   }
 // ---------------------------------------------------------------------------
 
 const QUESTION_TYPES = ['text', 'email', 'textarea', 'select', 'yesno'];
+
+const DEFAULT_UPLOAD_HEADING = 'Signed Form Required';
+const DEFAULT_UPLOAD_INSTRUCTIONS =
+  'Please download the form below, fill it out, sign it, and upload the completed PDF. ' +
+  'Your application cannot be submitted without it.';
 
 const DEFAULT_SPEAKER_FORM = {
   title: 'Apply to Speak',
@@ -44,15 +56,12 @@ const DEFAULT_SPEAKER_FORM = {
     { id: 'needsLogistics',
       label: 'Do you require AV equipment or travel accommodations?',
       type: 'yesno', required: true, triggersUpload: true,
-      helpText: 'If yes, we need our signed logistics request form before we can review your application.' },
+      helpText: 'If yes, we need our signed logistics request form before we can review your application.',
+      uploadHeading: 'AV & Travel Logistics Form (required)',
+      uploadInstructions:
+        'Since you need AV equipment or travel accommodations, please download our logistics request form, ' +
+        'fill it out, sign it, and upload the completed PDF below. Your application cannot be submitted without it.' },
   ],
-  upload: {
-    heading: 'AV & Travel Logistics Form (required)',
-    instructions:
-      'Since you need AV equipment or travel accommodations, please download our logistics request form, ' +
-      'fill it out, sign it, and upload the completed PDF below. Your application cannot be submitted without it.',
-    templateUrl: '/speaker-logistics-form.pdf',
-  },
 };
 
 function slugify(label, fallback) {
@@ -87,21 +96,17 @@ function sanitizeQuestions(input) {
         .slice(0, 12);
       if (clean.options.length < 2) continue; // a select needs choices
     }
-    if (type === 'yesno' && q.triggersUpload) clean.triggersUpload = true;
+    if (type === 'yesno' && q.triggersUpload) {
+      clean.triggersUpload = true;
+      clean.uploadHeading = String(q.uploadHeading || DEFAULT_UPLOAD_HEADING).trim().slice(0, 200) || DEFAULT_UPLOAD_HEADING;
+      clean.uploadInstructions = String(q.uploadInstructions || DEFAULT_UPLOAD_INSTRUCTIONS).trim().slice(0, 1000) || DEFAULT_UPLOAD_INSTRUCTIONS;
+    }
     out.push(clean);
   }
   return out;
 }
 
-function sanitizeUpload(input) {
-  const u = input && typeof input === 'object' ? input : {};
-  return {
-    heading: String(u.heading || DEFAULT_SPEAKER_FORM.upload.heading).trim().slice(0, 200),
-    instructions: String(u.instructions || DEFAULT_SPEAKER_FORM.upload.instructions).trim().slice(0, 1000),
-    // The template is a static file we ship; keep the path server-controlled so
-    // the config can never point applicants at an external download.
-    templateUrl: DEFAULT_SPEAKER_FORM.upload.templateUrl,
-  };
-}
-
-module.exports = { DEFAULT_SPEAKER_FORM, QUESTION_TYPES, sanitizeQuestions, sanitizeUpload };
+module.exports = {
+  DEFAULT_SPEAKER_FORM, QUESTION_TYPES, sanitizeQuestions,
+  DEFAULT_UPLOAD_HEADING, DEFAULT_UPLOAD_INSTRUCTIONS,
+};
