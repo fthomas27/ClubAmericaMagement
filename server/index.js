@@ -462,12 +462,41 @@ function parseUserAgent(ua) {
   return { deviceType, browser };
 }
 
+// Resolve the visitor's true public IP behind Railway's edge. Railway proxies
+// requests through Envoy, which records the real external client in
+// `x-envoy-external-address` — the most reliable source. Fall back to the
+// left-most X-Forwarded-For entry (the original client), then Express's
+// req.ip. Strip the IPv4-mapped-IPv6 prefix and brackets so the value is a
+// clean address the geoIP database can match — otherwise a proxy hop or a
+// mangled address geolocates to the wrong country.
+function clientIp(req) {
+  let ip = req.headers['x-envoy-external-address'];
+  if (Array.isArray(ip)) ip = ip[0];
+  ip = String(ip || '').split(',')[0].trim();
+  if (!ip) ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  if (!ip) ip = req.ip || req.socket?.remoteAddress || '';
+  return String(ip).replace(/^\[/, '').replace(/\]$/, '').replace(/^::ffff:/i, '').trim();
+}
+
+// Country for a request. Prefer an edge-provided country header when the host
+// supplies one (authoritative and always current), otherwise fall back to the
+// offline geoIP database. Region/city always come from geoIP.
+function geoFor(req, ip) {
+  const hdr = String(
+    req.headers['cf-ipcountry'] || req.headers['x-vercel-ip-country'] ||
+    req.headers['x-country-code'] || req.headers['x-geo-country'] || ''
+  ).toUpperCase();
+  const geo = geoip.lookup(ip) || {};
+  const country = (hdr && hdr !== 'XX' && /^[A-Z]{2}$/.test(hdr)) ? hdr : (geo.country || '');
+  return { country, region: geo.region || '', city: geo.city || '' };
+}
+
 // Public site-visit tracking — records a page view on the public marketing
 // site (path, referrer, rough geo from IP, device/browser). No auth required.
 app.post('/api/site-visit', rateLimit({ windowMs: 60 * 1000, max: 120, name: 'site-visit' }), (req, res) => {
   const { visitorId, path: visitPath, referrer } = req.body || {};
-  const ip = String(req.ip || '').trim();
-  const geo = geoip.lookup(ip) || {};
+  const ip = clientIp(req);
+  const geo = geoFor(req, ip);
   const { deviceType, browser } = parseUserAgent(req.headers['user-agent']);
   const info = db.prepare(`
     INSERT INTO site_visits (visitorId, path, referrer, ipAddress, country, region, city, userAgent, deviceType, browser)
