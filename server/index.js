@@ -2647,7 +2647,7 @@ app.post('/api/admin/users', requireAdmin, rateLimit({ windowMs: 60 * 60 * 1000,
 app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
   const user = getUser(Number(req.params.id));
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { role, title, managerId, grade, email, canManageRoster, managedGrade, canAnnounce, canEditHome, bigBoard, canViewLogistics, canManageSocial, username, firstName, lastName, hiddenTabs } = req.body || {};
+  const { role, title, managerId, grade, email, canManageRoster, managedGrade, canAnnounce, canEditHome, bigBoard, canViewLogistics, canManageSocial, canManageNewsletter, username, firstName, lastName, hiddenTabs } = req.body || {};
   const prevManager = user.managerId;
 
   // Validate and normalize username if provided.
@@ -2711,6 +2711,7 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     bigBoard           = COALESCE(?, bigBoard),
     canViewLogistics   = COALESCE(?, canViewLogistics),
     canManageSocial    = COALESCE(?, canManageSocial),
+    canManageNewsletter = COALESCE(?, canManageNewsletter),
     username        = COALESCE(?, username),
     firstName       = COALESCE(?, firstName),
     lastName        = COALESCE(?, lastName),
@@ -2729,6 +2730,7 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     bigBoard !== undefined ? (bigBoard ? 1 : 0) : null,
     canViewLogistics !== undefined ? (canViewLogistics ? 1 : 0) : null,
     canManageSocial !== undefined ? (canManageSocial ? 1 : 0) : null,
+    canManageNewsletter !== undefined ? (canManageNewsletter ? 1 : 0) : null,
     newUsername,
     newFirst,
     newLast,
@@ -3575,6 +3577,13 @@ function requireManagerOrAdmin(req, res, next) {
   res.status(403).json({ error: 'Managers and admins only' });
 }
 
+// Newsletter tools are open to admins and anyone granted the newsletter
+// permission (e.g. the Secretary).
+function requireNewsletterAccess(req, res, next) {
+  if (req.user.role === 'admin' || req.user.canManageNewsletter) return next();
+  res.status(403).json({ error: 'Not allowed' });
+}
+
 app.get('/api/volunteer-events', requireManagerOrAdmin, (req, res) => {
   const events = db.prepare(`
     SELECT ve.id, ve.icalUid, ve.title, ve.location, ve.startDate, ve.volunteersEnabled, ve.createdAt
@@ -3849,8 +3858,8 @@ function newsletterEnroll(email, name, source = 'auto') {
 // NOTE: the public newsletter signup route (POST /api/newsletter/subscribe)
 // lives above the auth gate.
 
-// Admin: manually add a subscriber.
-app.post('/api/admin/newsletter', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
+// Admin / newsletter manager: manually add a subscriber.
+app.post('/api/admin/newsletter', authenticate, requirePasswordChanged, requireNewsletterAccess, (req, res) => {
   let { email, name } = req.body || {};
   email = String(email || '').trim().toLowerCase();
   name  = String(name  || '').trim().slice(0, 120);
@@ -3870,24 +3879,24 @@ app.post('/api/admin/newsletter', authenticate, requirePasswordChanged, requireA
   res.status(201).json({ subscriber: { id: info.lastInsertRowid, email, name, source: 'manual', active: 1, subscribedAt: new Date().toISOString() } });
 });
 
-// Admin: list all subscribers.
-app.get('/api/admin/newsletter', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
+// Admin / newsletter manager: list all subscribers.
+app.get('/api/admin/newsletter', authenticate, requirePasswordChanged, requireNewsletterAccess, (req, res) => {
   const rows = db.prepare(
     "SELECT id, email, name, source, active, subscribedAt FROM newsletter_subscribers ORDER BY subscribedAt DESC"
   ).all();
   res.json({ subscribers: rows });
 });
 
-// Admin: toggle subscriber active/inactive.
-app.patch('/api/admin/newsletter/:id', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
+// Admin / newsletter manager: toggle subscriber active/inactive.
+app.patch('/api/admin/newsletter/:id', authenticate, requirePasswordChanged, requireNewsletterAccess, (req, res) => {
   const id = Number(req.params.id);
   const { active } = req.body || {};
   db.prepare("UPDATE newsletter_subscribers SET active=? WHERE id=?").run(active ? 1 : 0, id);
   res.json({ ok: true });
 });
 
-// Admin: remove a subscriber.
-app.delete('/api/admin/newsletter/:id', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
+// Admin / newsletter manager: remove a subscriber.
+app.delete('/api/admin/newsletter/:id', authenticate, requirePasswordChanged, requireNewsletterAccess, (req, res) => {
   db.prepare("DELETE FROM newsletter_subscribers WHERE id=?").run(Number(req.params.id));
   res.json({ ok: true });
 });
