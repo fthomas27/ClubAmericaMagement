@@ -804,7 +804,7 @@ function computeDiscount(promo, subtotal) {
 }
 // Recomputes price/discount/total from scratch server-side — never trusts a
 // client-submitted total. Returns { error } or the full pricing breakdown.
-function computeOrderPricing({ itemId, variantId, quantity, promoCodeStr, studentEmail }) {
+function computeOrderPricing({ itemId, variantId, quantity, promoCodeStr, studentEmail, ignoreStock }) {
   const item = db.prepare('SELECT * FROM merch_items WHERE id = ? AND active = 1').get(Number(itemId));
   if (!item) return { error: 'Item not found.' };
   let variant = null;
@@ -815,7 +815,9 @@ function computeOrderPricing({ itemId, variantId, quantity, promoCodeStr, studen
   const qty = Math.max(1, Math.min(20, Number(quantity) || 1));
   const unitPrice = variant && variant.priceOverride != null ? variant.priceOverride : item.price;
   const inventory = variant ? variant.inventory : item.inventory;
-  if (inventory < qty) return { error: 'Not enough in stock.' };
+  // Skip the stock gate once a payment has already succeeded — the sale is
+  // finalized with allowBackorder and flagged for review instead of rejected.
+  if (!ignoreStock && inventory < qty) return { error: 'Not enough in stock.' };
   const subtotal = unitPrice * qty;
 
   let promo = null, discount = 0;
@@ -884,7 +886,7 @@ function safeJsonParse(s) { try { return JSON.parse(s); } catch (_) { return und
 // Validate + price a full order payload. Shared by create-payment-intent and
 // the order/webhook finalize paths so the rules are enforced identically
 // everywhere. Returns { error } or the normalized, priced order.
-function validateOrderPayload(body) {
+function validateOrderPayload(body, opts = {}) {
   let { itemId, variantId, quantity, buyerName, buyerEmail, buyerPhone,
         deliveryMethod, shippingAddress, studentEmail, promoCode } = body || {};
   buyerName    = String(buyerName || '').trim().slice(0, 120);
@@ -897,7 +899,7 @@ function validateOrderPayload(body) {
   if (!buyerName || !buyerEmail) return { error: 'Name and email are required.' };
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(buyerEmail)) return { error: 'Please enter a valid email.' };
 
-  const pricing = computeOrderPricing({ itemId, variantId, quantity, promoCodeStr: promoCode, studentEmail });
+  const pricing = computeOrderPricing({ itemId, variantId, quantity, promoCodeStr: promoCode, studentEmail, ignoreStock: opts.ignoreStock });
   if (pricing.error) return { error: pricing.error };
 
   // A student-only promo forces pickup, no matter what the client requested.
@@ -1012,13 +1014,16 @@ function handlePaymentIntentSucceeded(intent) {
     return;
   }
   if (md.kind !== 'merch') return; // no metadata to rebuild an order from
+  // Payment already happened, so ignore stock: a sold-out item still yields a
+  // proper, item-linked order flagged needs_review (via finalizeStripeOrder's
+  // allowBackorder) rather than the bare fallback below.
   const rebuilt = validateOrderPayload({
     itemId: md.itemId, variantId: md.variantId || undefined, quantity: md.quantity,
     buyerName: md.buyerName, buyerEmail: md.buyerEmail, buyerPhone: md.buyerPhone,
     deliveryMethod: md.deliveryMethod, studentEmail: md.studentEmail,
     promoCode: md.promoCode || undefined,
     shippingAddress: md.addr ? safeJsonParse(md.addr) : undefined,
-  });
+  }, { ignoreStock: true });
   if (!rebuilt.error) { finalizeStripeOrder(intent, rebuilt); return; }
   // Couldn't re-price (item changed/removed since checkout). Record a minimal
   // paid order so the sale isn't lost, flagged for the secretary to reconcile.
@@ -1073,10 +1078,14 @@ app.post('/api/shop/create-payment-intent', rateLimit({ windowMs: 60 * 60 * 1000
 });
 
 app.post('/api/shop/order', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name: 'shop-order' }), async (req, res) => {
-  const v = validateOrderPayload(req.body);
+  const { paymentMethod, paymentIntentId } = req.body || {};
+  // When the buyer has already paid (a PaymentIntent id is present) tolerate a
+  // stock shortfall: the charge is done, so finalize + flag needs_review rather
+  // than reject. Free and in-person orders still enforce stock up front (and
+  // their insertOrder path re-checks it), so this can't be used to oversell.
+  const v = validateOrderPayload(req.body, { ignoreStock: !!paymentIntentId });
   if (v.error) return res.status(400).json({ error: v.error });
   const p = v.pricing;
-  const { paymentMethod, paymentIntentId } = req.body || {};
 
   // Fully covered by a promo — no payment needed.
   if (p.total === 0) {
@@ -4424,8 +4433,10 @@ app.patch('/api/shop/admin/orders/:id', (req, res) => {
   const { action, notes } = req.body || {};
 
   if (action === 'mark-paid') {
+    if (order.fulfillmentStatus === 'cancelled') return res.status(400).json({ error: 'This order is cancelled.' });
     db.prepare("UPDATE merch_orders SET paymentStatus = 'paid' WHERE id = ?").run(id);
   } else if (action === 'mark-fulfilled') {
+    if (order.fulfillmentStatus === 'cancelled') return res.status(400).json({ error: 'This order is cancelled.' });
     db.prepare("UPDATE merch_orders SET fulfillmentStatus = 'fulfilled' WHERE id = ?").run(id);
   } else if (action === 'cancel') {
     if (order.fulfillmentStatus !== 'cancelled') {

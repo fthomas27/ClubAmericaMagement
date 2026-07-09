@@ -3088,7 +3088,10 @@ function OrderModal({ item, config, onClose }) {
             deliveryMethod: effectiveDelivery,
             shippingAddress: effectiveDelivery === 'ship' ? address : undefined,
             studentEmail, promoCode: promo ? promo.code : '',
-            idempotencyKey: `${idemSessionRef.current}-${total}`,
+            // Key on the full cart, not just the amount, so switching between
+            // two same-priced items doesn't reuse a key with different params
+            // (which Stripe rejects). Same cart re-entry safely reuses the key.
+            idempotencyKey: `${idemSessionRef.current}-${item.id}-${variant ? variant.id : 'x'}-${quantity}-${promo ? promo.code : 'x'}-${total}`,
           },
         });
         if (cancelled) return;
