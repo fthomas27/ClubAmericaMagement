@@ -29,6 +29,7 @@ On top of roles there are permission flags an admin can grant to any user:
 - **canEditHome** — may edit the public website ("Edit Website" tab).
 - **canManageRoster** — may manage the recruiting roster (Secretary, Grade Reps).
 - **canManageSocial** — may use the Social Media tools and Photo Approvals.
+- **canManageNewsletter** — may manage the Newsletter (granted to the Secretary by default).
 - **canViewLogistics** — may view the Login Activity dashboard.
 - **managedGrade / grade** — Grade Reps; unlocks the Grade Pipeline and "Get
   Involved" for their grade.

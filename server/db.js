@@ -679,6 +679,12 @@ function init() {
   if (!cols.includes('canManageSocial')) db.exec("ALTER TABLE users ADD COLUMN canManageSocial INTEGER NOT NULL DEFAULT 0");
   if (!cols.includes('phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
   if (!cols.includes('hiddenTabs')) db.exec("ALTER TABLE users ADD COLUMN hiddenTabs TEXT NOT NULL DEFAULT ''");
+  // Newsletter management permission. On first add, grant it to the Secretary
+  // so they can manage the newsletter out of the box (admins keep it too).
+  if (!cols.includes('canManageNewsletter')) {
+    db.exec("ALTER TABLE users ADD COLUMN canManageNewsletter INTEGER NOT NULL DEFAULT 0");
+    db.exec("UPDATE users SET canManageNewsletter = 1 WHERE lower(title) = 'secretary'");
+  }
 
   // Auto-enroll existing users with email addresses into the newsletter list.
   try {
@@ -796,6 +802,7 @@ function seed() {
     db.prepare("UPDATE users SET canEditHome = 1 WHERE username IN ('fthomas', 'deddy', 'dhays')").run();
     db.prepare("UPDATE users SET canAnnounce = 1 WHERE username IN ('campbell', 'dhays')").run();
     db.prepare("UPDATE users SET canManageRoster = 1 WHERE title IN ('Secretary', 'Grade Rep')").run();
+    db.prepare("UPDATE users SET canManageNewsletter = 1 WHERE title = 'Secretary'").run();
     db.prepare("UPDATE users SET bigBoard = 1 WHERE username IN ('fthomas','deddy','mflachsmann','hfossey','dhays','campbell')").run();
 
     // Grade reps: assign which grade they cover.

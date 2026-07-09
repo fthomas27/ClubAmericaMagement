@@ -2139,6 +2139,7 @@ function AdminPanel({ users, reload }) {
                   { key: 'canEditHome', label: 'Edit Site' },
                   { key: 'canViewLogistics', label: 'View Login Activity' },
                   { key: 'canManageSocial', label: 'Social Media Manager' },
+                  { key: 'canManageNewsletter', label: 'Newsletter Manager' },
                 ].map(({ key, label }) => (
                   <label key={key} className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={!!u[key]}
@@ -7691,7 +7692,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
       tiles: [
         ...(canEditSite && visible('website')              ? [{ type: 'website',      label: 'Edit Website',   icon: 'edit'        }] : []),
         ...(me.role === 'admin' && visible('testimonials') ? [{ type: 'testimonials', label: 'Testimonials', icon: 'testimonial', badge: pendingTestimonialsCount || undefined }] : []),
-        ...(me.role === 'admin' && visible('newsletter')   ? [{ type: 'newsletter',   label: 'Newsletter',     icon: 'newsletter'  }] : []),
+        ...((me.role === 'admin' || !!me.canManageNewsletter) && visible('newsletter') ? [{ type: 'newsletter', label: 'Newsletter', icon: 'newsletter' }] : []),
         ...(me.role === 'admin' && visible('admin')        ? [{ type: 'admin',        label: 'Admin Panel',    icon: 'admin'       }] : []),
         ...((me.role === 'admin' || !!me.canViewLogistics) && visible('logistics') ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }] : []),
         ...((me.role === 'admin' || !!me.canViewLogistics) && visible('siteactivity') ? [{ type: 'siteactivity', label: 'Site Activity', icon: 'globe' }] : []),
@@ -8284,7 +8285,7 @@ function App() {
   else if (view.type === 'resources') content = <ResourceHubPage me={me} />;
   else if (view.type === 'volunteers') content = (me.role === 'admin' || me.role === 'manager') ? <VolunteerManagerPage me={me} /> : null;
   else if (view.type === 'testimonials') content = me.role === 'admin' ? <TestimonialsAdminPage me={me} /> : null;
-  else if (view.type === 'newsletter') content = me.role === 'admin' ? <NewsletterAdminPage me={me} /> : null;
+  else if (view.type === 'newsletter') content = (me.role === 'admin' || me.canManageNewsletter) ? <NewsletterAdminPage me={me} /> : null;
 
   return (
     <>
