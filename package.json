@@ -16,6 +16,7 @@
     "better-sqlite3": "^11.3.0",
     "cors": "^2.8.5",
     "express": "^4.19.2",
+    "geoip-lite": "^1.4.10",
     "jsonwebtoken": "^9.0.2"
   }
 }

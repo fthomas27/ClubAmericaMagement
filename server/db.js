@@ -179,6 +179,27 @@ function init() {
       ipAddress TEXT NOT NULL DEFAULT ''
     );
 
+    -- Public website visit log (page views on the public marketing site).
+    CREATE TABLE IF NOT EXISTS site_visits (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      visitorId   TEXT NOT NULL DEFAULT '',
+      path        TEXT NOT NULL DEFAULT '/',
+      referrer    TEXT NOT NULL DEFAULT '',
+      ipAddress   TEXT NOT NULL DEFAULT '',
+      country     TEXT NOT NULL DEFAULT '',
+      region      TEXT NOT NULL DEFAULT '',
+      city        TEXT NOT NULL DEFAULT '',
+      userAgent   TEXT NOT NULL DEFAULT '',
+      deviceType  TEXT NOT NULL DEFAULT '',
+      browser     TEXT NOT NULL DEFAULT '',
+      durationSec INTEGER NOT NULL DEFAULT 0,
+      viewedAt    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_site_visits_viewedat
+      ON site_visits(viewedAt DESC);
+    CREATE INDEX IF NOT EXISTS idx_site_visits_visitor
+      ON site_visits(visitorId);
+
     -- AI-generated private notes for individual board members.
     CREATE TABLE IF NOT EXISTS ai_notes (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -690,6 +711,11 @@ function init() {
   // speaker_applications column migrations (multi-question PDF uploads).
   const speakerAppCols = db.prepare("PRAGMA table_info(speaker_applications)").all().map((c) => c.name);
   if (!speakerAppCols.includes('uploads')) db.exec("ALTER TABLE speaker_applications ADD COLUMN uploads TEXT NOT NULL DEFAULT '[]'");
+
+  // site_visits column migrations (device + browser breakdown).
+  const visitCols = db.prepare("PRAGMA table_info(site_visits)").all().map((c) => c.name);
+  if (!visitCols.includes('deviceType')) db.exec("ALTER TABLE site_visits ADD COLUMN deviceType TEXT NOT NULL DEFAULT ''");
+  if (!visitCols.includes('browser'))    db.exec("ALTER TABLE site_visits ADD COLUMN browser TEXT NOT NULL DEFAULT ''");
 
   // Ensure the homepage row exists.
   db.prepare(`INSERT OR IGNORE INTO site_settings (id, meetingDate, meetingTime, meetingLocation, podcastUrl)
