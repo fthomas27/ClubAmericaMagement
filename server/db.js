@@ -190,6 +190,8 @@ function init() {
       region      TEXT NOT NULL DEFAULT '',
       city        TEXT NOT NULL DEFAULT '',
       userAgent   TEXT NOT NULL DEFAULT '',
+      deviceType  TEXT NOT NULL DEFAULT '',
+      browser     TEXT NOT NULL DEFAULT '',
       durationSec INTEGER NOT NULL DEFAULT 0,
       viewedAt    TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -709,6 +711,11 @@ function init() {
   // speaker_applications column migrations (multi-question PDF uploads).
   const speakerAppCols = db.prepare("PRAGMA table_info(speaker_applications)").all().map((c) => c.name);
   if (!speakerAppCols.includes('uploads')) db.exec("ALTER TABLE speaker_applications ADD COLUMN uploads TEXT NOT NULL DEFAULT '[]'");
+
+  // site_visits column migrations (device + browser breakdown).
+  const visitCols = db.prepare("PRAGMA table_info(site_visits)").all().map((c) => c.name);
+  if (!visitCols.includes('deviceType')) db.exec("ALTER TABLE site_visits ADD COLUMN deviceType TEXT NOT NULL DEFAULT ''");
+  if (!visitCols.includes('browser'))    db.exec("ALTER TABLE site_visits ADD COLUMN browser TEXT NOT NULL DEFAULT ''");
 
   // Ensure the homepage row exists.
   db.prepare(`INSERT OR IGNORE INTO site_settings (id, meetingDate, meetingTime, meetingLocation, podcastUrl)

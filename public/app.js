@@ -6004,39 +6004,81 @@ function LogisticsPage() {
 }
 
 // ---------------------------------------------------------------------------
-// Site Activity dashboard — public website traffic (views, source, location,
-// time on page). Same audience as Login Activity (admin / canViewLogistics).
+// Site Activity dashboard — public website traffic (views, sources, locations,
+// devices, time on page). Same audience as Login Activity (admin /
+// canViewLogistics). Scoped by a date range, refreshes live.
 // ---------------------------------------------------------------------------
+const SITE_RANGE_OPTIONS = [
+  { key: 'today', label: 'Today' },
+  { key: '7d',    label: '7 days' },
+  { key: '30d',   label: '30 days' },
+  { key: 'all',   label: 'All time' },
+];
+
+// Convert a 2-letter ISO country code to its flag emoji.
+function flagEmoji(cc) {
+  if (!cc || cc.length !== 2) return '';
+  const base = 0x1f1e6;
+  const c = cc.toUpperCase();
+  return String.fromCodePoint(base + c.charCodeAt(0) - 65) + String.fromCodePoint(base + c.charCodeAt(1) - 65);
+}
+
+// A labelled horizontal bar row used across the breakdown panels.
+function StatBar({ label, count, total, color = 'bg-gold', leading = null }) {
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  return (
+    <div className="flex items-center gap-3">
+      <div className="w-32 shrink-0 flex items-center gap-1.5 text-cream/80 text-sm truncate">
+        {leading}<span className="truncate">{label}</span>
+      </div>
+      <div className="flex-1 h-5 bg-cream/5 rounded overflow-hidden">
+        <div className={`h-full ${color} rounded transition-all duration-500`} style={{ width: `${Math.max(pct, count > 0 ? 3 : 0)}%` }} />
+      </div>
+      <div className="w-16 shrink-0 text-right text-cream/60 text-xs tabular-nums">
+        {count} <span className="text-cream/30">· {pct}%</span>
+      </div>
+    </div>
+  );
+}
+
 function SiteActivityPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [range, setRange] = useState('7d');
   const [tab, setTab] = useState('overview');
   const [visitsVisible, setVisitsVisible] = useState(50);
+  const [exporting, setExporting] = useState(false);
 
-  const load = async () => {
-    setLoading(true);
+  const load = async (opts = {}) => {
+    if (!opts.silent) setLoading(true);
     setError('');
     try {
-      const d = await api('/site-activity/stats');
+      const d = await api(`/site-activity/stats?range=${range}`);
       setData(d);
     } catch (e) {
-      setError(e.message);
+      if (!opts.silent) setError(e.message);
     } finally {
-      setLoading(false);
+      if (!opts.silent) setLoading(false);
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [range]);
+  // Live refresh — keeps "active now" and today's numbers current.
+  useEffect(() => {
+    const t = setInterval(() => load({ silent: true }), 30000);
+    return () => clearInterval(t);
+    /* eslint-disable-next-line */
+  }, [range]);
 
   function fmtDate(dt) {
     if (!dt) return '—';
     const d = new Date(dt.includes('T') || dt.includes('Z') ? dt : dt + 'Z');
-    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   }
 
   function fmtDuration(sec) {
-    const n = Number(sec) || 0;
+    const n = Math.round(Number(sec) || 0);
     if (n <= 0) return '—';
     if (n < 60) return `${n}s`;
     const m = Math.floor(n / 60);
@@ -6044,22 +6086,87 @@ function SiteActivityPage() {
     return s > 0 ? `${m}m ${s}s` : `${m}m`;
   }
 
-  if (loading) return <Loading label="Loading site activity…" />;
-  if (error) return <div className="p-6 max-w-6xl"><ErrorState message={error} onRetry={load} /></div>;
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const token = localStorage.getItem(TOKEN_KEY);
+      const res = await fetch(`/api/site-activity/export.csv?range=${range}`, {
+        headers: token ? { Authorization: 'Bearer ' + token } : {},
+      });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `site-activity-${range}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (_) { /* ignore */ } finally {
+      setExporting(false);
+    }
+  };
+
+  const RangePicker = () => (
+    <div className="inline-flex rounded-lg border border-cream/15 overflow-hidden">
+      {SITE_RANGE_OPTIONS.map((o) => (
+        <button
+          key={o.key}
+          onClick={() => setRange(o.key)}
+          className={`text-xs px-3 py-1.5 transition-colors ${
+            range === o.key ? 'bg-gold/20 text-gold' : 'text-cream/50 hover:text-cream/80 hover:bg-cream/5'
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (loading && !data) return <Loading label="Loading site activity…" />;
+  if (error && !data) return <div className="p-6 max-w-6xl"><ErrorState message={error} onRetry={load} /></div>;
   if (!data) return null;
 
-  const { totals, dailyTrend = [], topPages = [], topLocations = [], topSources = [], recentVisits = [] } = data;
+  const {
+    totals, newReturning = { newVisitors: 0, returningVisitors: 0 },
+    dailyTrend = [], hourly = [], topPages = [], topLocations = [],
+    deviceBreakdown = [], browserBreakdown = [], topSources = [], recentVisits = [],
+  } = data;
 
-  const DAY_LABELS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+  const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
   const dayLabel = (iso) => DAY_LABELS[new Date(iso + 'T12:00:00Z').getUTCDay()];
   const todayStr = new Date().toISOString().slice(0, 10);
-
   const pageLabel = (p) => (PUBLIC_PAGES.find((x) => x.path === p) || {}).label || p;
+
+  // Rotate the UTC hour buckets into the viewer's local time.
+  const tzOff = new Date().getTimezoneOffset() / 60;
+  const localHourly = Array.from({ length: 24 }, () => 0);
+  for (const { hour, count } of hourly) {
+    const lh = ((Math.round(hour - tzOff) % 24) + 24) % 24;
+    localHourly[lh] += count;
+  }
+  const maxHour = Math.max(...localHourly, 1);
+  const hourTick = (h) => (h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`);
+
+  // Period-over-period change badge.
+  const ChangeBadge = ({ cur, prev }) => {
+    if (!totals.hasPrev) return null;
+    if (!prev && !cur) return null;
+    if (!prev) return <span className="text-emerald-400 text-[10px] font-semibold">▲ new</span>;
+    const change = Math.round(((cur - prev) / prev) * 100);
+    if (change === 0) return <span className="text-cream/30 text-[10px] font-semibold">— 0%</span>;
+    const up = change > 0;
+    return (
+      <span className={`text-[10px] font-semibold ${up ? 'text-emerald-400' : 'text-red'}`}>
+        {up ? '▲' : '▼'} {Math.abs(change)}%
+      </span>
+    );
+  };
 
   const TabBtn = ({ id, label }) => (
     <button
       onClick={() => setTab(id)}
-      className={`text-sm px-4 py-2 border-b-2 transition-all duration-150 ${
+      className={`text-sm px-4 py-2 border-b-2 transition-all duration-150 whitespace-nowrap ${
         tab === id ? 'border-gold text-gold' : 'border-transparent text-cream/50 hover:text-cream/80'
       }`}
     >
@@ -6067,64 +6174,109 @@ function SiteActivityPage() {
     </button>
   );
 
+  const deviceTotal = deviceBreakdown.reduce((s, r) => s + r.count, 0);
+  const browserTotal = browserBreakdown.reduce((s, r) => s + r.count, 0);
+  const sourceTotal = topSources.reduce((s, r) => s + r.count, 0);
+  const nrTotal = (newReturning.newVisitors || 0) + (newReturning.returningVisitors || 0);
+  const rangeWord = (SITE_RANGE_OPTIONS.find((o) => o.key === range) || {}).label || '';
+
+  const summaryCards = [
+    { label: `Views · ${rangeWord}`, value: (totals.views || 0).toLocaleString(), color: 'text-gold', cur: totals.views, prev: totals.prevViews },
+    { label: `Visitors · ${rangeWord}`, value: (totals.visitors || 0).toLocaleString(), color: 'text-emerald-400', cur: totals.visitors, prev: totals.prevVisitors },
+    { label: 'Avg. Time on Page', value: fmtDuration(totals.avgDurationSec), color: 'text-sky-400', cur: totals.avgDurationSec, prev: totals.prevAvgDurationSec },
+    { label: 'Pages / Visitor', value: (totals.pagesPerVisitor || 0).toFixed(1), color: 'text-cream/80' },
+  ];
+
   return (
     <div className="p-6 max-w-6xl space-y-6">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-cream">Site Activity Dashboard</h1>
-          <p className="text-cream/45 text-xs mt-0.5">Public website traffic — page views, sources, and locations</p>
+          <h1 className="text-xl font-bold text-cream flex items-center gap-3">
+            Site Activity
+            {totals.activeNow > 0 && (
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded-full px-2.5 py-0.5">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+                </span>
+                {totals.activeNow} online now
+              </span>
+            )}
+          </h1>
+          <p className="text-cream/45 text-xs mt-0.5">
+            Public website traffic · {(totals.allTimeViews || 0).toLocaleString()} views from {(totals.allTimeVisitors || 0).toLocaleString()} visitors all-time
+          </p>
         </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="shrink-0 text-xs text-gold/80 hover:text-gold border border-gold/30 hover:border-gold/60 px-3 py-1.5 rounded transition-colors disabled:opacity-40 flex items-center gap-1.5"
-        >
-          {loading ? <><Spinner className="w-3 h-3" /> Refreshing…</> : 'Refresh'}
-        </button>
+        <div className="flex items-center gap-2">
+          <RangePicker />
+          <button
+            onClick={() => load()}
+            disabled={loading}
+            className="shrink-0 text-xs text-gold/80 hover:text-gold border border-gold/30 hover:border-gold/60 px-3 py-1.5 rounded transition-colors disabled:opacity-40 flex items-center gap-1.5"
+          >
+            {loading ? <><Spinner className="w-3 h-3" /> …</> : 'Refresh'}
+          </button>
+        </div>
       </div>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {[
-          { label: 'Views Today', value: totals.todayViews || 0, color: 'text-gold' },
-          { label: 'Visitors Today', value: totals.todayVisitors || 0, color: 'text-emerald-400' },
-          { label: 'All-Time Views', value: totals.allTimeViews || 0, color: 'text-sky-400' },
-          { label: 'Avg. Time on Page', value: fmtDuration(Math.round(totals.avgDurationSec || 0)), color: 'text-cream/80' },
-        ].map(({ label, value, color }) => (
+        {summaryCards.map(({ label, value, color, cur, prev }) => (
           <div key={label} className="bg-navy2 rounded-lg p-4 border border-cream/10">
-            <div className={`text-2xl font-bold ${color}`}>{value}</div>
+            <div className="flex items-baseline justify-between gap-2">
+              <div className={`text-2xl font-bold ${color}`}>{value}</div>
+              {cur !== undefined && <ChangeBadge cur={cur} prev={prev} />}
+            </div>
             <div className="text-cream/50 text-xs mt-0.5">{label}</div>
           </div>
         ))}
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-0 border-b border-cream/10">
+      <div className="flex gap-0 border-b border-cream/10 overflow-x-auto">
         <TabBtn id="overview" label="Overview" />
+        <TabBtn id="audience" label="Audience" />
         <TabBtn id="sources" label="Sources & Locations" />
         <TabBtn id="visits" label={`Recent Visits (${recentVisits.length})`} />
       </div>
 
       {tab === 'overview' && (
-        <div className="space-y-4">
-          {/* 14-day trend chart */}
-          {dailyTrend.length > 0 && (() => {
+        <div className="space-y-5">
+          {/* Trend chart (daily for multi-day ranges, hourly for Today) */}
+          {range === 'today' ? (
+            <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+              <div className="text-cream/50 text-xs mb-3">Views by hour (your local time)</div>
+              <div className="flex items-end gap-0.5 h-24">
+                {localHourly.map((c, h) => (
+                  <div key={h} className="flex-1 flex flex-col items-center gap-1 group relative">
+                    <div
+                      className="w-full rounded-sm bg-gold/70 group-hover:bg-gold transition-colors"
+                      style={{ height: Math.max(2, Math.round((c / maxHour) * 88)) }}
+                      title={`${hourTick(h)}: ${c} view${c !== 1 ? 's' : ''}`}
+                    />
+                    {h % 6 === 0 && <div className="text-cream/30 text-[9px]">{hourTick(h)}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : dailyTrend.length > 0 && (() => {
             const maxViews = Math.max(...dailyTrend.map((d) => d.views), 1);
+            const dense = dailyTrend.length > 14;
             return (
               <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
-                <div className="text-cream/50 text-xs mb-3">Page views — last 14 days</div>
-                <div className="flex items-end gap-1 h-12">
+                <div className="text-cream/50 text-xs mb-3">Page views — last {dailyTrend.length} days</div>
+                <div className="flex items-end gap-1 h-24">
                   {dailyTrend.map((d) => {
-                    const h = Math.max(4, Math.round((d.views / maxViews) * 48));
+                    const h = Math.max(3, Math.round((d.views / maxViews) * 88));
                     const isToday = d.day === todayStr;
                     return (
-                      <div key={d.day} className="flex-1 flex flex-col items-center gap-0.5 group relative">
+                      <div key={d.day} className="flex-1 flex flex-col items-center gap-1 group relative">
                         <div
                           className={`w-full rounded-sm ${isToday ? 'bg-gold' : 'bg-cream/25 group-hover:bg-cream/40'} transition-colors`}
                           style={{ height: h }}
                           title={`${d.day}: ${d.views} view${d.views !== 1 ? 's' : ''}, ${d.visitors} visitor${d.visitors !== 1 ? 's' : ''}`}
                         />
-                        {isToday && <div className="absolute -bottom-4 text-gold text-[9px]">today</div>}
+                        {!dense && <div className={`text-[9px] ${isToday ? 'text-gold' : 'text-cream/30'}`}>{dayLabel(d.day)}</div>}
                       </div>
                     );
                   })}
@@ -6133,53 +6285,127 @@ function SiteActivityPage() {
             );
           })()}
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
-                  <th className="pb-2 pr-4 font-medium">Page</th>
-                  <th className="pb-2 pr-4 font-medium text-center">Views</th>
-                  <th className="pb-2 font-medium text-center">Avg. Time</th>
-                </tr>
-              </thead>
-              <tbody>
-                {topPages.map((p) => (
-                  <tr key={p.path} className="border-b border-cream/5 hover:bg-cream/3">
-                    <td className="py-2.5 pr-4 text-cream font-medium">{pageLabel(p.path)}</td>
-                    <td className="py-2.5 pr-4 text-cream/70 text-center">{p.views}</td>
-                    <td className="py-2.5 text-cream/50 text-center">{fmtDuration(Math.round(p.avgDurationSec || 0))}</td>
+          {/* Top pages with inline bars */}
+          <div>
+            <div className="text-cream/50 text-xs mb-3">Most-visited pages</div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
+                    <th className="pb-2 pr-4 font-medium">Page</th>
+                    <th className="pb-2 pr-4 font-medium text-right">Views</th>
+                    <th className="pb-2 pr-4 font-medium text-right">Visitors</th>
+                    <th className="pb-2 font-medium text-right">Avg. Time</th>
                   </tr>
-                ))}
-                {topPages.length === 0 && (
-                  <tr><td colSpan={3} className="py-8 text-center text-cream/25 text-sm">No visits recorded yet.</td></tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {topPages.map((p) => {
+                    const maxV = Math.max(...topPages.map((x) => x.views), 1);
+                    return (
+                      <tr key={p.path} className="border-b border-cream/5 hover:bg-cream/3">
+                        <td className="py-2.5 pr-4">
+                          <div className="text-cream font-medium">{pageLabel(p.path)}</div>
+                          <div className="mt-1 h-1 bg-cream/5 rounded overflow-hidden max-w-xs">
+                            <div className="h-full bg-gold/60 rounded" style={{ width: `${Math.round((p.views / maxV) * 100)}%` }} />
+                          </div>
+                        </td>
+                        <td className="py-2.5 pr-4 text-cream/70 text-right tabular-nums">{p.views}</td>
+                        <td className="py-2.5 pr-4 text-cream/50 text-right tabular-nums">{p.visitors}</td>
+                        <td className="py-2.5 text-cream/50 text-right tabular-nums">{fmtDuration(p.avgDurationSec)}</td>
+                      </tr>
+                    );
+                  })}
+                  {topPages.length === 0 && (
+                    <tr><td colSpan={4} className="py-8 text-center text-cream/25 text-sm">No visits recorded in this period.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'audience' && (
+        <div className="grid md:grid-cols-2 gap-6">
+          {/* New vs returning */}
+          <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+            <div className="text-cream/50 text-xs mb-3">New vs. returning visitors</div>
+            {nrTotal > 0 ? (
+              <>
+                <div className="flex h-4 rounded overflow-hidden mb-3">
+                  <div className="bg-gold" style={{ width: `${Math.round((newReturning.newVisitors / nrTotal) * 100)}%` }} />
+                  <div className="bg-sky-500" style={{ width: `${Math.round((newReturning.returningVisitors / nrTotal) * 100)}%` }} />
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-gold">● New — {newReturning.newVisitors}</span>
+                  <span className="text-sky-400">● Returning — {newReturning.returningVisitors}</span>
+                </div>
+              </>
+            ) : <div className="text-cream/25 text-sm py-4 text-center">No visitors in this period.</div>}
+          </div>
+
+          {/* Peak hours */}
+          <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+            <div className="text-cream/50 text-xs mb-3">Busiest hours (your local time)</div>
+            <div className="flex items-end gap-0.5 h-20">
+              {localHourly.map((c, h) => (
+                <div key={h} className="flex-1 flex flex-col items-center gap-1 group relative">
+                  <div
+                    className="w-full rounded-sm bg-emerald-500/60 group-hover:bg-emerald-400 transition-colors"
+                    style={{ height: Math.max(2, Math.round((c / maxHour) * 72)) }}
+                    title={`${hourTick(h)}: ${c} view${c !== 1 ? 's' : ''}`}
+                  />
+                  {h % 6 === 0 && <div className="text-cream/30 text-[9px]">{hourTick(h)}</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Devices */}
+          <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+            <div className="text-cream/50 text-xs mb-3">Devices</div>
+            <div className="space-y-2">
+              {deviceBreakdown.map((d) => (
+                <StatBar key={d.label} label={d.label} count={d.count} total={deviceTotal} color="bg-gold" />
+              ))}
+              {deviceBreakdown.length === 0 && <div className="text-cream/25 text-sm py-2 text-center">No data yet.</div>}
+            </div>
+          </div>
+
+          {/* Browsers */}
+          <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+            <div className="text-cream/50 text-xs mb-3">Browsers</div>
+            <div className="space-y-2">
+              {browserBreakdown.map((b) => (
+                <StatBar key={b.label} label={b.label} count={b.count} total={browserTotal} color="bg-sky-500" />
+              ))}
+              {browserBreakdown.length === 0 && <div className="text-cream/25 text-sm py-2 text-center">No data yet.</div>}
+            </div>
           </div>
         </div>
       )}
 
       {tab === 'sources' && (
         <div className="grid md:grid-cols-2 gap-6">
-          <div>
-            <div className="text-cream/50 text-xs mb-2">Where visitors come from</div>
-            <div className="space-y-1.5">
+          <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+            <div className="text-cream/50 text-xs mb-3">Where visitors come from</div>
+            <div className="space-y-2">
               {topSources.map((s) => (
-                <div key={s.source} className="flex items-center justify-between bg-navy2 rounded px-3 py-2 border border-cream/10">
-                  <span className="text-cream text-sm">{s.source}</span>
-                  <span className="text-cream/60 text-xs font-semibold">{s.count}</span>
-                </div>
+                <StatBar key={s.source} label={s.source} count={s.count} total={sourceTotal} color="bg-gold" />
               ))}
-              {topSources.length === 0 && <div className="text-cream/25 text-sm py-4 text-center">No visits recorded yet.</div>}
+              {topSources.length === 0 && <div className="text-cream/25 text-sm py-4 text-center">No visits recorded in this period.</div>}
             </div>
           </div>
-          <div>
-            <div className="text-cream/50 text-xs mb-2">Visitor locations</div>
+          <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+            <div className="text-cream/50 text-xs mb-3">Visitor locations</div>
             <div className="space-y-1.5">
               {topLocations.map((l, i) => (
-                <div key={`${l.city}-${l.region}-${l.country}-${i}`} className="flex items-center justify-between bg-navy2 rounded px-3 py-2 border border-cream/10">
-                  <span className="text-cream text-sm">{[l.city, l.region, l.country].filter(Boolean).join(', ')}</span>
-                  <span className="text-cream/60 text-xs font-semibold">{l.views}</span>
+                <div key={`${l.city}-${l.region}-${l.country}-${i}`} className="flex items-center justify-between bg-cream/5 rounded px-3 py-2">
+                  <span className="text-cream text-sm flex items-center gap-2">
+                    <span className="text-base leading-none">{flagEmoji(l.country) || '🌐'}</span>
+                    {[l.city, l.region, l.country].filter(Boolean).join(', ')}
+                  </span>
+                  <span className="text-cream/60 text-xs font-semibold tabular-nums">{l.views}</span>
                 </div>
               ))}
               {topLocations.length === 0 && <div className="text-cream/25 text-sm py-4 text-center">No location data yet.</div>}
@@ -6189,32 +6415,48 @@ function SiteActivityPage() {
       )}
 
       {tab === 'visits' && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
-                <th className="pb-2 pr-4 font-medium">Time</th>
-                <th className="pb-2 pr-4 font-medium">Page</th>
-                <th className="pb-2 pr-4 font-medium">Location</th>
-                <th className="pb-2 pr-4 font-medium">Duration</th>
-                <th className="pb-2 font-medium">IP Address</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentVisits.slice(0, visitsVisible).map((v) => (
-                <tr key={v.id} className="border-b border-cream/5 hover:bg-cream/3">
-                  <td className="py-2.5 pr-4 text-cream/55 text-xs whitespace-nowrap">{fmtDate(v.viewedAt)}</td>
-                  <td className="py-2.5 pr-4 text-cream font-medium">{pageLabel(v.path)}</td>
-                  <td className="py-2.5 pr-4 text-cream/55 text-xs">{[v.city, v.region, v.country].filter(Boolean).join(', ') || '—'}</td>
-                  <td className="py-2.5 pr-4 text-cream/55 text-xs">{fmtDuration(v.durationSec)}</td>
-                  <td className="py-2.5 text-cream/35 text-xs font-mono">{v.ipAddress || '—'}</td>
+        <div>
+          <div className="flex justify-end mb-3">
+            <button
+              onClick={exportCsv}
+              disabled={exporting || recentVisits.length === 0}
+              className="text-xs text-gold/80 hover:text-gold border border-gold/30 hover:border-gold/60 px-3 py-1.5 rounded transition-colors disabled:opacity-40 flex items-center gap-1.5"
+            >
+              {exporting ? <><Spinner className="w-3 h-3" /> Exporting…</> : '↓ Export CSV'}
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
+                  <th className="pb-2 pr-4 font-medium">Time</th>
+                  <th className="pb-2 pr-4 font-medium">Page</th>
+                  <th className="pb-2 pr-4 font-medium">Location</th>
+                  <th className="pb-2 pr-4 font-medium">Device</th>
+                  <th className="pb-2 pr-4 font-medium">Duration</th>
+                  <th className="pb-2 font-medium">IP Address</th>
                 </tr>
-              ))}
-              {recentVisits.length === 0 && (
-                <tr><td colSpan={5} className="py-8 text-center text-cream/25 text-sm">No visits recorded yet.</td></tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {recentVisits.slice(0, visitsVisible).map((v) => (
+                  <tr key={v.id} className="border-b border-cream/5 hover:bg-cream/3">
+                    <td className="py-2.5 pr-4 text-cream/55 text-xs whitespace-nowrap">{fmtDate(v.viewedAt)}</td>
+                    <td className="py-2.5 pr-4 text-cream font-medium">{pageLabel(v.path)}</td>
+                    <td className="py-2.5 pr-4 text-cream/55 text-xs">
+                      {v.country ? <span className="mr-1">{flagEmoji(v.country)}</span> : null}
+                      {[v.city, v.region].filter(Boolean).join(', ') || v.country || '—'}
+                    </td>
+                    <td className="py-2.5 pr-4 text-cream/55 text-xs">{[v.deviceType, v.browser].filter(Boolean).join(' · ') || '—'}</td>
+                    <td className="py-2.5 pr-4 text-cream/55 text-xs">{fmtDuration(v.durationSec)}</td>
+                    <td className="py-2.5 text-cream/35 text-xs font-mono">{v.ipAddress || '—'}</td>
+                  </tr>
+                ))}
+                {recentVisits.length === 0 && (
+                  <tr><td colSpan={6} className="py-8 text-center text-cream/25 text-sm">No visits recorded in this period.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
           {recentVisits.length > visitsVisible && (
             <div className="text-center pt-3">
               <Button variant="ghost" onClick={() => setVisitsVisible((v) => v + 50)}>Show more ({recentVisits.length - visitsVisible} more)</Button>

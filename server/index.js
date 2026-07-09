@@ -440,15 +440,38 @@ app.post('/api/track', rateLimit({ windowMs: 60 * 1000, max: 120, name: 'track' 
   res.json({ ok: true });
 });
 
+// Lightweight user-agent parsing — enough for a device/browser breakdown
+// without pulling in a heavyweight dependency.
+function parseUserAgent(ua) {
+  const s = String(ua || '');
+  let deviceType = 'Desktop';
+  if (/\b(iPad|Tablet)\b|Android(?!.*Mobile)/i.test(s)) deviceType = 'Tablet';
+  else if (/Mobi|iPhone|iPod|Android.*Mobile|Windows Phone/i.test(s)) deviceType = 'Mobile';
+  else if (/bot|crawl|spider|slurp|bingpreview/i.test(s)) deviceType = 'Bot';
+
+  let browser = 'Other';
+  if (/Edg[eiOS]?\//i.test(s)) browser = 'Edge';
+  else if (/OPR\/|Opera/i.test(s)) browser = 'Opera';
+  else if (/SamsungBrowser/i.test(s)) browser = 'Samsung Internet';
+  else if (/CriOS/i.test(s)) browser = 'Chrome';
+  else if (/FxiOS/i.test(s)) browser = 'Firefox';
+  else if (/Firefox\//i.test(s)) browser = 'Firefox';
+  else if (/Chrome\//i.test(s)) browser = 'Chrome';
+  else if (/Version\/.*Safari/i.test(s)) browser = 'Safari';
+  else if (/bot|crawl|spider/i.test(s)) browser = 'Bot';
+  return { deviceType, browser };
+}
+
 // Public site-visit tracking — records a page view on the public marketing
-// site (path, referrer, rough geo from IP). No auth required.
+// site (path, referrer, rough geo from IP, device/browser). No auth required.
 app.post('/api/site-visit', rateLimit({ windowMs: 60 * 1000, max: 120, name: 'site-visit' }), (req, res) => {
   const { visitorId, path: visitPath, referrer } = req.body || {};
   const ip = String(req.ip || '').trim();
   const geo = geoip.lookup(ip) || {};
+  const { deviceType, browser } = parseUserAgent(req.headers['user-agent']);
   const info = db.prepare(`
-    INSERT INTO site_visits (visitorId, path, referrer, ipAddress, country, region, city, userAgent)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO site_visits (visitorId, path, referrer, ipAddress, country, region, city, userAgent, deviceType, browser)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     String(visitorId || '').slice(0, 64),
     String(visitPath || '/').slice(0, 200),
@@ -457,7 +480,9 @@ app.post('/api/site-visit', rateLimit({ windowMs: 60 * 1000, max: 120, name: 'si
     geo.country || '',
     (geo.region || ''),
     geo.city || '',
-    String(req.headers['user-agent'] || '').slice(0, 300)
+    String(req.headers['user-agent'] || '').slice(0, 300),
+    deviceType,
+    browser
   );
   res.json({ ok: true, id: info.lastInsertRowid });
 });
@@ -2918,30 +2943,114 @@ app.get('/api/logistics/stats', (req, res) => {
 });
 
 // ---- Site Activity dashboard (public website traffic — admin or canViewLogistics) -
+// Time windows the dashboard can be scoped to. Each clause is a fixed, trusted
+// SQL fragment selected by name (never interpolated from user input).
+const SITE_RANGES = {
+  today: {
+    cur:   "date(viewedAt) = date('now')",
+    prev:  "date(viewedAt) = date('now','-1 day')",
+    start: "date('now')",
+    trendDays: 1,
+  },
+  '7d': {
+    cur:   "viewedAt >= datetime('now','-7 days')",
+    prev:  "viewedAt >= datetime('now','-14 days') AND viewedAt < datetime('now','-7 days')",
+    start: "datetime('now','-7 days')",
+    trendDays: 7,
+  },
+  '30d': {
+    cur:   "viewedAt >= datetime('now','-30 days')",
+    prev:  "viewedAt >= datetime('now','-60 days') AND viewedAt < datetime('now','-30 days')",
+    start: "datetime('now','-30 days')",
+    trendDays: 30,
+  },
+  all: {
+    cur:   "1=1",
+    prev:  "0=1",
+    start: "'0000-01-01'",
+    trendDays: 30,
+  },
+};
+
 app.get('/api/site-activity/stats', (req, res) => {
   if (req.user.role !== 'admin' && !req.user.canViewLogistics) return res.status(403).json({ error: 'Access denied' });
 
-  const totals = db.prepare(`
+  const rangeKey = SITE_RANGES[req.query.range] ? req.query.range : '7d';
+  const R = SITE_RANGES[rangeKey];
+
+  // Headline metrics for the selected window + the prior equal-length window
+  // (for the period-over-period % change badges).
+  const metricsFor = (clause) => db.prepare(`
     SELECT
-      COUNT(*) AS allTimeViews,
-      COUNT(DISTINCT visitorId) AS allTimeVisitors,
-      SUM(CASE WHEN date(viewedAt) = date('now') THEN 1 ELSE 0 END) AS todayViews,
-      COUNT(DISTINCT CASE WHEN date(viewedAt) = date('now') THEN visitorId END) AS todayVisitors,
+      COUNT(*)                                        AS views,
+      COUNT(DISTINCT visitorId)                       AS visitors,
       AVG(CASE WHEN durationSec > 0 THEN durationSec END) AS avgDurationSec
-    FROM site_visits
+    FROM site_visits WHERE ${clause}
+  `).get();
+  const current = metricsFor(R.cur);
+  const previous = metricsFor(R.prev);
+
+  // Live: distinct visitors seen in the last 5 minutes (independent of range).
+  const activeNow = db.prepare(
+    "SELECT COUNT(DISTINCT visitorId) AS n FROM site_visits WHERE viewedAt >= datetime('now','-5 minutes')"
+  ).get().n;
+
+  // All-time reference numbers, always shown regardless of range.
+  const allTime = db.prepare(
+    'SELECT COUNT(*) AS views, COUNT(DISTINCT visitorId) AS visitors FROM site_visits'
+  ).get();
+
+  const totals = {
+    views: current.views || 0,
+    visitors: current.visitors || 0,
+    avgDurationSec: current.avgDurationSec || 0,
+    pagesPerVisitor: current.visitors ? (current.views / current.visitors) : 0,
+    prevViews: previous.views || 0,
+    prevVisitors: previous.visitors || 0,
+    prevAvgDurationSec: previous.avgDurationSec || 0,
+    activeNow,
+    allTimeViews: allTime.views || 0,
+    allTimeVisitors: allTime.visitors || 0,
+    hasPrev: rangeKey !== 'all',
+  };
+
+  // New vs. returning: classify every visitor active in the window by whether
+  // their first-ever visit falls inside the window (new) or before it (return).
+  const newReturning = db.prepare(`
+    SELECT
+      SUM(CASE WHEN firstSeen >= ${R.start} THEN 1 ELSE 0 END) AS newVisitors,
+      SUM(CASE WHEN firstSeen <  ${R.start} THEN 1 ELSE 0 END) AS returningVisitors
+    FROM (
+      SELECT visitorId, MIN(viewedAt) AS firstSeen,
+             MAX(CASE WHEN ${R.cur} THEN 1 ELSE 0 END) AS inRange
+      FROM site_visits
+      GROUP BY visitorId
+      HAVING inRange = 1
+    )
   `).get();
 
   const dailyTrend = db.prepare(`
     SELECT DATE(viewedAt) AS day, COUNT(*) AS views, COUNT(DISTINCT visitorId) AS visitors
     FROM site_visits
-    WHERE viewedAt >= DATE('now', '-13 days')
+    WHERE viewedAt >= DATE('now', '-${R.trendDays - 1} days')
     GROUP BY day
     ORDER BY day ASC
   `).all();
 
+  // 24 hour-of-day buckets (UTC — the client rotates them to local time).
+  const hourlyRows = db.prepare(`
+    SELECT CAST(strftime('%H', viewedAt) AS INTEGER) AS hour, COUNT(*) AS count
+    FROM site_visits WHERE ${R.cur}
+    GROUP BY hour
+  `).all();
+  const hourly = Array.from({ length: 24 }, (_, h) => ({ hour: h, count: 0 }));
+  for (const row of hourlyRows) if (row.hour >= 0 && row.hour < 24) hourly[row.hour].count = row.count;
+
   const topPages = db.prepare(`
-    SELECT path, COUNT(*) AS views, AVG(CASE WHEN durationSec > 0 THEN durationSec END) AS avgDurationSec
-    FROM site_visits
+    SELECT path, COUNT(*) AS views,
+           COUNT(DISTINCT visitorId) AS visitors,
+           AVG(CASE WHEN durationSec > 0 THEN durationSec END) AS avgDurationSec
+    FROM site_visits WHERE ${R.cur}
     GROUP BY path
     ORDER BY views DESC
     LIMIT 20
@@ -2952,23 +3061,35 @@ app.get('/api/site-activity/stats', (req, res) => {
       CASE WHEN city != '' THEN city ELSE 'Unknown' END AS city,
       region, country, COUNT(*) AS views
     FROM site_visits
-    WHERE country != ''
+    WHERE country != '' AND ${R.cur}
     GROUP BY city, region, country
     ORDER BY views DESC
     LIMIT 15
   `).all();
 
-  const directCount = db.prepare(`SELECT COUNT(*) AS n FROM site_visits WHERE referrer = ''`).get().n;
+  const deviceBreakdown = db.prepare(`
+    SELECT CASE WHEN deviceType = '' THEN 'Unknown' ELSE deviceType END AS label, COUNT(*) AS count
+    FROM site_visits WHERE ${R.cur}
+    GROUP BY label ORDER BY count DESC
+  `).all();
+
+  const browserBreakdown = db.prepare(`
+    SELECT CASE WHEN browser = '' THEN 'Unknown' ELSE browser END AS label, COUNT(*) AS count
+    FROM site_visits WHERE ${R.cur}
+    GROUP BY label ORDER BY count DESC
+  `).all();
+
+  const directCount = db.prepare(`SELECT COUNT(*) AS n FROM site_visits WHERE referrer = '' AND ${R.cur}`).get().n;
   const referrerRows = db.prepare(`
     SELECT referrer, COUNT(*) AS count FROM site_visits
-    WHERE referrer != ''
+    WHERE referrer != '' AND ${R.cur}
     GROUP BY referrer
     ORDER BY count DESC
-    LIMIT 100
+    LIMIT 200
   `).all();
   // Bucket raw referrer URLs into a friendly source name by hostname.
   const sourceCounts = new Map();
-  const bump = (name, n) => sourceCounts.set(name, (sourceCounts.get(name) || 0) + n);
+  const bump = (name, n) => { if (n > 0) sourceCounts.set(name, (sourceCounts.get(name) || 0) + n); };
   bump('Direct', directCount);
   for (const r of referrerRows) {
     let host = '';
@@ -2979,19 +3100,52 @@ app.get('/api/site-activity/stats', (req, res) => {
     else if (host.includes('facebook.') || host.includes('fb.')) bump('Facebook', r.count);
     else if (host.includes('youtube.')) bump('YouTube', r.count);
     else if (host.includes('bing.')) bump('Bing', r.count);
+    else if (host.includes('duckduckgo.')) bump('DuckDuckGo', r.count);
     else if (host.includes('t.co') || host.includes('twitter.') || host.includes('x.com')) bump('Twitter/X', r.count);
+    else if (host.includes('tiktok.')) bump('TikTok', r.count);
+    else if (host.includes('linkedin.')) bump('LinkedIn', r.count);
+    else if (host.includes('reddit.')) bump('Reddit', r.count);
     else bump(host, r.count);
   }
   const topSources = Array.from(sourceCounts, ([source, count]) => ({ source, count })).sort((a, b) => b.count - a.count);
 
   const recentVisits = db.prepare(`
-    SELECT id, visitorId, path, referrer, country, region, city, ipAddress, durationSec, viewedAt
-    FROM site_visits
+    SELECT id, visitorId, path, referrer, country, region, city, ipAddress,
+           deviceType, browser, durationSec, viewedAt
+    FROM site_visits WHERE ${R.cur}
     ORDER BY viewedAt DESC
     LIMIT 200
   `).all();
 
-  res.json({ totals, dailyTrend, topPages, topLocations, topSources, recentVisits });
+  res.json({
+    range: rangeKey, totals,
+    newReturning: { newVisitors: newReturning.newVisitors || 0, returningVisitors: newReturning.returningVisitors || 0 },
+    dailyTrend, hourly, topPages, topLocations, deviceBreakdown, browserBreakdown, topSources, recentVisits,
+  });
+});
+
+// CSV export of raw visits for the selected window (admin / logistics only).
+app.get('/api/site-activity/export.csv', (req, res) => {
+  if (req.user.role !== 'admin' && !req.user.canViewLogistics) return res.status(403).json({ error: 'Access denied' });
+  const R = SITE_RANGES[req.query.range] ? SITE_RANGES[req.query.range] : SITE_RANGES['7d'];
+  const rows = db.prepare(`
+    SELECT viewedAt, path, referrer, city, region, country, deviceType, browser, durationSec, ipAddress, visitorId
+    FROM site_visits WHERE ${R.cur}
+    ORDER BY viewedAt DESC
+    LIMIT 5000
+  `).all();
+  const header = ['Time (UTC)', 'Page', 'Referrer', 'City', 'Region', 'Country', 'Device', 'Browser', 'Duration (s)', 'IP', 'Visitor ID'];
+  const esc = (v) => {
+    const s = String(v == null ? '' : v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [header.join(',')];
+  for (const r of rows) {
+    lines.push([r.viewedAt, r.path, r.referrer, r.city, r.region, r.country, r.deviceType, r.browser, r.durationSec, r.ipAddress, r.visitorId].map(esc).join(','));
+  }
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="site-activity-${req.query.range || '7d'}.csv"`);
+  res.send(lines.join('\n'));
 });
 
 // ---- Grade Pipeline ---------------------------------------------------------
