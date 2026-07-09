@@ -2706,6 +2706,9 @@ function OrderModal({ item, config, onClose }) {
   const cardMountRef = useRef(null);
   const stripeRef = useRef(null);
   const cardElRef = useRef(null);
+  // Stable per-modal token; combined with the amount it forms the Stripe
+  // idempotency key so a retried request can't create a second PaymentIntent.
+  const idemSessionRef = useRef(Math.random().toString(36).slice(2) + Date.now().toString(36));
 
   const variant = hasVariants ? item.variants.find((v) => v.id === Number(variantId)) : null;
   const unitPrice = variant && variant.priceOverride != null ? variant.priceOverride : item.price;
@@ -2766,7 +2769,14 @@ function OrderModal({ item, config, onClose }) {
       try {
         const d = await api('/shop/create-payment-intent', {
           method: 'POST',
-          body: { itemId: item.id, variantId: variant ? variant.id : null, quantity, promoCode: promo ? promo.code : '', studentEmail },
+          body: {
+            itemId: item.id, variantId: variant ? variant.id : null, quantity,
+            buyerName, buyerEmail, buyerPhone,
+            deliveryMethod: effectiveDelivery,
+            shippingAddress: effectiveDelivery === 'ship' ? address : undefined,
+            studentEmail, promoCode: promo ? promo.code : '',
+            idempotencyKey: `${idemSessionRef.current}-${total}`,
+          },
         });
         if (cancelled) return;
         setClientSecret(d.clientSecret);
@@ -7165,14 +7175,14 @@ function ShopOrdersTab() {
     finally { setBusyId(null); }
   }
 
-  const statusColors = { pending: 'slate', fulfilled: 'green', cancelled: 'red' };
+  const statusColors = { pending: 'slate', fulfilled: 'green', cancelled: 'red', needs_review: 'gold' };
 
   return (
     <div className="space-y-4">
       {confirmEl}
       {error && <div className="text-red text-sm">{error}</div>}
       <div className="flex gap-1 bg-navy2 border border-cream/10 rounded-lg p-1 w-fit">
-        {[['', 'All'], ['pending', 'Pending'], ['fulfilled', 'Fulfilled'], ['cancelled', 'Cancelled']].map(([v, label]) => (
+        {[['', 'All'], ['pending', 'Pending'], ['needs_review', 'Needs Review'], ['fulfilled', 'Fulfilled'], ['cancelled', 'Cancelled']].map(([v, label]) => (
           <button key={v} onClick={() => setFilter(v)}
             className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${filter === v ? 'bg-gold text-navy' : 'text-cream/60 hover:text-cream'}`}>
             {label}

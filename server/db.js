@@ -593,7 +593,10 @@ function init() {
       createdAt             TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_merch_orders_status ON merch_orders(fulfillmentStatus, createdAt DESC);
-    CREATE INDEX IF NOT EXISTS idx_merch_orders_stripe ON merch_orders(stripePaymentIntentId);
+    -- One order per Stripe PaymentIntent: lets the /order route and the webhook
+    -- both finalize the same payment without ever double-recording it.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_merch_orders_stripe
+      ON merch_orders(stripePaymentIntentId) WHERE stripePaymentIntentId != '';
   `);
 
   // User column migrations.
@@ -711,6 +714,15 @@ function init() {
   const upsCols = db.prepare("PRAGMA table_info(user_page_settings)").all().map((c) => c.name);
   if (!upsCols.includes('bioEnabled'))  db.exec("ALTER TABLE user_page_settings ADD COLUMN bioEnabled INTEGER NOT NULL DEFAULT 0");
   if (!upsCols.includes('bioText'))     db.exec("ALTER TABLE user_page_settings ADD COLUMN bioText TEXT NOT NULL DEFAULT ''");
+
+  // merch_orders: replace the earlier non-unique Stripe index with a partial
+  // UNIQUE one so a PaymentIntent can be finalized exactly once. Safe to run
+  // repeatedly; only drops/recreates when the current index isn't unique.
+  const stripeIdx = db.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_merch_orders_stripe'").get();
+  if (stripeIdx && !/UNIQUE/i.test(stripeIdx.sql || '')) {
+    db.exec("DROP INDEX idx_merch_orders_stripe");
+    db.exec("CREATE UNIQUE INDEX idx_merch_orders_stripe ON merch_orders(stripePaymentIntentId) WHERE stripePaymentIntentId != ''");
+  }
 
   // Ensure the homepage row exists.
   db.prepare(`INSERT OR IGNORE INTO site_settings (id, meetingDate, meetingTime, meetingLocation, podcastUrl)

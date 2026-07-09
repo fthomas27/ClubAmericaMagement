@@ -90,6 +90,24 @@ does the right thing without the warning.
 | `MAIL_FROM` | The sender address for emails, e.g. `Club America <noreply@yourdomain.org>`. Defaults to Resend's test sender. |
 | `APP_URL` | Public URL of the app (used for the "Open Club America" button in emails). |
 | `PORT` | Port to listen on (Railway sets this automatically). |
+| `STRIPE_SECRET_KEY` | Enables **online card payments** in the merch shop. From the Stripe Dashboard → Developers → API keys (`sk_live_…` / `sk_test_…`). Without it, only in-person (cash/Venmo) pickup orders can be placed. |
+| `STRIPE_PUBLISHABLE_KEY` | The matching publishable key (`pk_live_…` / `pk_test_…`), served to the shop's card form. |
+| `STRIPE_WEBHOOK_SECRET` | Signing secret (`whsec_…`) for the `/api/shop/webhook` endpoint. Required for online payments — it lets Stripe confirm a payment even if the buyer's browser closes right after paying, so no paid order is ever lost. |
+
+### Stripe merch-shop setup
+
+The shop uses **Stripe Elements + Payment Intents** (buyers enter card details
+inline; the server always recomputes the price and never trusts the client).
+
+1. In the [Stripe Dashboard](https://dashboard.stripe.com/apikeys), copy your
+   **Secret** and **Publishable** keys into `STRIPE_SECRET_KEY` /
+   `STRIPE_PUBLISHABLE_KEY`.
+2. Create a webhook: **Developers → Webhooks → Add endpoint**, URL
+   `https://<your-domain>/api/shop/webhook`, event `payment_intent.succeeded`.
+   Copy the **Signing secret** into `STRIPE_WEBHOOK_SECRET`.
+3. Redeploy. Shipped orders require prepayment; pickup orders can pay online or
+   in person. Orders flagged **Needs Review** in Shop Manager mean a payment
+   succeeded but stock/promo ran out — reconcile (refund or restock) manually.
 
 ### Notifications
 Every board member has an **in-app notification bell** (top-right) that works
