@@ -37,12 +37,36 @@ app.disable('x-powered-by');
 app.set('trust proxy', 1); // behind Railway's proxy
 
 // Security headers (no helmet dependency needed).
+// The Content-Security-Policy is deliberately scoped to the exact third-party
+// origins this app already loads from (Tailwind Play CDN, unpkg for React/Babel,
+// Google Fonts, and YouTube embeds). 'unsafe-inline'/'unsafe-eval' are required
+// because the page ships inline config scripts and compiles JSX in the browser
+// via @babel/standalone; everything else is locked to 'self'. object-src 'none',
+// base-uri 'self', and frame-ancestors 'none' add defense-in-depth that the
+// per-header directives (X-Frame-Options etc.) don't fully cover.
+const CSP = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://fonts.googleapis.com",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com",
+  "connect-src 'self'",
+  "frame-src https://www.youtube.com https://www.youtube-nocookie.com",
+].join('; ');
 app.use((req, res, next) => {
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('X-Frame-Options', 'DENY');
   res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.set('X-Download-Options', 'noopen');
   res.set('X-Permitted-Cross-Domain-Policies', 'none');
+  res.set('Content-Security-Policy', CSP);
+  // Tell browsers to stick to HTTPS (Railway terminates TLS in front of us).
+  // No includeSubDomains/preload so it can't affect sibling hostnames.
+  res.set('Strict-Transport-Security', 'max-age=15552000');
   next();
 });
 
