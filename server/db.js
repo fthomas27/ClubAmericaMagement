@@ -179,6 +179,27 @@ function init() {
       ipAddress TEXT NOT NULL DEFAULT ''
     );
 
+    -- Public website visit log (page views on the public marketing site).
+    CREATE TABLE IF NOT EXISTS site_visits (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      visitorId   TEXT NOT NULL DEFAULT '',
+      path        TEXT NOT NULL DEFAULT '/',
+      referrer    TEXT NOT NULL DEFAULT '',
+      ipAddress   TEXT NOT NULL DEFAULT '',
+      country     TEXT NOT NULL DEFAULT '',
+      region      TEXT NOT NULL DEFAULT '',
+      city        TEXT NOT NULL DEFAULT '',
+      userAgent   TEXT NOT NULL DEFAULT '',
+      deviceType  TEXT NOT NULL DEFAULT '',
+      browser     TEXT NOT NULL DEFAULT '',
+      durationSec INTEGER NOT NULL DEFAULT 0,
+      viewedAt    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_site_visits_viewedat
+      ON site_visits(viewedAt DESC);
+    CREATE INDEX IF NOT EXISTS idx_site_visits_visitor
+      ON site_visits(visitorId);
+
     -- AI-generated private notes for individual board members.
     CREATE TABLE IF NOT EXISTS ai_notes (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -515,6 +536,50 @@ function init() {
     );
     CREATE INDEX IF NOT EXISTS idx_testimonials_status ON testimonials(status, sortOrder, createdAt DESC);
 
+    -- Speaker Application Form: single-row, VP-editable question configuration.
+    -- The public /apply-to-speak form renders whatever is stored here, so the
+    -- VP can reorder/add/edit questions without touching code (see
+    -- server/speakerForm.js for the question shape and the seeded defaults).
+    CREATE TABLE IF NOT EXISTS speaker_form_config (
+      id          INTEGER PRIMARY KEY CHECK (id = 1),
+      title       TEXT NOT NULL DEFAULT '',
+      intro       TEXT NOT NULL DEFAULT '',
+      questions   TEXT NOT NULL DEFAULT '[]',
+      upload      TEXT NOT NULL DEFAULT '{}',
+      updatedById INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      updatedAt   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Public speaker applications submitted from /apply-to-speak. Answers are
+    -- stored as a JSON array of {id, label, answer} snapshots so submissions
+    -- stay readable even after the VP later edits the question list.
+    CREATE TABLE IF NOT EXISTS speaker_applications (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      applicantName  TEXT NOT NULL DEFAULT '',
+      applicantEmail TEXT NOT NULL DEFAULT '',
+      answers        TEXT NOT NULL DEFAULT '[]',
+      needsLogistics INTEGER NOT NULL DEFAULT 0,
+      pdfFile        TEXT NOT NULL DEFAULT '',
+      pdfFileName    TEXT NOT NULL DEFAULT '',
+      uploads        TEXT NOT NULL DEFAULT '[]',
+      handled        INTEGER NOT NULL DEFAULT 0,
+      createdAt      TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_speaker_apps ON speaker_applications(handled, createdAt DESC);
+
+    -- PDF templates admins attach to individual triggersUpload questions on the
+    -- speaker application form (one row per question id). Applicants download
+    -- these before they can upload the signed copy back. A question with no row
+    -- here has no template configured yet (except the original 'needsLogistics'
+    -- question, which falls back to the shipped speaker-logistics-form.pdf).
+    CREATE TABLE IF NOT EXISTS speaker_form_templates (
+      questionId  TEXT PRIMARY KEY,
+      fileName    TEXT NOT NULL DEFAULT '',
+      fileData    TEXT NOT NULL DEFAULT '',
+      updatedById INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      updatedAt   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     -- Newsletter subscriber list. Members are auto-enrolled; public visitors can sign up.
     CREATE TABLE IF NOT EXISTS newsletter_subscribers (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -686,6 +751,12 @@ function init() {
   if (!cols.includes('canManageSocial')) db.exec("ALTER TABLE users ADD COLUMN canManageSocial INTEGER NOT NULL DEFAULT 0");
   if (!cols.includes('phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");
   if (!cols.includes('hiddenTabs')) db.exec("ALTER TABLE users ADD COLUMN hiddenTabs TEXT NOT NULL DEFAULT ''");
+  // Newsletter management permission. On first add, grant it to the Secretary
+  // so they can manage the newsletter out of the box (admins keep it too).
+  if (!cols.includes('canManageNewsletter')) {
+    db.exec("ALTER TABLE users ADD COLUMN canManageNewsletter INTEGER NOT NULL DEFAULT 0");
+    db.exec("UPDATE users SET canManageNewsletter = 1 WHERE lower(title) = 'secretary'");
+  }
 
   // Auto-enroll existing users with email addresses into the newsletter list.
   try {
@@ -724,9 +795,26 @@ function init() {
     db.exec("CREATE UNIQUE INDEX idx_merch_orders_stripe ON merch_orders(stripePaymentIntentId) WHERE stripePaymentIntentId != ''");
   }
 
+  // speaker_applications column migrations (multi-question PDF uploads).
+  const speakerAppCols = db.prepare("PRAGMA table_info(speaker_applications)").all().map((c) => c.name);
+  if (!speakerAppCols.includes('uploads')) db.exec("ALTER TABLE speaker_applications ADD COLUMN uploads TEXT NOT NULL DEFAULT '[]'");
+
+  // site_visits column migrations (device + browser breakdown).
+  const visitCols = db.prepare("PRAGMA table_info(site_visits)").all().map((c) => c.name);
+  if (!visitCols.includes('deviceType')) db.exec("ALTER TABLE site_visits ADD COLUMN deviceType TEXT NOT NULL DEFAULT ''");
+  if (!visitCols.includes('browser'))    db.exec("ALTER TABLE site_visits ADD COLUMN browser TEXT NOT NULL DEFAULT ''");
+
   // Ensure the homepage row exists.
   db.prepare(`INSERT OR IGNORE INTO site_settings (id, meetingDate, meetingTime, meetingLocation, podcastUrl)
               VALUES (1, 'To be announced', 'To be announced', 'To be announced', '')`).run();
+
+  // Seed the speaker application form with its default questions (only when
+  // the row doesn't exist yet — VP edits are never overwritten on restart).
+  const { DEFAULT_SPEAKER_FORM } = require('./speakerForm');
+  db.prepare(`INSERT OR IGNORE INTO speaker_form_config (id, title, intro, questions, upload)
+              VALUES (1, ?, ?, ?, '{}')`)
+    .run(DEFAULT_SPEAKER_FORM.title, DEFAULT_SPEAKER_FORM.intro,
+         JSON.stringify(DEFAULT_SPEAKER_FORM.questions));
 }
 
 // ---- Seed data ---------------------------------------------------------------
@@ -795,6 +883,7 @@ function seed() {
     db.prepare("UPDATE users SET canEditHome = 1 WHERE username IN ('fthomas', 'deddy', 'dhays')").run();
     db.prepare("UPDATE users SET canAnnounce = 1 WHERE username IN ('campbell', 'dhays')").run();
     db.prepare("UPDATE users SET canManageRoster = 1 WHERE title IN ('Secretary', 'Grade Rep')").run();
+    db.prepare("UPDATE users SET canManageNewsletter = 1 WHERE title = 'Secretary'").run();
     db.prepare("UPDATE users SET bigBoard = 1 WHERE username IN ('fthomas','deddy','mflachsmann','hfossey','dhays','campbell')").run();
 
     // Grade reps: assign which grade they cover.

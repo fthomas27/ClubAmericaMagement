@@ -4,6 +4,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
+const geoip = require('geoip-lite');
 
 // Keep a single stray error from taking the whole process down (which makes the
 // host restart the app — the "crash then reboot and load" loop). We log it and
@@ -120,7 +121,11 @@ app.use((req, res, next) => {
      req.path === '/api/public/testimonial-submit' || req.path.startsWith('/api/public/testimonial-submit/'));
   const isMerchItem = (req.method === 'POST' || req.method === 'PATCH') &&
     (req.path === '/api/shop/admin/items' || /^\/api\/shop\/admin\/items\/\d+$/.test(req.path));
-  const limit = isProfilePhoto || isEventPhoto || isIgHighlight || isTestimonial || isMerchItem ? '6mb' : '50kb';
+  // Speaker applications can carry a completed PDF form as a base64 data URL
+  // (5 MB file ≈ 7 MB of JSON once base64-encoded).
+  const isSpeakerApply = req.method === 'POST' && req.path === '/api/public/speaker-apply';
+  const limit = isSpeakerApply ? '8mb'
+    : isProfilePhoto || isEventPhoto || isIgHighlight || isTestimonial || isMerchItem ? '6mb' : '50kb';
   express.json({ limit })(req, res, next);
 });
 
@@ -255,8 +260,22 @@ function taskWithNames(t) {
   return {
     ...t,
     ownerName: owner ? owner.displayName : null,
-    assignedByName: assigner ? assigner.displayName : 'Self',
+    assignedByName: assigner ? assigner.displayName : 'System',
   };
+}
+
+// Drop an auto-generated to-do onto a user's task page — used when a public
+// submission or internal request is routed to someone (e.g. a grade rep gets
+// "Reach out to new member ___"). Lands pre-approved with no assigner, so it
+// shows up immediately as "Assigned by System".
+function createAutoTask(userId, name, description) {
+  try {
+    db.prepare(`INSERT INTO tasks (userId, name, description, status, assignedById, approvalStatus)
+                VALUES (?, ?, ?, 'Not Started', NULL, 'approved')`)
+      .run(userId, String(name).trim().slice(0, 300), String(description || '').trim().slice(0, 5000));
+  } catch (e) {
+    console.error('[auto-task] insert failed:', e.message);
+  }
 }
 
 function getPageSettings(userId) {
@@ -408,9 +427,9 @@ app.post('/api/submissions', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name
   //  - board application → admins only
   let recipients;
   if (type === 'club' && grade) {
-    recipients = db.prepare("SELECT id, email FROM users WHERE role = 'admin' OR grade = ?").all(grade);
+    recipients = db.prepare("SELECT id, email, role, grade FROM users WHERE role = 'admin' OR grade = ?").all(grade);
   } else {
-    recipients = db.prepare("SELECT id, email FROM users WHERE role = 'admin'").all();
+    recipients = db.prepare("SELECT id, email, role, grade FROM users WHERE role = 'admin'").all();
   }
   const label = type === 'board' ? 'board application' : 'club-join request';
   for (const r of recipients) {
@@ -419,6 +438,24 @@ app.post('/api/submissions', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name
       `<b>${escHtml(name)}</b>${grade ? ' (grade ' + escHtml(grade) + ')' : ''} submitted a ${label}.<br/>Email: ${escHtml(email)}${message ? '<br/>Message: ' + escHtml(message) : ''}<br/><br/>See it in the Get Involved inbox.`);
     pushNotification(r.id, `New ${label} from ${name}${grade ? ' (grade ' + grade + ')' : ''}`, 'submissions', 'submission');
   }
+
+  // Put the submission on the right person's to-do page, not just their inbox:
+  //  - club-join → that grade's grade reps get "Reach out to new member ___"
+  //    (falls back to admins if that grade has no rep, so nothing is dropped)
+  //  - board application → admins get "Review board application from ___"
+  const gradeReps = recipients.filter((r) => r.role !== 'admin' && grade && r.grade === grade);
+  const taskOwners = type === 'club' && gradeReps.length
+    ? gradeReps
+    : recipients.filter((r) => r.role === 'admin');
+  const taskName = type === 'board'
+    ? `Review board application from ${name}`
+    : `Reach out to new member ${name}`;
+  const taskDesc =
+    `${name}${grade ? ' (grade ' + grade + ')' : ''} submitted a ${label} on the public site.\n` +
+    `Email: ${email}` +
+    (message ? `\nMessage: ${message}` : '') +
+    `\n\nFull details are in the Get Involved inbox.`;
+  for (const r of taskOwners) createAutoTask(r.id, taskName, taskDesc);
 
   res.status(201).json({ ok: true });
 });
@@ -441,6 +478,92 @@ app.post('/api/track', rateLimit({ windowMs: 60 * 1000, max: 120, name: 'track' 
   if (!event || typeof event !== 'string') return res.status(400).json({ error: 'event required' });
   db.prepare('INSERT INTO page_events (event, label) VALUES (?, ?)')
     .run(String(event).slice(0, 80), String(label || '').slice(0, 200));
+  res.json({ ok: true });
+});
+
+// Lightweight user-agent parsing — enough for a device/browser breakdown
+// without pulling in a heavyweight dependency.
+function parseUserAgent(ua) {
+  const s = String(ua || '');
+  let deviceType = 'Desktop';
+  if (/\b(iPad|Tablet)\b|Android(?!.*Mobile)/i.test(s)) deviceType = 'Tablet';
+  else if (/Mobi|iPhone|iPod|Android.*Mobile|Windows Phone/i.test(s)) deviceType = 'Mobile';
+  else if (/bot|crawl|spider|slurp|bingpreview/i.test(s)) deviceType = 'Bot';
+
+  let browser = 'Other';
+  if (/Edg[eiOS]?\//i.test(s)) browser = 'Edge';
+  else if (/OPR\/|Opera/i.test(s)) browser = 'Opera';
+  else if (/SamsungBrowser/i.test(s)) browser = 'Samsung Internet';
+  else if (/CriOS/i.test(s)) browser = 'Chrome';
+  else if (/FxiOS/i.test(s)) browser = 'Firefox';
+  else if (/Firefox\//i.test(s)) browser = 'Firefox';
+  else if (/Chrome\//i.test(s)) browser = 'Chrome';
+  else if (/Version\/.*Safari/i.test(s)) browser = 'Safari';
+  else if (/bot|crawl|spider/i.test(s)) browser = 'Bot';
+  return { deviceType, browser };
+}
+
+// Resolve the visitor's true public IP behind Railway's edge. Railway proxies
+// requests through Envoy, which records the real external client in
+// `x-envoy-external-address` — the most reliable source. Fall back to the
+// left-most X-Forwarded-For entry (the original client), then Express's
+// req.ip. Strip the IPv4-mapped-IPv6 prefix and brackets so the value is a
+// clean address the geoIP database can match — otherwise a proxy hop or a
+// mangled address geolocates to the wrong country.
+function clientIp(req) {
+  let ip = req.headers['x-envoy-external-address'];
+  if (Array.isArray(ip)) ip = ip[0];
+  ip = String(ip || '').split(',')[0].trim();
+  if (!ip) ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  if (!ip) ip = req.ip || req.socket?.remoteAddress || '';
+  return String(ip).replace(/^\[/, '').replace(/\]$/, '').replace(/^::ffff:/i, '').trim();
+}
+
+// Country for a request. Prefer an edge-provided country header when the host
+// supplies one (authoritative and always current), otherwise fall back to the
+// offline geoIP database. Region/city always come from geoIP.
+function geoFor(req, ip) {
+  const hdr = String(
+    req.headers['cf-ipcountry'] || req.headers['x-vercel-ip-country'] ||
+    req.headers['x-country-code'] || req.headers['x-geo-country'] || ''
+  ).toUpperCase();
+  const geo = geoip.lookup(ip) || {};
+  const country = (hdr && hdr !== 'XX' && /^[A-Z]{2}$/.test(hdr)) ? hdr : (geo.country || '');
+  return { country, region: geo.region || '', city: geo.city || '' };
+}
+
+// Public site-visit tracking — records a page view on the public marketing
+// site (path, referrer, rough geo from IP, device/browser). No auth required.
+app.post('/api/site-visit', rateLimit({ windowMs: 60 * 1000, max: 120, name: 'site-visit' }), (req, res) => {
+  const { visitorId, path: visitPath, referrer } = req.body || {};
+  const ip = clientIp(req);
+  const geo = geoFor(req, ip);
+  const { deviceType, browser } = parseUserAgent(req.headers['user-agent']);
+  const info = db.prepare(`
+    INSERT INTO site_visits (visitorId, path, referrer, ipAddress, country, region, city, userAgent, deviceType, browser)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    String(visitorId || '').slice(0, 64),
+    String(visitPath || '/').slice(0, 200),
+    String(referrer || '').slice(0, 300),
+    ip,
+    geo.country || '',
+    (geo.region || ''),
+    geo.city || '',
+    String(req.headers['user-agent'] || '').slice(0, 300),
+    deviceType,
+    browser
+  );
+  res.json({ ok: true, id: info.lastInsertRowid });
+});
+
+// Beacon-friendly duration update for a previously logged site visit — sent
+// via navigator.sendBeacon on page change / unload, so it must accept a POST.
+app.post('/api/site-visit/:id/duration', rateLimit({ windowMs: 60 * 1000, max: 120, name: 'site-visit-duration' }), (req, res) => {
+  const id = Number(req.params.id);
+  const durationSec = Math.max(0, Math.min(21600, Number(req.body?.durationSec) || 0));
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
+  db.prepare('UPDATE site_visits SET durationSec = ? WHERE id = ?').run(durationSec, id);
   res.json({ ok: true });
 });
 
@@ -990,6 +1113,140 @@ app.post('/api/shop/order', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name:
   const order = db.prepare('SELECT * FROM merch_orders WHERE id = ?').get(info.lastInsertRowid);
   notifyManagersOfOrder(order);
   return res.status(201).json({ ok: true, orderId: order.id, total: p.total, paymentStatus: 'pending' });
+});
+
+// ---- Public Speaker Application form ------------------------------------------
+// The question list is VP-managed (speaker_form_config); the public form and
+// the server-side validation below are both driven by the same stored config.
+// Any number of yesno questions can set triggersUpload, each with its own PDF
+// template (speaker_form_templates, one row per question id).
+const { DEFAULT_SPEAKER_FORM, sanitizeQuestions, DEFAULT_UPLOAD_HEADING, DEFAULT_UPLOAD_INSTRUCTIONS } = require('./speakerForm');
+const LEGACY_LOGISTICS_QUESTION_ID = 'needsLogistics'; // ships with a bundled template as a fallback
+
+function getSpeakerForm() {
+  const row = db.prepare('SELECT * FROM speaker_form_config WHERE id = 1').get();
+  let questions = row ? null : DEFAULT_SPEAKER_FORM.questions;
+  if (row) { try { questions = JSON.parse(row.questions || '[]'); } catch (_) { questions = DEFAULT_SPEAKER_FORM.questions; } }
+
+  const templateRows = db.prepare('SELECT questionId, fileName FROM speaker_form_templates').all();
+  const templateNames = new Map(templateRows.map((t) => [t.questionId, t.fileName]));
+
+  const withUploads = questions.map((q) => {
+    if (q.type !== 'yesno' || !q.triggersUpload) return q;
+    const customName = templateNames.get(q.id);
+    const isLegacyDefault = q.id === LEGACY_LOGISTICS_QUESTION_ID;
+    return {
+      ...q,
+      uploadHeading: q.uploadHeading || DEFAULT_UPLOAD_HEADING,
+      uploadInstructions: q.uploadInstructions || DEFAULT_UPLOAD_INSTRUCTIONS,
+      templateFileName: customName || (isLegacyDefault ? 'speaker-logistics-form.pdf' : ''),
+      templateAvailable: !!customName || isLegacyDefault,
+    };
+  });
+
+  return {
+    title: row ? (row.title || DEFAULT_SPEAKER_FORM.title) : DEFAULT_SPEAKER_FORM.title,
+    intro: row ? (row.intro || '') : DEFAULT_SPEAKER_FORM.intro,
+    questions: withUploads,
+    updatedAt: row ? row.updatedAt : null,
+  };
+}
+
+// Public: the current form definition (rendered by /apply-to-speak).
+app.get('/api/public/speaker-form', (req, res) => {
+  res.json({ form: getSpeakerForm() });
+});
+
+const SPEAKER_PDF_MAX = 7 * 1024 * 1024; // ~5 MB file after base64 encoding
+
+// Public: download the PDF template attached to a triggersUpload question.
+app.get('/api/public/speaker-form/template/:questionId', (req, res) => {
+  const questionId = String(req.params.questionId || '');
+  const form = getSpeakerForm();
+  const q = form.questions.find((qq) => qq.id === questionId && qq.type === 'yesno' && qq.triggersUpload);
+  if (!q) return res.status(404).json({ error: 'Not found' });
+
+  const row = db.prepare('SELECT fileName, fileData FROM speaker_form_templates WHERE questionId = ?').get(questionId);
+  if (row && row.fileData) {
+    const m = String(row.fileData).match(/^data:application\/pdf;base64,(.+)$/s);
+    if (m) {
+      res.set('Content-Type', 'application/pdf');
+      res.set('Content-Disposition', `attachment; filename="${(row.fileName || 'form.pdf').replace(/"/g, '')}"`);
+      return res.send(Buffer.from(m[1], 'base64'));
+    }
+  }
+  if (questionId === LEGACY_LOGISTICS_QUESTION_ID) {
+    return res.sendFile(path.join(__dirname, '..', 'public', 'speaker-logistics-form.pdf'));
+  }
+  res.status(404).json({ error: 'No template has been uploaded for this question yet' });
+});
+
+// Public: submit a speaker application. Validation is driven by the stored
+// question config — required questions, select options, and each question's
+// conditional PDF requirement are all enforced here, not just in the browser.
+app.post('/api/public/speaker-apply', rateLimit({ windowMs: 60 * 60 * 1000, max: 10, name: 'speaker-apply' }), (req, res) => {
+  const form = getSpeakerForm();
+  const body = req.body || {};
+  const rawAnswers = body.answers && typeof body.answers === 'object' ? body.answers : {};
+  const rawUploads = body.uploads && typeof body.uploads === 'object' ? body.uploads : {};
+
+  const snapshot = [];       // [{id, label, answer}] in question order
+  const uploads = [];        // [{questionId, label, fileName, fileData}] for triggered questions
+  let applicantName = '';
+  let applicantEmail = '';
+
+  for (const q of form.questions) {
+    const answer = String(rawAnswers[q.id] ?? '').trim().slice(0, 4000);
+    if (q.required && !answer) {
+      return res.status(400).json({ error: `Please answer: ${q.label}` });
+    }
+    if (answer && q.type === 'email' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(answer)) {
+      return res.status(400).json({ error: `Please enter a valid email for: ${q.label}` });
+    }
+    if (answer && q.type === 'select' && Array.isArray(q.options) && !q.options.includes(answer)) {
+      return res.status(400).json({ error: `Invalid choice for: ${q.label}` });
+    }
+    if (q.type === 'yesno' && answer && answer !== 'Yes' && answer !== 'No') {
+      return res.status(400).json({ error: `Invalid answer for: ${q.label}` });
+    }
+    if (q.type === 'yesno' && q.triggersUpload && answer === 'Yes') {
+      const u = rawUploads[q.id] && typeof rawUploads[q.id] === 'object' ? rawUploads[q.id] : {};
+      const fileData = typeof u.fileData === 'string' ? u.fileData : '';
+      const fileName = String(u.fileName || 'form.pdf').replace(/[^\w. -]/g, '').slice(0, 120) || 'form.pdf';
+      if (!/^data:application\/pdf;base64,/.test(fileData)) {
+        return res.status(400).json({ error: `Please upload the signed PDF for: ${q.label}` });
+      }
+      if (fileData.length > SPEAKER_PDF_MAX) {
+        return res.status(400).json({ error: 'That PDF is too large — please keep it under 5 MB.' });
+      }
+      uploads.push({ questionId: q.id, label: q.label, fileName, fileData });
+    }
+    if (!applicantName && q.type === 'text' && /name/i.test(q.label) && answer) applicantName = answer.slice(0, 120);
+    if (!applicantEmail && q.type === 'email' && answer) applicantEmail = answer.slice(0, 200);
+    snapshot.push({ id: q.id, label: q.label, answer });
+  }
+
+  const needsLogistics = uploads.length > 0;
+  const info = db.prepare(`INSERT INTO speaker_applications
+    (applicantName, applicantEmail, answers, needsLogistics, uploads)
+    VALUES (?, ?, ?, ?, ?)`)
+    .run(applicantName, applicantEmail, JSON.stringify(snapshot), needsLogistics ? 1 : 0,
+         JSON.stringify(uploads));
+
+  // Route new applications to the President/VP: in-app bell + email.
+  const admins = db.prepare("SELECT id, email FROM users WHERE role = 'admin'").all();
+  const who = applicantName || 'Someone';
+  for (const a of admins) {
+    pushNotification(a.id, `New speaker application from ${who}`, 'speaker', 'submission');
+    notify(a.email, 'New speaker application',
+      'New speaker application',
+      `<b>${escHtml(who)}</b> applied to speak at Club America.` +
+      (applicantEmail ? `<br/>Email: ${escHtml(applicantEmail)}` : '') +
+      (needsLogistics ? '<br/>Requires signed form(s) — attached in the portal.' : '') +
+      '<br/><br/>Review it under Speaker Events → Applications.');
+  }
+
+  res.status(201).json({ ok: true, id: info.lastInsertRowid });
 });
 
 // Everything past this point requires a changed password.
@@ -2515,6 +2772,24 @@ app.post('/api/speaker-events', (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     title.trim(), speakerName||'', speakerOrg||'', topic||'', eventDate||null,
     location||'', Number(expectedAttendance)||0, avNeeds||'', materialsRequested||'', Number(budgetEstimate)||0, req.user.id);
+
+  // A new speaker request lands on the VP's to-do page (falling back to all
+  // admins if no one holds the Vice President title). The creator is skipped —
+  // no point assigning them a to-do to review their own request.
+  const vp = db.prepare("SELECT id FROM users WHERE title LIKE '%Vice President%' ORDER BY id LIMIT 1").get();
+  const reviewers = vp ? [vp] : db.prepare("SELECT id FROM users WHERE role = 'admin'").all();
+  const taskDesc =
+    `${req.user.displayName} submitted a speaker request: "${title.trim()}".` +
+    (speakerName ? `\nSpeaker: ${speakerName}${speakerOrg ? ' — ' + speakerOrg : ''}` : '') +
+    (topic ? `\nTopic: ${topic}` : '') +
+    (eventDate ? `\nEvent date: ${eventDate}` : '') +
+    `\n\nFull details are on the Speaker Events page.`;
+  for (const r of reviewers) {
+    if (r.id === req.user.id) continue;
+    createAutoTask(r.id, `Review speaker request: ${title.trim()}`, taskDesc);
+    pushNotification(r.id, `New speaker request "${title.trim()}" from ${req.user.displayName} — added to your to-do list`, 'tasks', 'task');
+  }
+
   res.status(201).json({ event: db.prepare('SELECT * FROM speaker_events WHERE id=?').get(info.lastInsertRowid) });
 });
 
@@ -2550,6 +2825,104 @@ app.patch('/api/speaker-events/:id', (req, res) => {
 app.delete('/api/speaker-events/:id', (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Not allowed' });
   db.prepare('DELETE FROM speaker_events WHERE id=?').run(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+// ---- Speaker Application Form management --------------------------------------
+// The VP (admin) edits the public application form's title, intro, and question
+// list here; the /apply-to-speak page re-renders from the stored config.
+app.put('/api/speaker-form', requireAdmin, (req, res) => {
+  const { title, intro, questions } = req.body || {};
+  const cleanQuestions = sanitizeQuestions(questions);
+  if (cleanQuestions.length === 0) {
+    return res.status(400).json({ error: 'The form needs at least one valid question' });
+  }
+  db.prepare(`UPDATE speaker_form_config SET
+      title = ?, intro = ?, questions = ?, updatedById = ?, updatedAt = datetime('now')
+    WHERE id = 1`)
+    .run(String(title || '').trim().slice(0, 200) || DEFAULT_SPEAKER_FORM.title,
+         String(intro || '').trim().slice(0, 2000),
+         JSON.stringify(cleanQuestions),
+         req.user.id);
+  res.json({ form: getSpeakerForm() });
+});
+
+// Upload/replace the PDF template attached to one triggersUpload question.
+// Each question manages its own template independently, so the form can have
+// several different "answer Yes, upload a signed PDF" questions at once.
+app.put('/api/speaker-form/template/:questionId', requireAdmin, (req, res) => {
+  const questionId = String(req.params.questionId || '').slice(0, 40);
+  const { fileName, fileData } = req.body || {};
+  if (!/^data:application\/pdf;base64,/.test(String(fileData || ''))) {
+    return res.status(400).json({ error: 'Please upload a PDF file' });
+  }
+  if (String(fileData).length > SPEAKER_PDF_MAX) {
+    return res.status(400).json({ error: 'That PDF is too large — please keep it under 5 MB.' });
+  }
+  const cleanName = String(fileName || 'form.pdf').replace(/[^\w. -]/g, '').slice(0, 120) || 'form.pdf';
+  db.prepare(`INSERT INTO speaker_form_templates (questionId, fileName, fileData, updatedById, updatedAt)
+              VALUES (?, ?, ?, ?, datetime('now'))
+              ON CONFLICT(questionId) DO UPDATE SET
+                fileName = excluded.fileName, fileData = excluded.fileData,
+                updatedById = excluded.updatedById, updatedAt = excluded.updatedAt`)
+    .run(questionId, cleanName, fileData, req.user.id);
+  res.json({ ok: true, fileName: cleanName });
+});
+
+app.delete('/api/speaker-form/template/:questionId', requireAdmin, (req, res) => {
+  db.prepare('DELETE FROM speaker_form_templates WHERE questionId = ?').run(String(req.params.questionId || ''));
+  res.json({ ok: true });
+});
+
+// Applications inbox (managers + admins). PDF blobs are withheld from the
+// list payload; each is fetched per-application/question via the route below.
+app.get('/api/speaker-applications', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const rows = db.prepare(`SELECT id, applicantName, applicantEmail, answers, needsLogistics,
+      uploads, handled, createdAt
+    FROM speaker_applications ORDER BY handled ASC, createdAt DESC`).all();
+  const applications = rows.map((r) => {
+    let answers = [];
+    let uploads = [];
+    try { answers = JSON.parse(r.answers || '[]'); } catch (_) {}
+    try { uploads = JSON.parse(r.uploads || '[]'); } catch (_) {}
+    return {
+      ...r,
+      answers,
+      needsLogistics: !!r.needsLogistics,
+      handled: !!r.handled,
+      uploads: uploads.map((u) => ({ questionId: u.questionId, label: u.label, fileName: u.fileName })),
+    };
+  });
+  res.json({ applications });
+});
+
+// Download one of the signed PDFs attached to an application, by question id.
+app.get('/api/speaker-applications/:id/upload/:questionId', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const row = db.prepare('SELECT uploads FROM speaker_applications WHERE id = ?').get(Number(req.params.id));
+  let uploads = [];
+  try { uploads = JSON.parse((row && row.uploads) || '[]'); } catch (_) {}
+  const u = uploads.find((x) => x.questionId === req.params.questionId);
+  if (!u || !u.fileData) return res.status(404).json({ error: 'No PDF attached' });
+  const m = String(u.fileData).match(/^data:application\/pdf;base64,(.+)$/s);
+  if (!m) return res.status(404).json({ error: 'No PDF attached' });
+  res.set('Content-Type', 'application/pdf');
+  res.set('Content-Disposition', `attachment; filename="${(u.fileName || 'form.pdf').replace(/"/g, '')}"`);
+  res.send(Buffer.from(m[1], 'base64'));
+});
+
+app.post('/api/speaker-applications/:id/handled', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const row = db.prepare('SELECT id, handled FROM speaker_applications WHERE id = ?').get(Number(req.params.id));
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  db.prepare('UPDATE speaker_applications SET handled = ? WHERE id = ?').run(row.handled ? 0 : 1, row.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/speaker-applications/:id', (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Not allowed' });
+  db.prepare('DELETE FROM speaker_applications WHERE id = ?').run(Number(req.params.id));
   res.json({ ok: true });
 });
 
@@ -2655,7 +3028,7 @@ app.post('/api/admin/users', requireAdmin, rateLimit({ windowMs: 60 * 60 * 1000,
 app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
   const user = getUser(Number(req.params.id));
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { role, title, managerId, grade, email, canManageRoster, managedGrade, canAnnounce, canEditHome, bigBoard, canViewLogistics, canManageSocial, username, firstName, lastName, hiddenTabs } = req.body || {};
+  const { role, title, managerId, grade, email, canManageRoster, managedGrade, canAnnounce, canEditHome, bigBoard, canViewLogistics, canManageSocial, canManageNewsletter, username, firstName, lastName, hiddenTabs } = req.body || {};
   const prevManager = user.managerId;
 
   // Validate and normalize username if provided.
@@ -2719,6 +3092,7 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     bigBoard           = COALESCE(?, bigBoard),
     canViewLogistics   = COALESCE(?, canViewLogistics),
     canManageSocial    = COALESCE(?, canManageSocial),
+    canManageNewsletter = COALESCE(?, canManageNewsletter),
     username        = COALESCE(?, username),
     firstName       = COALESCE(?, firstName),
     lastName        = COALESCE(?, lastName),
@@ -2737,6 +3111,7 @@ app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
     bigBoard !== undefined ? (bigBoard ? 1 : 0) : null,
     canViewLogistics !== undefined ? (canViewLogistics ? 1 : 0) : null,
     canManageSocial !== undefined ? (canManageSocial ? 1 : 0) : null,
+    canManageNewsletter !== undefined ? (canManageNewsletter ? 1 : 0) : null,
     newUsername,
     newFirst,
     newLast,
@@ -2977,6 +3352,212 @@ app.get('/api/logistics/stats', (req, res) => {
     ORDER BY CAST(label AS INTEGER) ASC, label ASC
   `).all();
   res.json({ stats, perUserDaily, teamDaily, recentLogins, demographics: { totalMembers, genderBreakdown, gradeBreakdown }, engagementSummary, recentEvents });
+});
+
+// ---- Site Activity dashboard (public website traffic — admin or canViewLogistics) -
+// Time windows the dashboard can be scoped to. Each clause is a fixed, trusted
+// SQL fragment selected by name (never interpolated from user input).
+const SITE_RANGES = {
+  today: {
+    cur:   "date(viewedAt) = date('now')",
+    prev:  "date(viewedAt) = date('now','-1 day')",
+    start: "date('now')",
+    trendDays: 1,
+  },
+  '7d': {
+    cur:   "viewedAt >= datetime('now','-7 days')",
+    prev:  "viewedAt >= datetime('now','-14 days') AND viewedAt < datetime('now','-7 days')",
+    start: "datetime('now','-7 days')",
+    trendDays: 7,
+  },
+  '30d': {
+    cur:   "viewedAt >= datetime('now','-30 days')",
+    prev:  "viewedAt >= datetime('now','-60 days') AND viewedAt < datetime('now','-30 days')",
+    start: "datetime('now','-30 days')",
+    trendDays: 30,
+  },
+  all: {
+    cur:   "1=1",
+    prev:  "0=1",
+    start: "'0000-01-01'",
+    trendDays: 30,
+  },
+};
+
+app.get('/api/site-activity/stats', (req, res) => {
+  if (req.user.role !== 'admin' && !req.user.canViewLogistics) return res.status(403).json({ error: 'Access denied' });
+
+  const rangeKey = SITE_RANGES[req.query.range] ? req.query.range : '7d';
+  const R = SITE_RANGES[rangeKey];
+
+  // Headline metrics for the selected window + the prior equal-length window
+  // (for the period-over-period % change badges).
+  const metricsFor = (clause) => db.prepare(`
+    SELECT
+      COUNT(*)                                        AS views,
+      COUNT(DISTINCT visitorId)                       AS visitors,
+      AVG(CASE WHEN durationSec > 0 THEN durationSec END) AS avgDurationSec
+    FROM site_visits WHERE ${clause}
+  `).get();
+  const current = metricsFor(R.cur);
+  const previous = metricsFor(R.prev);
+
+  // Live: distinct visitors seen in the last 5 minutes (independent of range).
+  const activeNow = db.prepare(
+    "SELECT COUNT(DISTINCT visitorId) AS n FROM site_visits WHERE viewedAt >= datetime('now','-5 minutes')"
+  ).get().n;
+
+  // All-time reference numbers, always shown regardless of range.
+  const allTime = db.prepare(
+    'SELECT COUNT(*) AS views, COUNT(DISTINCT visitorId) AS visitors FROM site_visits'
+  ).get();
+
+  const totals = {
+    views: current.views || 0,
+    visitors: current.visitors || 0,
+    avgDurationSec: current.avgDurationSec || 0,
+    pagesPerVisitor: current.visitors ? (current.views / current.visitors) : 0,
+    prevViews: previous.views || 0,
+    prevVisitors: previous.visitors || 0,
+    prevAvgDurationSec: previous.avgDurationSec || 0,
+    activeNow,
+    allTimeViews: allTime.views || 0,
+    allTimeVisitors: allTime.visitors || 0,
+    hasPrev: rangeKey !== 'all',
+  };
+
+  // New vs. returning: classify every visitor active in the window by whether
+  // their first-ever visit falls inside the window (new) or before it (return).
+  const newReturning = db.prepare(`
+    SELECT
+      SUM(CASE WHEN firstSeen >= ${R.start} THEN 1 ELSE 0 END) AS newVisitors,
+      SUM(CASE WHEN firstSeen <  ${R.start} THEN 1 ELSE 0 END) AS returningVisitors
+    FROM (
+      SELECT visitorId, MIN(viewedAt) AS firstSeen,
+             MAX(CASE WHEN ${R.cur} THEN 1 ELSE 0 END) AS inRange
+      FROM site_visits
+      GROUP BY visitorId
+      HAVING inRange = 1
+    )
+  `).get();
+
+  const dailyTrend = db.prepare(`
+    SELECT DATE(viewedAt) AS day, COUNT(*) AS views, COUNT(DISTINCT visitorId) AS visitors
+    FROM site_visits
+    WHERE viewedAt >= DATE('now', '-${R.trendDays - 1} days')
+    GROUP BY day
+    ORDER BY day ASC
+  `).all();
+
+  // 24 hour-of-day buckets (UTC — the client rotates them to local time).
+  const hourlyRows = db.prepare(`
+    SELECT CAST(strftime('%H', viewedAt) AS INTEGER) AS hour, COUNT(*) AS count
+    FROM site_visits WHERE ${R.cur}
+    GROUP BY hour
+  `).all();
+  const hourly = Array.from({ length: 24 }, (_, h) => ({ hour: h, count: 0 }));
+  for (const row of hourlyRows) if (row.hour >= 0 && row.hour < 24) hourly[row.hour].count = row.count;
+
+  const topPages = db.prepare(`
+    SELECT path, COUNT(*) AS views,
+           COUNT(DISTINCT visitorId) AS visitors,
+           AVG(CASE WHEN durationSec > 0 THEN durationSec END) AS avgDurationSec
+    FROM site_visits WHERE ${R.cur}
+    GROUP BY path
+    ORDER BY views DESC
+    LIMIT 20
+  `).all();
+
+  const topLocations = db.prepare(`
+    SELECT
+      CASE WHEN city != '' THEN city ELSE 'Unknown' END AS city,
+      region, country, COUNT(*) AS views
+    FROM site_visits
+    WHERE country != '' AND ${R.cur}
+    GROUP BY city, region, country
+    ORDER BY views DESC
+    LIMIT 15
+  `).all();
+
+  const deviceBreakdown = db.prepare(`
+    SELECT CASE WHEN deviceType = '' THEN 'Unknown' ELSE deviceType END AS label, COUNT(*) AS count
+    FROM site_visits WHERE ${R.cur}
+    GROUP BY label ORDER BY count DESC
+  `).all();
+
+  const browserBreakdown = db.prepare(`
+    SELECT CASE WHEN browser = '' THEN 'Unknown' ELSE browser END AS label, COUNT(*) AS count
+    FROM site_visits WHERE ${R.cur}
+    GROUP BY label ORDER BY count DESC
+  `).all();
+
+  const directCount = db.prepare(`SELECT COUNT(*) AS n FROM site_visits WHERE referrer = '' AND ${R.cur}`).get().n;
+  const referrerRows = db.prepare(`
+    SELECT referrer, COUNT(*) AS count FROM site_visits
+    WHERE referrer != '' AND ${R.cur}
+    GROUP BY referrer
+    ORDER BY count DESC
+    LIMIT 200
+  `).all();
+  // Bucket raw referrer URLs into a friendly source name by hostname.
+  const sourceCounts = new Map();
+  const bump = (name, n) => { if (n > 0) sourceCounts.set(name, (sourceCounts.get(name) || 0) + n); };
+  bump('Direct', directCount);
+  for (const r of referrerRows) {
+    let host = '';
+    try { host = new URL(r.referrer).hostname.replace(/^www\./, ''); } catch (_) { host = ''; }
+    if (!host) { bump('Other', r.count); continue; }
+    if (host.includes('google.')) bump('Google', r.count);
+    else if (host.includes('instagram.')) bump('Instagram', r.count);
+    else if (host.includes('facebook.') || host.includes('fb.')) bump('Facebook', r.count);
+    else if (host.includes('youtube.')) bump('YouTube', r.count);
+    else if (host.includes('bing.')) bump('Bing', r.count);
+    else if (host.includes('duckduckgo.')) bump('DuckDuckGo', r.count);
+    else if (host.includes('t.co') || host.includes('twitter.') || host.includes('x.com')) bump('Twitter/X', r.count);
+    else if (host.includes('tiktok.')) bump('TikTok', r.count);
+    else if (host.includes('linkedin.')) bump('LinkedIn', r.count);
+    else if (host.includes('reddit.')) bump('Reddit', r.count);
+    else bump(host, r.count);
+  }
+  const topSources = Array.from(sourceCounts, ([source, count]) => ({ source, count })).sort((a, b) => b.count - a.count);
+
+  const recentVisits = db.prepare(`
+    SELECT id, visitorId, path, referrer, country, region, city, ipAddress,
+           deviceType, browser, durationSec, viewedAt
+    FROM site_visits WHERE ${R.cur}
+    ORDER BY viewedAt DESC
+    LIMIT 200
+  `).all();
+
+  res.json({
+    range: rangeKey, totals,
+    newReturning: { newVisitors: newReturning.newVisitors || 0, returningVisitors: newReturning.returningVisitors || 0 },
+    dailyTrend, hourly, topPages, topLocations, deviceBreakdown, browserBreakdown, topSources, recentVisits,
+  });
+});
+
+// CSV export of raw visits for the selected window (admin / logistics only).
+app.get('/api/site-activity/export.csv', (req, res) => {
+  if (req.user.role !== 'admin' && !req.user.canViewLogistics) return res.status(403).json({ error: 'Access denied' });
+  const R = SITE_RANGES[req.query.range] ? SITE_RANGES[req.query.range] : SITE_RANGES['7d'];
+  const rows = db.prepare(`
+    SELECT viewedAt, path, referrer, city, region, country, deviceType, browser, durationSec, ipAddress, visitorId
+    FROM site_visits WHERE ${R.cur}
+    ORDER BY viewedAt DESC
+    LIMIT 5000
+  `).all();
+  const header = ['Time (UTC)', 'Page', 'Referrer', 'City', 'Region', 'Country', 'Device', 'Browser', 'Duration (s)', 'IP', 'Visitor ID'];
+  const esc = (v) => {
+    const s = String(v == null ? '' : v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [header.join(',')];
+  for (const r of rows) {
+    lines.push([r.viewedAt, r.path, r.referrer, r.city, r.region, r.country, r.deviceType, r.browser, r.durationSec, r.ipAddress, r.visitorId].map(esc).join(','));
+  }
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="site-activity-${req.query.range || '7d'}.csv"`);
+  res.send(lines.join('\n'));
 });
 
 // ---- Grade Pipeline ---------------------------------------------------------
@@ -3377,6 +3958,13 @@ function requireManagerOrAdmin(req, res, next) {
   res.status(403).json({ error: 'Managers and admins only' });
 }
 
+// Newsletter tools are open to admins and anyone granted the newsletter
+// permission (e.g. the Secretary).
+function requireNewsletterAccess(req, res, next) {
+  if (req.user.role === 'admin' || req.user.canManageNewsletter) return next();
+  res.status(403).json({ error: 'Not allowed' });
+}
+
 app.get('/api/volunteer-events', requireManagerOrAdmin, (req, res) => {
   const events = db.prepare(`
     SELECT ve.id, ve.icalUid, ve.title, ve.location, ve.startDate, ve.volunteersEnabled, ve.createdAt
@@ -3651,8 +4239,8 @@ function newsletterEnroll(email, name, source = 'auto') {
 // NOTE: the public newsletter signup route (POST /api/newsletter/subscribe)
 // lives above the auth gate.
 
-// Admin: manually add a subscriber.
-app.post('/api/admin/newsletter', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
+// Admin / newsletter manager: manually add a subscriber.
+app.post('/api/admin/newsletter', authenticate, requirePasswordChanged, requireNewsletterAccess, (req, res) => {
   let { email, name } = req.body || {};
   email = String(email || '').trim().toLowerCase();
   name  = String(name  || '').trim().slice(0, 120);
@@ -3672,24 +4260,24 @@ app.post('/api/admin/newsletter', authenticate, requirePasswordChanged, requireA
   res.status(201).json({ subscriber: { id: info.lastInsertRowid, email, name, source: 'manual', active: 1, subscribedAt: new Date().toISOString() } });
 });
 
-// Admin: list all subscribers.
-app.get('/api/admin/newsletter', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
+// Admin / newsletter manager: list all subscribers.
+app.get('/api/admin/newsletter', authenticate, requirePasswordChanged, requireNewsletterAccess, (req, res) => {
   const rows = db.prepare(
     "SELECT id, email, name, source, active, subscribedAt FROM newsletter_subscribers ORDER BY subscribedAt DESC"
   ).all();
   res.json({ subscribers: rows });
 });
 
-// Admin: toggle subscriber active/inactive.
-app.patch('/api/admin/newsletter/:id', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
+// Admin / newsletter manager: toggle subscriber active/inactive.
+app.patch('/api/admin/newsletter/:id', authenticate, requirePasswordChanged, requireNewsletterAccess, (req, res) => {
   const id = Number(req.params.id);
   const { active } = req.body || {};
   db.prepare("UPDATE newsletter_subscribers SET active=? WHERE id=?").run(active ? 1 : 0, id);
   res.json({ ok: true });
 });
 
-// Admin: remove a subscriber.
-app.delete('/api/admin/newsletter/:id', authenticate, requirePasswordChanged, requireAdmin, (req, res) => {
+// Admin / newsletter manager: remove a subscriber.
+app.delete('/api/admin/newsletter/:id', authenticate, requirePasswordChanged, requireNewsletterAccess, (req, res) => {
   db.prepare("DELETE FROM newsletter_subscribers WHERE id=?").run(Number(req.params.id));
   res.json({ ok: true });
 });

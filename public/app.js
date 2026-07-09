@@ -43,6 +43,36 @@ function track(event, label = '') {
 }
 
 // ---------------------------------------------------------------------------
+// Public site visit tracking — page views on the marketing site (path,
+// referrer, rough geo from IP, time on page). Never blocks the UI.
+// ---------------------------------------------------------------------------
+const VISITOR_ID_KEY = 'ca_visitor_id';
+function getVisitorId() {
+  let id = localStorage.getItem(VISITOR_ID_KEY);
+  if (!id) {
+    id = window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem(VISITOR_ID_KEY, id);
+  }
+  return id;
+}
+
+function trackSiteVisit(path) {
+  return fetch('/api/site-visit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ visitorId: getVisitorId(), path, referrer: document.referrer }),
+  }).then((r) => r.json()).catch(() => null);
+}
+
+// Sent via sendBeacon so it survives tab close / navigation away.
+function sendVisitDuration(id, durationSec) {
+  if (!id || durationSec <= 0) return;
+  const payload = new Blob([JSON.stringify({ durationSec })], { type: 'application/json' });
+  if (navigator.sendBeacon) navigator.sendBeacon(`/api/site-visit/${id}/duration`, payload);
+  else fetch(`/api/site-visit/${id}/duration`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true }).catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
 // Small UI primitives
 // ---------------------------------------------------------------------------
 function Badge({ children, tone = 'gold' }) {
@@ -68,6 +98,58 @@ function statusTone(status) {
 
 function roleLabel(role) {
   return { admin: 'Admin', manager: 'Manager', member: 'Member' }[role] || role;
+}
+
+// ---------------------------------------------------------------------------
+// Americana accents — small, reusable flag motifs so every page carries the
+// red / white / blue identity without each one inventing its own.
+// ---------------------------------------------------------------------------
+const OLD_GLORY_BLUE = '#3b5bdb';
+
+// Thin old-glory hairline. Sits at the very top of headers and standalone pages.
+function TricolorBar({ className = '' }) {
+  return (
+    <div className={`h-[3px] bg-gradient-to-r from-red via-cream/60 to-[#3b5bdb] ${className}`} aria-hidden="true" />
+  );
+}
+
+// Centered red-bar ★★★ blue-bar divider, used under page and section titles.
+function StarDivider({ className = '', compact = false }) {
+  return (
+    <div className={`flex items-center justify-center gap-3 ${className}`} aria-hidden="true">
+      <span className={`h-[2px] rounded-full bg-red/70 ${compact ? 'w-8' : 'w-12'}`} />
+      <span className={`text-gold/80 tracking-[0.35em] ${compact ? 'text-[10px]' : 'text-xs'}`}>★ ★ ★</span>
+      <span className={`h-[2px] rounded-full ${compact ? 'w-8' : 'w-12'}`} style={{ background: 'rgba(59,91,219,0.75)' }} />
+    </div>
+  );
+}
+
+// Left-aligned miniature flag underline (red / white / blue dashes) for
+// left-aligned headings like the portal greeting.
+function FlagUnderline({ className = '' }) {
+  return (
+    <div className={`flex gap-1.5 ${className}`} aria-hidden="true">
+      <span className="h-[3px] w-10 rounded-full bg-red/80" />
+      <span className="h-[3px] w-10 rounded-full bg-cream/40" />
+      <span className="h-[3px] w-10 rounded-full" style={{ background: 'rgba(59,91,219,0.8)' }} />
+    </div>
+  );
+}
+
+// Full-page patriotic backdrop: faint old-glory glows, a sparse starfield and
+// (optionally) the flag-stripe texture along the bottom. Purely decorative —
+// parent must be `relative`, and content should sit in a `relative` sibling.
+function PatriotBackdrop({ stars = 14, stripes = false }) {
+  return (
+    <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+      <div className="absolute -top-[15%] -left-1/4 w-[60%] h-[45%] rounded-full"
+        style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.10), transparent 60%)', filter: 'blur(50px)' }} />
+      <div className="absolute -bottom-[15%] -right-1/4 w-[60%] h-[45%] rounded-full"
+        style={{ background: 'radial-gradient(circle, rgba(0,40,104,0.30), transparent 60%)', filter: 'blur(50px)' }} />
+      {stripes && <div className="ca-stripes absolute inset-x-0 bottom-0 h-[26%] opacity-[0.06]" />}
+      <Starfield count={stars} />
+    </div>
+  );
 }
 
 function Button({ children, onClick, variant = 'primary', type = 'button', className = '', disabled }) {
@@ -122,11 +204,15 @@ function Loading({ label = 'Loading…' }) {
   );
 }
 
-// Friendly empty state with an optional call-to-action.
-function EmptyState({ icon = '📭', title, hint, action, className = '' }) {
+// Friendly empty state with an optional call-to-action. `icon` is an AppIcon
+// name (see AppIcon below), keeping empty states on the same line-icon system
+// as the rest of the app.
+function EmptyState({ icon = 'inbox', title, hint, action, className = '' }) {
   return (
     <div className={`text-center py-10 px-4 border border-dashed border-cream/15 rounded-lg ${className}`}>
-      <div className="text-3xl mb-2 opacity-70">{icon}</div>
+      <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-cream/5 border border-cream/10 flex items-center justify-center">
+        <AppIcon name={icon} size={22} className="text-cream/40" />
+      </div>
       {title && <div className="text-cream/80 font-medium">{title}</div>}
       {hint && <div className="text-sm text-cream/50 mt-1 max-w-md mx-auto">{hint}</div>}
       {action && <div className="mt-4 flex justify-center">{action}</div>}
@@ -138,9 +224,21 @@ function EmptyState({ icon = '📭', title, hint, action, className = '' }) {
 function ErrorState({ message = 'Something went wrong.', onRetry }) {
   return (
     <div className="text-center py-8 px-4 border border-dashed border-red/30 rounded-lg">
-      <div className="text-2xl mb-2">⚠️</div>
+      <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-red/10 border border-red/25 flex items-center justify-center">
+        <AppIcon name="warning" size={22} className="text-red/80" />
+      </div>
       <div className="text-cream/80 text-sm">{message}</div>
       {onRetry && <div className="mt-4 flex justify-center"><Button variant="ghost" onClick={onRetry}>Try again</Button></div>}
+    </div>
+  );
+}
+
+// Gold star-in-a-ring shown on "thanks / success" screens — the brand's answer
+// to a confetti emoji.
+function SuccessMark({ className = '' }) {
+  return (
+    <div className={`w-14 h-14 mx-auto rounded-full bg-gold/15 border border-gold/40 flex items-center justify-center ${className}`}>
+      <AppIcon name="star" size={26} className="text-gold" />
     </div>
   );
 }
@@ -328,15 +426,17 @@ function Login({ onLogin, onBack }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 ca-fade-in">
-      <div className="w-full max-w-md">
+    <div className="relative min-h-screen flex items-center justify-center p-4 ca-fade-in">
+      <PatriotBackdrop stripes />
+      <div className="relative w-full max-w-md">
         <div className="mb-8 ca-slide-up">
           <Logo size="login" />
         </div>
         <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-slide-up" style={{ animationDelay: '60ms' }}>
           <div className="text-center">
             <div className="font-display text-2xl text-gold">Board Portal</div>
-            <p className="text-cream/50 text-sm mt-1">Sign in with your board account. This area is for board members only.</p>
+            <StarDivider compact className="mt-2" />
+            <p className="text-cream/50 text-sm mt-2">Sign in with your board account. This area is for board members only.</p>
           </div>
           <Field label="Username">
             <input className={inputCls} value={username} autoFocus
@@ -398,8 +498,9 @@ function ChangePassword({ user, onDone, forced }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 ca-fade-in">
-      <form onSubmit={submit} className="w-full max-w-md bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-scale-in">
+    <div className="relative min-h-screen flex items-center justify-center p-4 ca-fade-in">
+      <PatriotBackdrop />
+      <form onSubmit={submit} className="relative w-full max-w-md bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-scale-in">
         <div className="font-display text-3xl text-gold">{forced ? 'Set Your Password' : 'Change Password'}</div>
         {forced && (
           <p className="text-sm text-cream/60">
@@ -656,7 +757,7 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
   );
 
   if (forced) {
-    return <>{cropModal}<form onSubmit={submit} className="min-h-screen flex items-center justify-center p-4 ca-fade-in">{card}</form></>;
+    return <>{cropModal}<form onSubmit={submit} className="relative min-h-screen flex items-center justify-center p-4 ca-fade-in"><PatriotBackdrop /><div className="relative w-full flex justify-center">{card}</div></form></>;
   }
   return <>{cropModal}<form onSubmit={submit} className="max-w-lg">{card}</form></>;
 }
@@ -980,7 +1081,7 @@ function BannerSection({ title, url }) {
 function AnnouncementSection({ text }) {
   return (
     <div className="bg-red/10 border-l-4 border-red rounded-r-xl px-5 py-4 mb-6 flex gap-3 items-start">
-      <span className="text-xl mt-0.5 shrink-0">📌</span>
+      <span className="mt-1 shrink-0 text-red/90"><AppIcon name="pin" size={18} /></span>
       <div className="text-cream whitespace-pre-wrap">{text}</div>
     </div>
   );
@@ -1003,7 +1104,7 @@ function CopyableFormSection({ title, fields }) {
 
   async function copyToClipboard() {
     const heading = title || 'Form Submission';
-    const lines = [`📋 ${heading}`, ''];
+    const lines = [heading, ''];
     for (const f of parsedFields) {
       lines.push(`${f}: ${values[f] || '—'}`);
     }
@@ -1080,7 +1181,7 @@ function PageAdminControls({ targetUser, onUpdated }) {
         onClick={() => setOpen(true)}
         className="text-sm text-gold/60 hover:text-gold flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gold/20 hover:border-gold/50 transition-all duration-150 active:scale-95"
       >
-        ⚙ Page Settings
+        Page Settings
       </button>
     </div>
   );
@@ -1200,7 +1301,7 @@ function TeamAnnouncementsDisplay({ announcements }) {
     <div className="space-y-3 mb-6">
       {announcements.map((a) => (
         <div key={a.id} className="bg-gold/10 border border-gold/40 rounded-xl px-5 py-4 flex gap-3 items-start">
-          <span className="text-xl mt-0.5 shrink-0">📢</span>
+          <span className="mt-1 shrink-0 text-gold/80"><AppIcon name="megaphone" size={18} /></span>
           <div>
             <div className="text-xs text-gold/70 mb-1">{a.authorName}{a.authorTitle ? ` · ${a.authorTitle}` : ''}</div>
             <div className="text-cream whitespace-pre-wrap">{a.text}</div>
@@ -1285,7 +1386,7 @@ function TeamAnnouncementView({ me, reports }) {
         <div className="mt-6">
           <div className="text-xs text-cream/50 uppercase tracking-wider mb-2">How reports see it</div>
           <div className="bg-gold/10 border border-gold/40 rounded-xl px-5 py-4 flex gap-3 items-start">
-            <span className="text-xl mt-0.5 shrink-0">📢</span>
+            <span className="mt-1 shrink-0 text-gold/80"><AppIcon name="megaphone" size={18} /></span>
             <div>
               <div className="text-xs text-gold/70 mb-1">{me.displayName}{me.title ? ` · ${me.title}` : ''}</div>
               <div className="text-cream whitespace-pre-wrap">{text}</div>
@@ -1401,7 +1502,7 @@ function TaskPage({ me, userId, users, refreshSignal, onNavigate }) {
 
       {tasks.length === 0 && (
         <EmptyState
-          icon="✅"
+          icon="check"
           title={isSelf ? 'No tasks yet' : `${user.displayName.split(' ')[0]} has no tasks yet`}
           hint={isSelf ? 'Use “+ New Task” above to add your first one, or send a task to a teammate.' : 'Use “+ New Task” above to assign them something to work on.'}
         />
@@ -1460,7 +1561,7 @@ function Approvals({ onChanged, refreshSignal }) {
       {error && <div className="mb-4"><ErrorState message={error} onRetry={load} /></div>}
       {items === null && !error && <Loading label="Loading approvals…" />}
       {items !== null && items.length === 0 && (
-        <EmptyState icon="🎉" title="You're all caught up" hint="Tasks waiting for your approval will show up here." />
+        <EmptyState icon="check" title="You're all caught up" hint="Tasks waiting for your approval will show up here." />
       )}
       <div className="space-y-3">
         {(items || []).map((t) => (
@@ -1521,7 +1622,7 @@ function SubmissionsInbox({ onChanged, refreshSignal }) {
       {error && <div className="mb-4"><ErrorState message={error} onRetry={load} /></div>}
       {items === null && !error && <Loading label="Loading submissions…" />}
       {items !== null && items.length === 0 && (
-        <EmptyState icon="📨" title="No submissions yet" hint="Club-join requests and board applications from the public homepage will appear here." />
+        <EmptyState icon="inbox" title="No submissions yet" hint="Club-join requests and board applications from the public homepage will appear here." />
       )}
       <div className="space-y-3">
         {(items || []).map((s) => (
@@ -1762,7 +1863,7 @@ function EditMemberModal({ user, onSaved, onClose }) {
               {/* Include the member's current title even if it isn't in the list yet. */}
               {title && !positions.some((p) => p.title === title) && <option value={title}>{title}</option>}
               {positions.map((p) => <option key={p.title} value={p.title}>{p.title}</option>)}
-              <option value="__new__">➕ Add new position…</option>
+              <option value="__new__">+ Add new position…</option>
             </select>
           )}
         </Field>
@@ -1813,6 +1914,7 @@ const ALL_TABS_BY_SECTION = [
     { type: 'newsletter',   label: 'Newsletter' },
     { type: 'admin',        label: 'Admin Panel' },
     { type: 'logistics',    label: 'Login Activity' },
+    { type: 'siteactivity', label: 'Site Activity' },
     { type: 'ai',           label: 'AI Assistant' },
   ]},
 ];
@@ -1936,7 +2038,7 @@ function AdminPanel({ users, reload }) {
               }}>
               <option value="">— none —</option>
               {positions.map((p) => <option key={p.title} value={p.title}>{p.title}</option>)}
-              <option value="__new__">➕ Add new position…</option>
+              <option value="__new__">+ Add new position…</option>
             </select>
           )}
         </Field>
@@ -1977,7 +2079,7 @@ function AdminPanel({ users, reload }) {
           value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
       {q && visibleUsers.length === 0 && (
-        <EmptyState icon="🔍" title="No members match" hint="Try a different name, username, title, or role." />
+        <EmptyState icon="search" title="No members match" hint="Try a different name, username, title, or role." />
       )}
       <div className="space-y-3">
         {visibleUsers.map((u) => (
@@ -2037,6 +2139,7 @@ function AdminPanel({ users, reload }) {
                   { key: 'canEditHome', label: 'Edit Site' },
                   { key: 'canViewLogistics', label: 'View Login Activity' },
                   { key: 'canManageSocial', label: 'Social Media Manager' },
+                  { key: 'canManageNewsletter', label: 'Newsletter Manager' },
                 ].map(({ key, label }) => (
                   <label key={key} className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={!!u[key]}
@@ -2259,7 +2362,7 @@ function MeetingCard({ home, events, volunteerEvents = [] }) {
     <section className="h-full bg-navy2 border border-gold/30 rounded-2xl p-6 hover:border-gold/50 hover:shadow-lg hover:shadow-black/20 transition-all duration-200">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-3xl text-gold">{hasEvents ? 'Upcoming Events' : 'Next Meeting'}</h2>
-        <span className="text-red text-xl">📅</span>
+        <span className="text-gold/50"><AppIcon name="calendar" size={22} /></span>
       </div>
       {hasEvents ? (
         <ul className="mt-4 space-y-3">
@@ -2311,12 +2414,12 @@ function PodcastCard({ home }) {
     <section className="h-full bg-navy2 border border-red/30 rounded-2xl p-6 hover:border-red/50 hover:shadow-lg hover:shadow-black/20 transition-all duration-200">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-3xl text-red">The Podcast</h2>
-        <span className="text-xl">🎙️</span>
+        <span className="text-red/60"><AppIcon name="speaker" size={22} /></span>
       </div>
 
       {!home.podcastEnabled ? (
         <div className="mt-4 aspect-video w-full rounded-lg overflow-hidden bg-navy3 flex flex-col items-center justify-center text-center px-4">
-          <span className="text-4xl mb-2">🚧</span>
+          <span className="text-gold/50 mb-3"><AppIcon name="speaker" size={30} /></span>
           <div className="font-display text-2xl text-gold">Under Construction</div>
           <div className="text-cream/40 text-sm mt-1">The podcast is coming soon — check back later.</div>
         </div>
@@ -2500,7 +2603,7 @@ function GetInvolved() {
 
       {done ? (
         <div className="text-center py-6 ca-slide-up">
-          <div className="text-4xl mb-2">🎉</div>
+          <SuccessMark className="mb-3" />
           <div className="font-display text-2xl text-gold">Thanks, {form.name.split(' ')[0] || 'friend'}!</div>
           <p className="text-cream/70 mt-1">
             {tab === 'club'
@@ -2539,11 +2642,223 @@ function GetInvolved() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Speaker Application Form (public, /apply-to-speak)
+//
+// The questions are NOT hardcoded here: the form renders whatever question
+// config the VP has saved (Speaker Events → Application Form in the portal,
+// stored server-side; defaults live in server/speakerForm.js). Answering
+// "Yes" to a question flagged `triggersUpload` reveals a section where the
+// applicant must download the logistics PDF template and upload the signed
+// copy before the form can be submitted.
+// ---------------------------------------------------------------------------
+const SPEAKER_PDF_MAX_BYTES = 5 * 1024 * 1024;
+
+function SpeakerQuestionInput({ q, value, onChange }) {
+  if (q.type === 'textarea') {
+    return <textarea className={inputCls + ' min-h-[110px]'} value={value} placeholder={q.placeholder || ''}
+      onChange={(e) => onChange(e.target.value)} />;
+  }
+  if (q.type === 'select') {
+    return (
+      <select className={inputCls} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Select…</option>
+        {(q.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
+    );
+  }
+  if (q.type === 'yesno') {
+    return (
+      <div className="flex gap-2">
+        {['Yes', 'No'].map((opt) => (
+          <button key={opt} type="button" onClick={() => onChange(opt)}
+            className={`px-6 py-2 rounded-md text-sm transition-all active:scale-95 ${value === opt
+              ? 'bg-red text-cream shadow-md shadow-red/20'
+              : 'bg-navy border border-cream/20 text-cream/70 hover:border-gold hover:text-cream/90'}`}>
+            {opt}
+          </button>
+        ))}
+      </div>
+    );
+  }
+  return <input type={q.type === 'email' ? 'email' : 'text'} className={inputCls} value={value}
+    placeholder={q.placeholder || ''} onChange={(e) => onChange(e.target.value)} />;
+}
+
+// One question's conditional "download the template, upload it signed" block.
+// Each triggersUpload question manages its own file independently, so a form
+// can have several of these active at once.
+function SpeakerUploadSection({ q, file, onFile, onRemove }) {
+  const fileRef = useRef(null);
+
+  function handleFile(e) {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+    if (!isPdf) { onFile(null, 'Please upload a PDF file.'); e.target.value = ''; return; }
+    if (f.size > SPEAKER_PDF_MAX_BYTES) { onFile(null, 'That PDF is too large — please keep it under 5 MB.'); e.target.value = ''; return; }
+    const reader = new FileReader();
+    reader.onload = () => onFile({ dataUrl: reader.result, name: f.name }, '');
+    reader.readAsDataURL(f);
+  }
+
+  return (
+    <div className="border border-red/40 bg-red/5 rounded-xl p-5 space-y-4 ca-slide-up">
+      <div className="font-display text-xl text-gold">{q.uploadHeading}</div>
+      <p className="text-sm text-cream/70 leading-relaxed">{q.uploadInstructions}</p>
+      <div className="flex flex-col sm:flex-row gap-3">
+        <a href={`/api/public/speaker-form/template/${encodeURIComponent(q.id)}`} download
+          className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-gold/50 text-gold hover:bg-gold/10 text-sm font-medium transition-colors"
+          onClick={() => track('speaker_pdf_template_downloaded')}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+          1. Download the form (PDF)
+        </a>
+        <button type="button" onClick={() => fileRef.current && fileRef.current.click()}
+          className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${file
+            ? 'border border-emerald-500/50 text-emerald-300 bg-emerald-500/10'
+            : 'border border-cream/30 text-cream/80 hover:border-gold hover:text-gold'}`}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>
+          {file ? 'Replace uploaded PDF' : '2. Upload the signed PDF'}
+        </button>
+        <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={handleFile} />
+      </div>
+      {file ? (
+        <div className="flex items-center gap-2 text-sm text-emerald-300">
+          <span>✓</span><span className="truncate">{file.name}</span>
+          <button type="button" className="text-cream/40 hover:text-red ml-1" onClick={() => { onRemove(); if (fileRef.current) fileRef.current.value = ''; }}>remove</button>
+        </div>
+      ) : (
+        <p className="text-xs text-cream/45">No file uploaded yet — the completed PDF is required before you can submit.</p>
+      )}
+    </div>
+  );
+}
+
+function SpeakerApplicationForm() {
+  const [form, setForm] = useState(null);      // question config from the server
+  const [loadError, setLoadError] = useState('');
+  const [answers, setAnswers] = useState({});
+  const [files, setFiles] = useState({});      // { [questionId]: { dataUrl, name } }
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoadError('');
+    try { const d = await api('/public/speaker-form'); setForm(d.form); }
+    catch (e) { setLoadError(e.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  if (loadError) return <ErrorState message={loadError} onRetry={load} />;
+  if (!form) return <Loading label="Loading application…" />;
+
+  const setAnswer = (id, val) => setAnswers((a) => ({ ...a, [id]: val }));
+  // Each triggersUpload question independently requires its own signed PDF
+  // once answered "Yes" — a form can have several of these at once.
+  const triggeredQuestions = form.questions.filter((q) => q.triggersUpload && answers[q.id] === 'Yes');
+  const missingUpload = triggeredQuestions.some((q) => !files[q.id]);
+
+  async function submit(e) {
+    e.preventDefault();
+    setError('');
+    for (const q of form.questions) {
+      if (q.required && !String(answers[q.id] || '').trim()) {
+        setError(`Please answer: ${q.label}`); return;
+      }
+      if (q.type === 'email' && String(answers[q.id] || '').trim() &&
+          !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(answers[q.id]).trim())) {
+        setError(`Please enter a valid email for: ${q.label}`); return;
+      }
+    }
+    if (missingUpload) {
+      setError('Please download, complete, and upload the required form(s) before submitting.'); return;
+    }
+    setBusy(true);
+    try {
+      const uploads = {};
+      for (const q of triggeredQuestions) uploads[q.id] = { fileName: files[q.id].name, fileData: files[q.id].dataUrl };
+      await api('/public/speaker-apply', { method: 'POST', body: { answers, uploads } });
+      track('speaker_application_submitted');
+      setDone(true);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  if (done) {
+    return (
+      <section className="bg-navy2 border border-gold/30 rounded-2xl p-8 text-center ca-slide-up">
+        <div className="text-4xl mb-2">🎤</div>
+        <div className="font-display text-3xl text-gold">Application received!</div>
+        <p className="text-cream/70 mt-2 max-w-md mx-auto">
+          Thanks for offering to speak at Club America — our Vice President will review your
+          application and reach out to you soon.
+        </p>
+        <button className="mt-5 text-gold/80 hover:text-gold text-sm"
+          onClick={() => { setAnswers({}); setFiles({}); setDone(false); }}>
+          Submit another application
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="bg-navy2 border border-gold/30 rounded-2xl p-6 sm:p-8">
+      <div className="text-center mb-6">
+        <h1 className="font-display text-4xl sm:text-5xl text-cream">{form.title}</h1>
+        {form.intro && <p className="text-cream/60 mt-3 max-w-2xl mx-auto leading-relaxed">{form.intro}</p>}
+      </div>
+
+      <form onSubmit={submit} className="max-w-2xl mx-auto space-y-5">
+        {form.questions.map((q) => (
+          <div key={q.id}>
+            <Field label={<>{q.label}{q.required && <span className="text-red ml-1">*</span>}</>}>
+              {q.helpText && <p className="text-xs text-cream/45 mb-1.5 -mt-0.5 normal-case tracking-normal">{q.helpText}</p>}
+              <SpeakerQuestionInput q={q} value={answers[q.id] || ''} onChange={(v) => setAnswer(q.id, v)} />
+            </Field>
+
+            {/* Conditional PDF section for this question — only after "Yes" */}
+            {q.triggersUpload && answers[q.id] === 'Yes' && (
+              <div className="mt-3">
+                <SpeakerUploadSection q={q} file={files[q.id]}
+                  onFile={(f, err) => { if (err) setError(err); setFiles((fs) => ({ ...fs, [q.id]: f })); }}
+                  onRemove={() => setFiles((fs) => { const next = { ...fs }; delete next[q.id]; return next; })} />
+              </div>
+            )}
+          </div>
+        ))}
+
+        {error && <div className="text-red text-sm">{error}</div>}
+        <Button type="submit" variant="gold" disabled={busy || missingUpload} className="w-full sm:w-auto">
+          {busy ? <span className="flex items-center gap-2"><Spinner /> Submitting…</span> : 'Submit Application'}
+        </Button>
+        {missingUpload && <p className="text-xs text-cream/40 -mt-2">Upload the required form(s) above to enable submission.</p>}
+      </form>
+    </section>
+  );
+}
+
+// Homepage call-to-action pointing at the speaker application page.
+function SpeakerCTA({ onNavigate }) {
+  return (
+    <section className="bg-navy2 border border-red/30 rounded-2xl p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-5 text-center sm:text-left">
+      <div>
+        <h2 className="font-display text-3xl text-cream">🎤 Want to speak at Club America?</h2>
+        <p className="text-cream/60 text-sm mt-1 max-w-xl">
+          We host speakers all year — activists, veterans, business leaders, and voices for faith
+          and freedom. Tell us about your talk and our VP will follow up.
+        </p>
+      </div>
+      <Button variant="gold" className="shrink-0" onClick={() => onNavigate('speak')}>Apply to Speak →</Button>
+    </section>
+  );
+}
+
 function HomeAnnouncementBanner({ home }) {
   if (!home.homeAnnouncementEnabled || !home.homeAnnouncement) return null;
   return (
     <div className="bg-red/15 border border-red/50 rounded-xl px-5 py-4 flex gap-3 items-start">
-      <span className="text-xl mt-0.5 shrink-0">📣</span>
+      <span className="mt-0.5 shrink-0 text-red/90"><AppIcon name="megaphone" size={20} /></span>
       <div className="text-cream whitespace-pre-wrap">{home.homeAnnouncement}</div>
     </div>
   );
@@ -2578,9 +2893,8 @@ function ValuesSection() {
 // part of (see "Powered by TPUSA" in the footer).
 function CharlieKirkTribute() {
   return (
-    <Card3D maxTilt={2}>
     <section className="relative overflow-hidden bg-navy2 border border-gold/25 rounded-2xl p-8 sm:p-10 text-center">
-      <div className="ca-breathe absolute inset-0 pointer-events-none" aria-hidden="true"
+      <div className="absolute inset-0 pointer-events-none" aria-hidden="true"
         style={{ background: 'radial-gradient(420px 200px at 50% 0%, rgba(201,168,76,0.08), transparent 70%)' }} />
       <div className="relative">
         <div className="text-gold/80 tracking-[0.5em] text-base mb-3">★ ★ ★</div>
@@ -2593,7 +2907,6 @@ function CharlieKirkTribute() {
         </p>
       </div>
     </section>
-    </Card3D>
   );
 }
 
@@ -3063,7 +3376,7 @@ function EventPhotos() {
         <button
           onClick={() => { setShowForm((v) => !v); setDone(false); }}
           className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-red hover:bg-red/85 text-cream text-sm font-semibold transition-colors active:scale-95">
-          📷 Share your photos
+          <AppIcon name="camera" size={16} className="text-cream" /> Share your photos
         </button>
       </div>
       <p className="text-cream/60 text-sm mb-5">Snap something great at one of our events? Share it — photos go live once a board member approves them.</p>
@@ -3072,7 +3385,7 @@ function EventPhotos() {
         <div className="mb-6 bg-navy border border-cream/15 rounded-xl p-5 ca-slide-down">
           {done ? (
             <div className="text-center py-4 ca-slide-up">
-              <div className="text-4xl mb-2">🎉</div>
+              <SuccessMark className="mb-3" />
               <div className="font-display text-2xl text-gold">Thanks for sharing!</div>
               <p className="text-cream/70 mt-1 text-sm">Your photo was submitted — it'll appear in the gallery once a board member approves it.</p>
               <button className="mt-4 text-gold/80 hover:text-gold text-sm" onClick={() => setDone(false)}>Share another</button>
@@ -3110,7 +3423,9 @@ function EventPhotos() {
         <Loading label="Loading photos…" />
       ) : list.length === 0 ? (
         <div className="text-center py-8 text-cream/50">
-          <div className="text-4xl mb-2">🖼️</div>
+          <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-cream/5 border border-cream/10 flex items-center justify-center">
+            <AppIcon name="photo" size={22} className="text-cream/40" />
+          </div>
           <p className="text-sm">No photos yet — be the first to share one from an event!</p>
         </div>
       ) : (
@@ -3347,7 +3662,7 @@ function PhotoModerationPage({ me }) {
         <p className="text-cream/50 text-sm">Photos visitors shared from the homepage. Approve to publish them to the public gallery.</p>
       </div>
       {pending.length === 0 ? (
-        <EmptyState icon="✅" title="Nothing to review" hint="New photo submissions will show up here." />
+        <EmptyState icon="check" title="Nothing to review" hint="New photo submissions will show up here." />
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {pending.map((p) => (
@@ -3602,24 +3917,29 @@ function MeetTheBoard({ me, onNavigate }) {
 
 // Field of randomly placed twinkling stars. Positions are memoized so the
 // sky doesn't reshuffle on re-render.
+// Most stars are static points at a fixed opacity; only a few twinkle, slowly.
+// A field where everything flickers reads as noise rather than a night sky.
 function Starfield({ count = 42 }) {
   const stars = useMemo(() => Array.from({ length: count }, () => ({
     left: Math.random() * 100,
     top: Math.random() * 100,
     size: 1 + Math.random() * 1.8,
-    dur: 2.5 + Math.random() * 4.5,
-    delay: Math.random() * 6,
+    dur: 5 + Math.random() * 5,
+    delay: Math.random() * 8,
     min: 0.05 + Math.random() * 0.15,
-    max: 0.45 + Math.random() * 0.5,
+    max: 0.45 + Math.random() * 0.4,
     gold: Math.random() < 0.18,
+    twinkle: Math.random() < 0.3,
   })), [count]);
   return (
     <>
       {stars.map((s, i) => (
-        <span key={i} className="ca-star" style={{
+        <span key={i} className={`ca-star ${s.twinkle ? 'ca-star-twinkle' : ''}`} style={{
           left: s.left + '%', top: s.top + '%', width: s.size, height: s.size,
           background: s.gold ? '#C9A84C' : '#F5F0E8',
-          '--ca-dur': s.dur + 's', '--ca-delay': s.delay + 's', '--ca-min': s.min, '--ca-max': s.max,
+          ...(s.twinkle
+            ? { '--ca-dur': s.dur + 's', '--ca-delay': s.delay + 's', '--ca-min': s.min, '--ca-max': s.max }
+            : { opacity: (s.min + s.max) / 2 }),
         }} />
       ))}
     </>
@@ -3646,8 +3966,9 @@ function ParallaxLayer({ speed = 0.2, className = '', children }) {
   return <div ref={ref} className={className} aria-hidden="true">{children}</div>;
 }
 
-// Ring of 13 stars (Betsy Ross flag) — rendered faint and slowly rotating
-// behind the hero headline.
+// Ring of 13 stars (Betsy Ross flag) — rendered faint behind the hero
+// headline; it shifts with the pointer-driven hero tilt but doesn't
+// animate on its own.
 function StarRing({ size = 540, className = '' }) {
   const stars = Array.from({ length: 13 }, (_, i) => {
     const a = (i / 13) * 2 * Math.PI - Math.PI / 2;
@@ -3796,13 +4117,14 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
       <div className="min-h-screen">
         <section className="relative overflow-hidden max-w-5xl mx-auto px-4 sm:px-6 pt-12 pb-12 text-center">
           <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
-            <div className="ca-aurora-a absolute -top-1/2 left-1/4 w-[60%] h-[120%] rounded-full"
+            <div className="absolute -top-1/2 left-1/4 w-[60%] h-[120%] rounded-full"
               style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.12), transparent 60%)', filter: 'blur(40px)' }} />
             <Starfield count={14} />
           </div>
           <div className="relative">
             <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3 ca-fade-in">Park City High School</p>
             <h1 className="ca-hero-title font-display text-6xl sm:text-8xl text-cream leading-none">CLUB AMERICA</h1>
+            <StarDivider className="mt-4 ca-fade-in" />
             <p className="text-cream/65 max-w-lg mx-auto mt-4 text-base leading-relaxed ca-fade-in" style={{ animationDelay: '160ms' }}>
               Faith, freedom, and community — standing up for America's founding principles at Park City High School.
             </p>
@@ -3866,9 +4188,9 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
 
 // ---------------------------------------------------------------------------
 // Public site shell — a top bar with a dropdown menu, then one page at a time.
-// Pages are real paths (/, /about, /board, /testimonials, /get-involved) so
-// they survive a refresh and the browser back button (the server's SPA
-// fallback serves index.html for these extension-less routes).
+// Pages are real paths (/, /about, /board, /testimonials, /get-involved,
+// /apply-to-speak) so they survive a refresh and the browser back button (the
+// server's SPA fallback serves index.html for these extension-less routes).
 // ---------------------------------------------------------------------------
 const PUBLIC_PAGES = [
   { key: 'home',         label: 'Home',                   path: '/' },
@@ -3877,6 +4199,7 @@ const PUBLIC_PAGES = [
   { key: 'shop',         label: 'Shop',                   path: '/shop' },
   { key: 'testimonials', label: 'What People Are Saying', path: '/testimonials' },
   { key: 'involved',     label: 'Get Involved',           path: '/get-involved' },
+  { key: 'speak',        label: 'Apply to Speak',         path: '/apply-to-speak' },
 ];
 
 function publicPageFromPath(pathname) {
@@ -3892,6 +4215,31 @@ function PublicSite({ home, events, volunteerEvents, onEnterPortal }) {
     const onPop = () => setPage(publicPageFromPath(window.location.pathname));
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  // Log a page view every time the visible page changes, and report back how
+  // long the visitor spent on the previous page (site-activity analytics).
+  const visitRef = useRef({ id: null, start: 0 });
+  useEffect(() => {
+    const prev = visitRef.current;
+    if (prev.id) sendVisitDuration(prev.id, Math.round((Date.now() - prev.start) / 1000));
+    visitRef.current = { id: null, start: Date.now() };
+    trackSiteVisit(window.location.pathname).then((d) => {
+      if (d && d.id) visitRef.current.id = d.id;
+    });
+  }, [page]);
+  useEffect(() => {
+    const flush = () => {
+      const cur = visitRef.current;
+      if (cur.id) sendVisitDuration(cur.id, Math.round((Date.now() - cur.start) / 1000));
+    };
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flush(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', flush);
+    };
   }, []);
 
   const navigate = useCallback((key) => {
@@ -3943,6 +4291,12 @@ function PublicSite({ home, events, volunteerEvents, onEnterPortal }) {
             <EventPhotos />
             <InstagramFeed home={home} />
             <NewsletterSignup />
+          </PublicPageShell>
+        )}
+
+        {page === 'speak' && (
+          <PublicPageShell>
+            <SpeakerApplicationForm />
           </PublicPageShell>
         )}
       </div>
@@ -4011,6 +4365,7 @@ function PublicNav({ current, onNavigate, onEnterPortal }) {
 
   return (
     <header className="sticky top-0 z-40 bg-navy/85 backdrop-blur border-b border-cream/10">
+      <TricolorBar />
       <div className="max-w-5xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between gap-3">
         <button onClick={() => go('home')} className="flex items-center shrink-0" aria-label="Club America home">
           <Logo size="nav" />
@@ -4098,7 +4453,8 @@ function PublicNav({ current, onNavigate, onEnterPortal }) {
   );
 }
 
-// Shared wrapper for the inner pages: faint background glows + a centered title.
+// Shared wrapper for the inner pages: old-glory glows, a sparse starfield,
+// faint flag stripes along the bottom, and a centered title over a star divider.
 function PublicPageShell({ title, subtitle, children }) {
   return (
     <div className="relative">
@@ -4107,12 +4463,15 @@ function PublicPageShell({ title, subtitle, children }) {
           style={{ background: 'radial-gradient(circle, rgba(0,40,104,0.20), transparent 60%)', filter: 'blur(50px)' }} />
         <div className="absolute bottom-[8%] -right-1/4 w-[55%] h-[30%] rounded-full"
           style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.10), transparent 60%)', filter: 'blur(50px)' }} />
+        <div className="ca-stripes absolute inset-x-0 bottom-0 h-[22%] opacity-[0.05]" />
+        <Starfield count={20} />
       </div>
       <main className="relative max-w-5xl mx-auto px-4 sm:px-6 pt-10 pb-20 space-y-8">
         {title && (
           <div className="text-center">
             <h1 className="font-display text-4xl sm:text-5xl text-cream">{title}</h1>
-            {subtitle && <p className="text-cream/55 mt-2">{subtitle}</p>}
+            <StarDivider className="mt-4" />
+            {subtitle && <p className="text-cream/55 mt-3">{subtitle}</p>}
           </div>
         )}
         {children}
@@ -4130,9 +4489,9 @@ function PublicHomePage({ home, cards, onNavigate }) {
       <div className="relative min-h-[calc(100vh-5rem)] flex flex-col overflow-hidden">
         {/* Ambient background layers — old-glory red and blue, kept quiet */}
         <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
-          <div className="ca-aurora-a absolute -top-1/4 -left-1/4 w-[80%] h-[80%] rounded-full"
+          <div className="absolute -top-1/4 -left-1/4 w-[80%] h-[80%] rounded-full"
             style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.16), transparent 60%)', filter: 'blur(40px)' }} />
-          <div className="ca-aurora-b absolute -bottom-1/3 -right-1/4 w-[85%] h-[85%] rounded-full"
+          <div className="absolute -bottom-1/3 -right-1/4 w-[85%] h-[85%] rounded-full"
             style={{ background: 'radial-gradient(circle, rgba(0,40,104,0.35), transparent 60%)', filter: 'blur(40px)' }} />
           <div className="ca-stripes absolute inset-x-0 bottom-0 h-[42%] opacity-10" />
         </div>
@@ -4143,7 +4502,7 @@ function PublicHomePage({ home, cards, onNavigate }) {
           <TiltScene className="relative w-full" innerClassName="relative flex flex-col items-center text-center">
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none" aria-hidden="true"
               style={{ transform: 'translateZ(-90px)' }}>
-              <StarRing className="ca-spin-slow opacity-[0.07] w-[min(85vw,540px)] h-auto" />
+              <StarRing className="opacity-[0.07] w-[min(85vw,540px)] h-auto" />
             </div>
             <p className="font-display text-sm tracking-[0.6em] text-gold/70 uppercase mb-4 ca-fade-in"
               style={{ animationDelay: '500ms', animationDuration: '0.8s', transform: 'translateZ(25px)' }}>
@@ -4200,6 +4559,7 @@ function PublicHomePage({ home, cards, onNavigate }) {
           {home.homeAnnouncementEnabled && home.homeAnnouncement && <Reveal><HomeAnnouncementBanner home={home} /></Reveal>}
           {home.memberCount > 0 && <Reveal><MemberStatsBar memberCount={home.memberCount} /></Reveal>}
           <Reveal>{cards}</Reveal>
+          <Reveal><SpeakerCTA onNavigate={onNavigate} /></Reveal>
           <Reveal><TestimonialsCarousel onNavigate={onNavigate} /></Reveal>
         </main>
       </div>
@@ -4240,10 +4600,7 @@ function BioSection({ text }) {
   if (!text) return null;
   return (
     <div className="bg-navy2 border border-cream/10 rounded-xl p-5 mb-6">
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-lg">👤</span>
-        <div className="font-display text-2xl text-gold">About</div>
-      </div>
+      <div className="font-display text-2xl text-gold mb-3">About</div>
       <div className="text-cream/80 whitespace-pre-wrap leading-relaxed">{text}</div>
     </div>
   );
@@ -4279,9 +4636,10 @@ function InterestSurvey({ onBack }) {
 
   if (submitted) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="w-full max-w-md text-center">
-          <div className="text-5xl mb-4">🎉</div>
+      <div className="relative min-h-screen flex items-center justify-center p-4">
+        <PatriotBackdrop />
+        <div className="relative w-full max-w-md text-center">
+          <SuccessMark className="mb-4" />
           <div className="font-display text-4xl text-gold mb-3">Thanks for your interest!</div>
           <p className="text-cream/70 mb-6">
             We've received your information. A Club America representative will be in touch soon.
@@ -4293,8 +4651,9 @@ function InterestSurvey({ onBack }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
+    <div className="relative min-h-screen flex items-center justify-center p-4">
+      <PatriotBackdrop stripes />
+      <div className="relative w-full max-w-md">
         <div className="mb-6">
           <Logo size="login" />
         </div>
@@ -4692,13 +5051,12 @@ function GradeRepLeaderboard({ me }) {
   const leader = board[0];
   const myEntry = board.find((r) => r.id === me.id);
 
-  const medals = ['🥇', '🥈', '🥉'];
 
   return (
     <div className="bg-navy2 border-2 border-gold/60 rounded-2xl p-5 mb-8">
       {/* Prize banner */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <div className="text-3xl">🏆</div>
+        <div className="text-gold"><AppIcon name="trophy" size={30} /></div>
         <div className="flex-1 min-w-0">
           <div className="font-display text-2xl text-gold leading-tight">Grade Rep Recruitment Challenge</div>
           <div className="text-cream/70 text-sm mt-0.5">
@@ -4727,7 +5085,7 @@ function GradeRepLeaderboard({ me }) {
                 isMe ? 'bg-navy border border-cream/20 hover:border-cream/30' : 'bg-navy/40 hover:bg-navy/60'
               }`}>
               <div className={`font-display text-xl w-8 text-center shrink-0 ${isLeader ? 'text-gold' : 'text-cream/40'}`}>
-                {medals[i] || `${i + 1}`}
+                {i + 1}
               </div>
               <div className="flex-1 min-w-0">
                 <span className={`font-medium ${isMe ? 'text-gold' : 'text-cream'}`}>
@@ -4883,7 +5241,7 @@ function RosterPage({ me }) {
         {!loaded && <Loading label="Loading roster…" />}
         {loaded && tabFilteredMembers.length === 0 && (
           <EmptyState
-            icon="🧑‍🤝‍🧑"
+            icon="team"
             title={tab === 'all' ? 'No one on the roster yet' : 'Nothing in this view'}
             hint={(isPrivileged || !!me.canManageRoster)
               ? 'Add a prospect with “+ Add Member” below to start building the pipeline.'
@@ -5114,7 +5472,7 @@ function FundingRequestPage({ me }) {
 
       {requests === null && !error && <Loading label="Loading requests…" />}
       {requests !== null && requests.length === 0 && (
-        <EmptyState icon="💰" title="No funding requests yet" hint={isPrivileged ? 'Requests submitted by the board will appear here for review.' : 'Use “+ New Funding Request” above to submit your first one.'} />
+        <EmptyState icon="funding" title="No funding requests yet" hint={isPrivileged ? 'Requests submitted by the board will appear here for review.' : 'Use “+ New Funding Request” above to submit your first one.'} />
       )}
       <div className="space-y-3">
         {(requests || []).map((r) => (
@@ -5243,7 +5601,7 @@ function BoardApplicationsPage({ me }) {
 
       {apps === null && !error && <Loading label="Loading applications…" />}
       {apps !== null && apps.length === 0 && (
-        <EmptyState icon="📝" title="No applications yet" hint={isPrivileged ? 'Leadership applications from the board will appear here.' : 'Use “+ Apply for a Position” above to submit yours.'} />
+        <EmptyState icon="apply" title="No applications yet" hint={isPrivileged ? 'Leadership applications from the board will appear here.' : 'Use “+ Apply for a Position” above to submit yours.'} />
       )}
       <div className="space-y-3">
         {(apps || []).map((a) => (
@@ -5399,7 +5757,7 @@ function AdminDashboardPage({ me }) {
         <div className="space-y-6">
           {teamTasks === null && <Loading label="Loading team tasks…" />}
           {teamTasks !== null && teamTasks.length === 0 && (
-            <EmptyState icon="✅" title="No team tasks" hint="Your direct reports have no approved tasks yet." />
+            <EmptyState icon="check" title="No team tasks" hint="Your direct reports have no approved tasks yet." />
           )}
           {(teamTasks || []).map((group) => {
             const today = new Date().toISOString().slice(0, 10);
@@ -5512,7 +5870,7 @@ function AdminDashboardPage({ me }) {
             {checkinWeekOf && <span className="text-cream/40 text-base ml-2">· due Friday {fmtDate(checkinWeekOf)}</span>}
           </div>
           {missingCheckins.length === 0
-            ? <div className="text-emerald-300 text-sm">🎉 Everyone has checked in this week.</div>
+            ? <div className="text-emerald-300 text-sm">Everyone has checked in this week.</div>
             : (
               <div className="bg-navy2 border border-orange-300/20 rounded-xl p-4 flex flex-wrap gap-2">
                 {missingCheckins.map((u) => (
@@ -5912,7 +6270,7 @@ function LogisticsPage() {
           .sort((a, b) => b.count - a.count);
         const boardMax = boardRows[0]?.count || 1;
 
-        const eventLabel = (e) => e === 'podcast_watch' ? '▶ Podcast' : e === 'board_profile' ? '👤 Profile' : e;
+        const eventLabel = (e) => e === 'podcast_watch' ? '▶ Podcast' : e === 'board_profile' ? 'Profile' : e;
 
         return (
           <div className="space-y-8 max-w-2xl">
@@ -6055,6 +6413,471 @@ function LogisticsPage() {
           </div>
         );
       })()}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Site Activity dashboard — public website traffic (views, sources, locations,
+// devices, time on page). Same audience as Login Activity (admin /
+// canViewLogistics). Scoped by a date range, refreshes live.
+// ---------------------------------------------------------------------------
+const SITE_RANGE_OPTIONS = [
+  { key: 'today', label: 'Today' },
+  { key: '7d',    label: '7 days' },
+  { key: '30d',   label: '30 days' },
+  { key: 'all',   label: 'All time' },
+];
+
+// Convert a 2-letter ISO country code to its flag emoji.
+function flagEmoji(cc) {
+  if (!cc || cc.length !== 2) return '';
+  const base = 0x1f1e6;
+  const c = cc.toUpperCase();
+  return String.fromCodePoint(base + c.charCodeAt(0) - 65) + String.fromCodePoint(base + c.charCodeAt(1) - 65);
+}
+
+// A labelled horizontal bar row used across the breakdown panels.
+function StatBar({ label, count, total, color = 'bg-gold', leading = null }) {
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  return (
+    <div className="flex items-center gap-3">
+      <div className="w-32 shrink-0 flex items-center gap-1.5 text-cream/80 text-sm truncate">
+        {leading}<span className="truncate">{label}</span>
+      </div>
+      <div className="flex-1 h-5 bg-cream/5 rounded overflow-hidden">
+        <div className={`h-full ${color} rounded transition-all duration-500`} style={{ width: `${Math.max(pct, count > 0 ? 3 : 0)}%` }} />
+      </div>
+      <div className="w-16 shrink-0 text-right text-cream/60 text-xs tabular-nums">
+        {count} <span className="text-cream/30">· {pct}%</span>
+      </div>
+    </div>
+  );
+}
+
+function SiteActivityPage() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [range, setRange] = useState('7d');
+  const [tab, setTab] = useState('overview');
+  const [visitsVisible, setVisitsVisible] = useState(50);
+  const [exporting, setExporting] = useState(false);
+
+  const load = async (opts = {}) => {
+    if (!opts.silent) setLoading(true);
+    setError('');
+    try {
+      const d = await api(`/site-activity/stats?range=${range}`);
+      setData(d);
+    } catch (e) {
+      if (!opts.silent) setError(e.message);
+    } finally {
+      if (!opts.silent) setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [range]);
+  // Live refresh — keeps "active now" and today's numbers current.
+  useEffect(() => {
+    const t = setInterval(() => load({ silent: true }), 30000);
+    return () => clearInterval(t);
+    /* eslint-disable-next-line */
+  }, [range]);
+
+  function fmtDate(dt) {
+    if (!dt) return '—';
+    const d = new Date(dt.includes('T') || dt.includes('Z') ? dt : dt + 'Z');
+    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+
+  function fmtDuration(sec) {
+    const n = Math.round(Number(sec) || 0);
+    if (n <= 0) return '—';
+    if (n < 60) return `${n}s`;
+    const m = Math.floor(n / 60);
+    const s = n % 60;
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  }
+
+  const exportCsv = async () => {
+    setExporting(true);
+    try {
+      const token = localStorage.getItem(TOKEN_KEY);
+      const res = await fetch(`/api/site-activity/export.csv?range=${range}`, {
+        headers: token ? { Authorization: 'Bearer ' + token } : {},
+      });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `site-activity-${range}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (_) { /* ignore */ } finally {
+      setExporting(false);
+    }
+  };
+
+  const RangePicker = () => (
+    <div className="inline-flex rounded-lg border border-cream/15 overflow-hidden">
+      {SITE_RANGE_OPTIONS.map((o) => (
+        <button
+          key={o.key}
+          onClick={() => setRange(o.key)}
+          className={`text-xs px-3 py-1.5 transition-colors ${
+            range === o.key ? 'bg-gold/20 text-gold' : 'text-cream/50 hover:text-cream/80 hover:bg-cream/5'
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (loading && !data) return <Loading label="Loading site activity…" />;
+  if (error && !data) return <div className="p-6 max-w-6xl"><ErrorState message={error} onRetry={load} /></div>;
+  if (!data) return null;
+
+  const {
+    totals, newReturning = { newVisitors: 0, returningVisitors: 0 },
+    dailyTrend = [], hourly = [], topPages = [], topLocations = [],
+    deviceBreakdown = [], browserBreakdown = [], topSources = [], recentVisits = [],
+  } = data;
+
+  const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+  const dayLabel = (iso) => DAY_LABELS[new Date(iso + 'T12:00:00Z').getUTCDay()];
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const pageLabel = (p) => (PUBLIC_PAGES.find((x) => x.path === p) || {}).label || p;
+
+  // Rotate the UTC hour buckets into the viewer's local time.
+  const tzOff = new Date().getTimezoneOffset() / 60;
+  const localHourly = Array.from({ length: 24 }, () => 0);
+  for (const { hour, count } of hourly) {
+    const lh = ((Math.round(hour - tzOff) % 24) + 24) % 24;
+    localHourly[lh] += count;
+  }
+  const maxHour = Math.max(...localHourly, 1);
+  const hourTick = (h) => (h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`);
+
+  // Period-over-period change badge.
+  const ChangeBadge = ({ cur, prev }) => {
+    if (!totals.hasPrev) return null;
+    if (!prev && !cur) return null;
+    if (!prev) return <span className="text-emerald-400 text-[10px] font-semibold">▲ new</span>;
+    const change = Math.round(((cur - prev) / prev) * 100);
+    if (change === 0) return <span className="text-cream/30 text-[10px] font-semibold">— 0%</span>;
+    const up = change > 0;
+    return (
+      <span className={`text-[10px] font-semibold ${up ? 'text-emerald-400' : 'text-red'}`}>
+        {up ? '▲' : '▼'} {Math.abs(change)}%
+      </span>
+    );
+  };
+
+  const TabBtn = ({ id, label }) => (
+    <button
+      onClick={() => setTab(id)}
+      className={`text-sm px-4 py-2 border-b-2 transition-all duration-150 whitespace-nowrap ${
+        tab === id ? 'border-gold text-gold' : 'border-transparent text-cream/50 hover:text-cream/80'
+      }`}
+    >
+      {label}
+    </button>
+  );
+
+  const deviceTotal = deviceBreakdown.reduce((s, r) => s + r.count, 0);
+  const browserTotal = browserBreakdown.reduce((s, r) => s + r.count, 0);
+  const sourceTotal = topSources.reduce((s, r) => s + r.count, 0);
+  const nrTotal = (newReturning.newVisitors || 0) + (newReturning.returningVisitors || 0);
+  const rangeWord = (SITE_RANGE_OPTIONS.find((o) => o.key === range) || {}).label || '';
+
+  const summaryCards = [
+    { label: `Views · ${rangeWord}`, value: (totals.views || 0).toLocaleString(), color: 'text-gold', cur: totals.views, prev: totals.prevViews },
+    { label: `Visitors · ${rangeWord}`, value: (totals.visitors || 0).toLocaleString(), color: 'text-emerald-400', cur: totals.visitors, prev: totals.prevVisitors },
+    { label: 'Avg. Time on Page', value: fmtDuration(totals.avgDurationSec), color: 'text-sky-400', cur: totals.avgDurationSec, prev: totals.prevAvgDurationSec },
+    { label: 'Pages / Visitor', value: (totals.pagesPerVisitor || 0).toFixed(1), color: 'text-cream/80' },
+  ];
+
+  return (
+    <div className="p-6 max-w-6xl space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold text-cream flex items-center gap-3">
+            Site Activity
+            {totals.activeNow > 0 && (
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded-full px-2.5 py-0.5">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+                </span>
+                {totals.activeNow} online now
+              </span>
+            )}
+          </h1>
+          <p className="text-cream/45 text-xs mt-0.5">
+            Public website traffic · {(totals.allTimeViews || 0).toLocaleString()} views from {(totals.allTimeVisitors || 0).toLocaleString()} visitors all-time
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <RangePicker />
+          <button
+            onClick={() => load()}
+            disabled={loading}
+            className="shrink-0 text-xs text-gold/80 hover:text-gold border border-gold/30 hover:border-gold/60 px-3 py-1.5 rounded transition-colors disabled:opacity-40 flex items-center gap-1.5"
+          >
+            {loading ? <><Spinner className="w-3 h-3" /> …</> : 'Refresh'}
+          </button>
+        </div>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {summaryCards.map(({ label, value, color, cur, prev }) => (
+          <div key={label} className="bg-navy2 rounded-lg p-4 border border-cream/10">
+            <div className="flex items-baseline justify-between gap-2">
+              <div className={`text-2xl font-bold ${color}`}>{value}</div>
+              {cur !== undefined && <ChangeBadge cur={cur} prev={prev} />}
+            </div>
+            <div className="text-cream/50 text-xs mt-0.5">{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-0 border-b border-cream/10 overflow-x-auto">
+        <TabBtn id="overview" label="Overview" />
+        <TabBtn id="audience" label="Audience" />
+        <TabBtn id="sources" label="Sources & Locations" />
+        <TabBtn id="visits" label={`Recent Visits (${recentVisits.length})`} />
+      </div>
+
+      {tab === 'overview' && (
+        <div className="space-y-5">
+          {/* Trend chart (daily for multi-day ranges, hourly for Today) */}
+          {range === 'today' ? (
+            <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+              <div className="text-cream/50 text-xs mb-3">Views by hour (your local time)</div>
+              <div className="flex items-end gap-0.5 h-24">
+                {localHourly.map((c, h) => (
+                  <div key={h} className="flex-1 flex flex-col items-center gap-1 group relative">
+                    <div
+                      className="w-full rounded-sm bg-gold/70 group-hover:bg-gold transition-colors"
+                      style={{ height: Math.max(2, Math.round((c / maxHour) * 88)) }}
+                      title={`${hourTick(h)}: ${c} view${c !== 1 ? 's' : ''}`}
+                    />
+                    {h % 6 === 0 && <div className="text-cream/30 text-[9px]">{hourTick(h)}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : dailyTrend.length > 0 && (() => {
+            const maxViews = Math.max(...dailyTrend.map((d) => d.views), 1);
+            const dense = dailyTrend.length > 14;
+            return (
+              <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+                <div className="text-cream/50 text-xs mb-3">Page views — last {dailyTrend.length} days</div>
+                <div className="flex items-end gap-1 h-24">
+                  {dailyTrend.map((d) => {
+                    const h = Math.max(3, Math.round((d.views / maxViews) * 88));
+                    const isToday = d.day === todayStr;
+                    return (
+                      <div key={d.day} className="flex-1 flex flex-col items-center gap-1 group relative">
+                        <div
+                          className={`w-full rounded-sm ${isToday ? 'bg-gold' : 'bg-cream/25 group-hover:bg-cream/40'} transition-colors`}
+                          style={{ height: h }}
+                          title={`${d.day}: ${d.views} view${d.views !== 1 ? 's' : ''}, ${d.visitors} visitor${d.visitors !== 1 ? 's' : ''}`}
+                        />
+                        {!dense && <div className={`text-[9px] ${isToday ? 'text-gold' : 'text-cream/30'}`}>{dayLabel(d.day)}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Top pages with inline bars */}
+          <div>
+            <div className="text-cream/50 text-xs mb-3">Most-visited pages</div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
+                    <th className="pb-2 pr-4 font-medium">Page</th>
+                    <th className="pb-2 pr-4 font-medium text-right">Views</th>
+                    <th className="pb-2 pr-4 font-medium text-right">Visitors</th>
+                    <th className="pb-2 font-medium text-right">Avg. Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topPages.map((p) => {
+                    const maxV = Math.max(...topPages.map((x) => x.views), 1);
+                    return (
+                      <tr key={p.path} className="border-b border-cream/5 hover:bg-cream/3">
+                        <td className="py-2.5 pr-4">
+                          <div className="text-cream font-medium">{pageLabel(p.path)}</div>
+                          <div className="mt-1 h-1 bg-cream/5 rounded overflow-hidden max-w-xs">
+                            <div className="h-full bg-gold/60 rounded" style={{ width: `${Math.round((p.views / maxV) * 100)}%` }} />
+                          </div>
+                        </td>
+                        <td className="py-2.5 pr-4 text-cream/70 text-right tabular-nums">{p.views}</td>
+                        <td className="py-2.5 pr-4 text-cream/50 text-right tabular-nums">{p.visitors}</td>
+                        <td className="py-2.5 text-cream/50 text-right tabular-nums">{fmtDuration(p.avgDurationSec)}</td>
+                      </tr>
+                    );
+                  })}
+                  {topPages.length === 0 && (
+                    <tr><td colSpan={4} className="py-8 text-center text-cream/25 text-sm">No visits recorded in this period.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'audience' && (
+        <div className="grid md:grid-cols-2 gap-6">
+          {/* New vs returning */}
+          <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+            <div className="text-cream/50 text-xs mb-3">New vs. returning visitors</div>
+            {nrTotal > 0 ? (
+              <>
+                <div className="flex h-4 rounded overflow-hidden mb-3">
+                  <div className="bg-gold" style={{ width: `${Math.round((newReturning.newVisitors / nrTotal) * 100)}%` }} />
+                  <div className="bg-sky-500" style={{ width: `${Math.round((newReturning.returningVisitors / nrTotal) * 100)}%` }} />
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-gold">● New — {newReturning.newVisitors}</span>
+                  <span className="text-sky-400">● Returning — {newReturning.returningVisitors}</span>
+                </div>
+              </>
+            ) : <div className="text-cream/25 text-sm py-4 text-center">No visitors in this period.</div>}
+          </div>
+
+          {/* Peak hours */}
+          <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+            <div className="text-cream/50 text-xs mb-3">Busiest hours (your local time)</div>
+            <div className="flex items-end gap-0.5 h-20">
+              {localHourly.map((c, h) => (
+                <div key={h} className="flex-1 flex flex-col items-center gap-1 group relative">
+                  <div
+                    className="w-full rounded-sm bg-emerald-500/60 group-hover:bg-emerald-400 transition-colors"
+                    style={{ height: Math.max(2, Math.round((c / maxHour) * 72)) }}
+                    title={`${hourTick(h)}: ${c} view${c !== 1 ? 's' : ''}`}
+                  />
+                  {h % 6 === 0 && <div className="text-cream/30 text-[9px]">{hourTick(h)}</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Devices */}
+          <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+            <div className="text-cream/50 text-xs mb-3">Devices</div>
+            <div className="space-y-2">
+              {deviceBreakdown.map((d) => (
+                <StatBar key={d.label} label={d.label} count={d.count} total={deviceTotal} color="bg-gold" />
+              ))}
+              {deviceBreakdown.length === 0 && <div className="text-cream/25 text-sm py-2 text-center">No data yet.</div>}
+            </div>
+          </div>
+
+          {/* Browsers */}
+          <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+            <div className="text-cream/50 text-xs mb-3">Browsers</div>
+            <div className="space-y-2">
+              {browserBreakdown.map((b) => (
+                <StatBar key={b.label} label={b.label} count={b.count} total={browserTotal} color="bg-sky-500" />
+              ))}
+              {browserBreakdown.length === 0 && <div className="text-cream/25 text-sm py-2 text-center">No data yet.</div>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'sources' && (
+        <div className="grid md:grid-cols-2 gap-6">
+          <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+            <div className="text-cream/50 text-xs mb-3">Where visitors come from</div>
+            <div className="space-y-2">
+              {topSources.map((s) => (
+                <StatBar key={s.source} label={s.source} count={s.count} total={sourceTotal} color="bg-gold" />
+              ))}
+              {topSources.length === 0 && <div className="text-cream/25 text-sm py-4 text-center">No visits recorded in this period.</div>}
+            </div>
+          </div>
+          <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+            <div className="text-cream/50 text-xs mb-3">Visitor locations</div>
+            <div className="space-y-1.5">
+              {topLocations.map((l, i) => (
+                <div key={`${l.city}-${l.region}-${l.country}-${i}`} className="flex items-center justify-between bg-cream/5 rounded px-3 py-2">
+                  <span className="text-cream text-sm flex items-center gap-2">
+                    <span className="text-base leading-none">{flagEmoji(l.country) || '🌐'}</span>
+                    {[l.city, l.region, l.country].filter(Boolean).join(', ')}
+                  </span>
+                  <span className="text-cream/60 text-xs font-semibold tabular-nums">{l.views}</span>
+                </div>
+              ))}
+              {topLocations.length === 0 && <div className="text-cream/25 text-sm py-4 text-center">No location data yet.</div>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'visits' && (
+        <div>
+          <div className="flex justify-end mb-3">
+            <button
+              onClick={exportCsv}
+              disabled={exporting || recentVisits.length === 0}
+              className="text-xs text-gold/80 hover:text-gold border border-gold/30 hover:border-gold/60 px-3 py-1.5 rounded transition-colors disabled:opacity-40 flex items-center gap-1.5"
+            >
+              {exporting ? <><Spinner className="w-3 h-3" /> Exporting…</> : '↓ Export CSV'}
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
+                  <th className="pb-2 pr-4 font-medium">Time</th>
+                  <th className="pb-2 pr-4 font-medium">Page</th>
+                  <th className="pb-2 pr-4 font-medium">Location</th>
+                  <th className="pb-2 pr-4 font-medium">Device</th>
+                  <th className="pb-2 pr-4 font-medium">Duration</th>
+                  <th className="pb-2 font-medium">IP Address</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentVisits.slice(0, visitsVisible).map((v) => (
+                  <tr key={v.id} className="border-b border-cream/5 hover:bg-cream/3">
+                    <td className="py-2.5 pr-4 text-cream/55 text-xs whitespace-nowrap">{fmtDate(v.viewedAt)}</td>
+                    <td className="py-2.5 pr-4 text-cream font-medium">{pageLabel(v.path)}</td>
+                    <td className="py-2.5 pr-4 text-cream/55 text-xs">
+                      {v.country ? <span className="mr-1">{flagEmoji(v.country)}</span> : null}
+                      {[v.city, v.region].filter(Boolean).join(', ') || v.country || '—'}
+                    </td>
+                    <td className="py-2.5 pr-4 text-cream/55 text-xs">{[v.deviceType, v.browser].filter(Boolean).join(' · ') || '—'}</td>
+                    <td className="py-2.5 pr-4 text-cream/55 text-xs">{fmtDuration(v.durationSec)}</td>
+                    <td className="py-2.5 text-cream/35 text-xs font-mono">{v.ipAddress || '—'}</td>
+                  </tr>
+                ))}
+                {recentVisits.length === 0 && (
+                  <tr><td colSpan={6} className="py-8 text-center text-cream/25 text-sm">No visits recorded in this period.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {recentVisits.length > visitsVisible && (
+            <div className="text-center pt-3">
+              <Button variant="ghost" onClick={() => setVisitsVisible((v) => v + 50)}>Show more ({recentVisits.length - visitsVisible} more)</Button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -6380,7 +7203,7 @@ function HomeSummaryCard({ me, onNavigate }) {
           <button onClick={() => onNavigate({ type: 'checkin' })}
             className={`border rounded-xl p-3 text-left hover:brightness-110 transition-all active:scale-95 ${checkinSubmitted ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red/30 bg-red/5'}`}>
             <div className="text-cream/50 text-[10px] uppercase tracking-wide mb-1">Check-In</div>
-            <div className={`text-sm font-medium ${checkinSubmitted ? 'text-emerald-300' : 'text-red'}`}>{checkinSubmitted ? '✓ Submitted' : '⚠ Not yet'}</div>
+            <div className={`text-sm font-medium ${checkinSubmitted ? 'text-emerald-300' : 'text-red'}`}>{checkinSubmitted ? '✓ Submitted' : 'Not yet'}</div>
           </button>
         )}
         <button onClick={() => onNavigate({ type: 'meetings' })}
@@ -6403,7 +7226,7 @@ function HomeSummaryCard({ me, onNavigate }) {
       {/* Announcement banner */}
       {announcement && announcement.text && (
         <div className="bg-gold/10 border border-gold/30 rounded-xl px-4 py-3 flex items-start gap-3">
-          <span className="text-gold text-lg shrink-0">📢</span>
+          <span className="mt-0.5 text-gold/80 shrink-0"><AppIcon name="megaphone" size={17} /></span>
           <div className="flex-1 min-w-0">
             <div className="text-xs text-gold/70 uppercase tracking-wide mb-0.5">Team Announcement</div>
             <div className="text-sm text-cream/85 leading-relaxed">{announcement.text}</div>
@@ -6627,7 +7450,7 @@ function ResourceHubPage({ me }) {
 
       {!loaded && <Loading label="Loading resources…" />}
       {loaded && filtered.length === 0 && (
-        <EmptyState icon="📚" title="No resources yet" hint={isManager ? 'Add links your team uses daily — templates, forms, policies.' : 'Resources shared by your managers will appear here.'} />
+        <EmptyState icon="resources" title="No resources yet" hint={isManager ? 'Add links your team uses daily — templates, forms, policies.' : 'Resources shared by your managers will appear here.'} />
       )}
 
       <div className="space-y-5">
@@ -6726,7 +7549,9 @@ function VolunteerSignUpPage({ eventId }) {
   if (error && !event) return (
     <div className="min-h-screen flex items-center justify-center p-8" style={{ background: '#0d1b2e' }}>
       <div className="text-center max-w-sm">
-        <div className="text-4xl mb-4">🚫</div>
+        <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-red/10 border border-red/30 flex items-center justify-center">
+          <AppIcon name="warning" size={24} className="text-red/80" />
+        </div>
         <div className="text-cream/70 text-lg mb-2">Sign-ups Unavailable</div>
         <div className="text-cream/40 text-sm">{error}</div>
         <a href="/" className="mt-4 inline-block text-gold/60 hover:text-gold text-sm underline">← Back to home</a>
@@ -6735,9 +7560,14 @@ function VolunteerSignUpPage({ eventId }) {
   );
 
   if (submitted) return (
-    <div className="min-h-screen flex items-center justify-center p-8" style={{ background: '#0d1b2e' }}>
-      <div className="text-center max-w-sm">
-        <div className="text-5xl mb-4">{submitted === 'waitlisted' ? '⏳' : '🎉'}</div>
+    <div className="relative min-h-screen flex items-center justify-center p-8" style={{ background: '#0d1b2e' }}>
+      <PatriotBackdrop stripes />
+      <div className="relative text-center max-w-sm">
+        {submitted === 'waitlisted' ? (
+          <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-cream/5 border border-cream/20 flex items-center justify-center">
+            <AppIcon name="clock" size={24} className="text-cream/60" />
+          </div>
+        ) : <SuccessMark className="mb-4" />}
         <div className="text-2xl font-semibold text-cream mb-2">
           {submitted === 'waitlisted'
             ? (selectedRoleObj ? `You're on the waitlist for ${selectedRoleObj.roleName}!` : "You're on the waitlist!")
@@ -6756,8 +7586,9 @@ function VolunteerSignUpPage({ eventId }) {
   const GRADES = ['9th', '10th', '11th', '12th', 'Other'];
 
   return (
-    <div className="min-h-screen py-10 px-4" style={{ background: '#0d1b2e' }}>
-      <div className="max-w-lg mx-auto">
+    <div className="relative min-h-screen py-10 px-4" style={{ background: '#0d1b2e' }}>
+      <PatriotBackdrop />
+      <div className="relative max-w-lg mx-auto">
         <a href="/" className="text-sm text-cream/40 hover:text-cream/70 mb-6 inline-block">← Back to home</a>
         <div className="bg-navy2 border border-cream/10 rounded-2xl p-6 mb-6">
           <div className="text-xs text-gold/60 uppercase tracking-wider mb-1">Volunteer Sign-Up</div>
@@ -7641,40 +8472,53 @@ function VolunteerManagerPage({ me }) {
 
 // Per-tile accent colors so the grid is scannable at a glance instead of a
 // monotone wall. Keys match AppIcon names.
+// Tile accents stay inside the brand palette (gold / red / blue / green /
+// cream) instead of giving every tile its own hue. Roughly: gold = personal &
+// club voice, blue = pages and content, green = money, red = admin/oversight,
+// cream = people & structure.
+const TILE_TONE_CLASSES = {
+  gold:  { icon: 'text-gold',        bg: 'bg-gold/10' },
+  red:   { icon: 'text-red',         bg: 'bg-red/10' },
+  blue:  { icon: 'text-sky-300',     bg: 'bg-sky-500/10' },
+  green: { icon: 'text-emerald-300', bg: 'bg-emerald-500/10' },
+  cream: { icon: 'text-cream/70',    bg: 'bg-cream/10' },
+};
 const TILE_TONES = {
-  person:         { icon: 'text-gold',        bg: 'bg-gold/10' },
-  home:           { icon: 'text-sky-300',     bg: 'bg-sky-500/10' },
-  edit:           { icon: 'text-violet-300',  bg: 'bg-violet-500/10' },
-  megaphone:      { icon: 'text-amber-300',   bg: 'bg-amber-500/10' },
-  team:           { icon: 'text-teal-300',    bg: 'bg-teal-500/10' },
-  check:          { icon: 'text-emerald-300', bg: 'bg-emerald-500/10' },
-  inbox:          { icon: 'text-orange-300',  bg: 'bg-orange-500/10' },
-  roster:         { icon: 'text-cyan-300',    bg: 'bg-cyan-500/10' },
-  calendar:       { icon: 'text-rose-300',    bg: 'bg-rose-500/10' },
-  funding:        { icon: 'text-emerald-300', bg: 'bg-emerald-500/10' },
-  apply:          { icon: 'text-indigo-300',  bg: 'bg-indigo-500/10' },
-  dashboard:      { icon: 'text-fuchsia-300', bg: 'bg-fuchsia-500/10' },
-  attendance:     { icon: 'text-teal-300',    bg: 'bg-teal-500/10' },
-  poll:           { icon: 'text-violet-300',  bg: 'bg-violet-500/10' },
-  meetings:       { icon: 'text-sky-300',     bg: 'bg-sky-500/10' },
-  volunteer:      { icon: 'text-emerald-300', bg: 'bg-emerald-500/10' },
-  speaker:        { icon: 'text-amber-300',   bg: 'bg-amber-500/10' },
-  grants:         { icon: 'text-lime-300',    bg: 'bg-lime-500/10' },
-  social:         { icon: 'text-pink-300',    bg: 'bg-pink-500/10' },
-  budget:         { icon: 'text-green-300',   bg: 'bg-green-500/10' },
-  grades:         { icon: 'text-cyan-300',    bg: 'bg-cyan-500/10' },
-  reimbursements: { icon: 'text-orange-300',  bg: 'bg-orange-500/10' },
-  resources:      { icon: 'text-blue-300',    bg: 'bg-blue-500/10' },
-  directory:      { icon: 'text-indigo-300',  bg: 'bg-indigo-500/10' },
-  org:            { icon: 'text-cream/70',    bg: 'bg-cream/10' },
-  admin:          { icon: 'text-red',         bg: 'bg-red/10' },
-  activity:       { icon: 'text-rose-300',    bg: 'bg-rose-500/10' },
-  ai:             { icon: 'text-purple-300',  bg: 'bg-purple-500/10' },
-  bell:           { icon: 'text-gold',        bg: 'bg-gold/10' },
+  person:         TILE_TONE_CLASSES.gold,
+  home:           TILE_TONE_CLASSES.blue,
+  edit:           TILE_TONE_CLASSES.blue,
+  megaphone:      TILE_TONE_CLASSES.gold,
+  team:           TILE_TONE_CLASSES.cream,
+  check:          TILE_TONE_CLASSES.green,
+  inbox:          TILE_TONE_CLASSES.gold,
+  roster:         TILE_TONE_CLASSES.cream,
+  calendar:       TILE_TONE_CLASSES.blue,
+  funding:        TILE_TONE_CLASSES.green,
+  apply:          TILE_TONE_CLASSES.cream,
+  dashboard:      TILE_TONE_CLASSES.blue,
+  attendance:     TILE_TONE_CLASSES.cream,
+  poll:           TILE_TONE_CLASSES.gold,
+  meetings:       TILE_TONE_CLASSES.blue,
+  volunteer:      TILE_TONE_CLASSES.green,
+  speaker:        TILE_TONE_CLASSES.gold,
+  grants:         TILE_TONE_CLASSES.green,
+  social:         TILE_TONE_CLASSES.blue,
+  budget:         TILE_TONE_CLASSES.green,
+  grades:         TILE_TONE_CLASSES.cream,
+  reimbursements: TILE_TONE_CLASSES.green,
+  resources:      TILE_TONE_CLASSES.blue,
+  directory:      TILE_TONE_CLASSES.cream,
+  org:            TILE_TONE_CLASSES.cream,
+  admin:          TILE_TONE_CLASSES.red,
+  activity:       TILE_TONE_CLASSES.red,
+  ai:             TILE_TONE_CLASSES.gold,
+  bell:           TILE_TONE_CLASSES.gold,
+  testimonial:    TILE_TONE_CLASSES.blue,
+  newsletter:     TILE_TONE_CLASSES.blue,
 };
 
-function AppIcon({ name, className }) {
-  const p = { width: 26, height: 26, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', className: className || 'text-cream/60' };
+function AppIcon({ name, className, size = 26 }) {
+  const p = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', className: className || 'text-cream/60' };
   switch (name) {
     case 'person':    return <svg {...p}><circle cx="12" cy="8" r="3.5"/><path d="M4 20c0-3.866 3.582-7 8-7s8 3.134 8 7"/></svg>;
     case 'home':      return <svg {...p}><path d="M3 11.5 12 3l9 8.5"/><path d="M5 10.5v10h5v-5h4v5h5v-10"/></svg>;
@@ -7691,6 +8535,7 @@ function AppIcon({ name, className }) {
     case 'org':       return <svg {...p}><circle cx="12" cy="4" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 6v5M12 11H5v6M12 11h7v6"/></svg>;
     case 'admin':     return <svg {...p}><path d="M12 2 3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7Z"/><path d="m9 12 2 2 4-4"/></svg>;
     case 'activity':  return <svg {...p}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>;
+    case 'globe':     return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18Z"/></svg>;
     case 'ai':        return <svg {...p}><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/><circle cx="12" cy="12" r="4.5"/></svg>;
     case 'bell':      return <svg {...p}><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>;
     case 'search':    return <svg {...p}><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>;
@@ -7708,6 +8553,13 @@ function AppIcon({ name, className }) {
     case 'volunteer':    return <svg {...p}><path d="M19.5 12.572 12 20l-7.5-7.428A5 5 0 1 1 12 6.006a5 5 0 1 1 7.5 6.566"/><path d="m9 12 2 2 4-4"/></svg>;
     case 'testimonial':  return <svg {...p}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg>;
     case 'newsletter':   return <svg {...p}><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>;
+    case 'star':         return <svg {...p}><path d="m12 2.5 2.9 5.9 6.5.95-4.7 4.58 1.1 6.47L12 17.35 6.2 20.4l1.1-6.47L2.6 9.35l6.5-.95Z"/></svg>;
+    case 'trophy':       return <svg {...p}><path d="M8 21h8M12 17v4"/><path d="M7 4h10v5a5 5 0 0 1-10 0Z"/><path d="M7 5H4v2a3 3 0 0 0 3 3M17 5h3v2a3 3 0 0 1-3 3"/></svg>;
+    case 'camera':       return <svg {...p}><path d="M3 8a2 2 0 0 1 2-2h2l2-3h6l2 3h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><circle cx="12" cy="13" r="3.5"/></svg>;
+    case 'photo':        return <svg {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>;
+    case 'pin':          return <svg {...p}><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>;
+    case 'clock':        return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>;
+    case 'warning':      return <svg {...p}><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg>;
     default:             return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
   }
 }
@@ -7782,9 +8634,10 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
       tiles: [
         ...(canEditSite && visible('website')              ? [{ type: 'website',      label: 'Edit Website',   icon: 'edit'        }] : []),
         ...(me.role === 'admin' && visible('testimonials') ? [{ type: 'testimonials', label: 'Testimonials', icon: 'testimonial', badge: pendingTestimonialsCount || undefined }] : []),
-        ...(me.role === 'admin' && visible('newsletter')   ? [{ type: 'newsletter',   label: 'Newsletter',     icon: 'newsletter'  }] : []),
+        ...((me.role === 'admin' || !!me.canManageNewsletter) && visible('newsletter') ? [{ type: 'newsletter', label: 'Newsletter', icon: 'newsletter' }] : []),
         ...(me.role === 'admin' && visible('admin')        ? [{ type: 'admin',        label: 'Admin Panel',    icon: 'admin'       }] : []),
         ...((me.role === 'admin' || !!me.canViewLogistics) && visible('logistics') ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }] : []),
+        ...((me.role === 'admin' || !!me.canViewLogistics) && visible('siteactivity') ? [{ type: 'siteactivity', label: 'Site Activity', icon: 'globe' }] : []),
         ...(me.role === 'admin' && visible('ai')           ? [{ type: 'ai',           label: 'AI Assistant',   icon: 'ai'          }] : []),
       ],
     },
@@ -7796,8 +8649,10 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
   let tileIndex = 0;
 
   return (
-    <div className="min-h-screen flex flex-col ca-fade-in" style={{ background: '#0d1b2e' }}>
-      <header className="px-6 py-5 flex items-center justify-between border-b border-cream/10">
+    <div className="relative min-h-screen flex flex-col ca-fade-in" style={{ background: '#0d1b2e' }}>
+      <PatriotBackdrop stars={16} stripes />
+      <TricolorBar className="relative" />
+      <header className="relative px-6 py-5 flex items-center justify-between border-b border-cream/10">
         <Logo size="sidebar" />
         <div className="flex items-center gap-4">
           <button onClick={onSearch} aria-label="Search" title="Search (⌘K or /)"
@@ -7816,16 +8671,18 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
           </div>
         </div>
       </header>
-      <div className="flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 py-8">
+      <div className="relative flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 py-8">
         <div className="mb-6">
           <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">{greeting}, {me.firstName || me.displayName}</h1>
           <p className="text-cream/40 text-sm mt-1.5">{dateLine}</p>
+          <FlagUnderline className="mt-3" />
         </div>
         <HomeSummaryCard me={me} onNavigate={onNavigate} />
         <div className="space-y-8">
           {sections.map((section) => (
             <div key={section.title}>
               <div className="flex items-center gap-3 mb-3">
+                <span className="text-gold/50 text-[10px]" aria-hidden="true">★</span>
                 <span className="text-xs font-semibold text-cream/40 uppercase tracking-widest">{section.title}</span>
                 <div className="flex-1 h-px bg-cream/10" />
               </div>
@@ -7930,7 +8787,7 @@ function NotificationBell({ onNavigate, refreshSignal }) {
               {unread > 0 && <button onClick={markAll} className="text-xs text-gold/70 hover:text-gold">Mark all read</button>}
             </div>
             {items.length === 0 ? (
-              <div className="px-4 py-10 text-center text-cream/40 text-sm">You're all caught up. 🎉</div>
+              <div className="px-4 py-10 text-center text-cream/40 text-sm">You're all caught up.</div>
             ) : items.map((n) => (
               <button key={n.id} onClick={() => openItem(n)}
                 className={`block w-full text-left px-4 py-3 border-b border-cream/5 hover:bg-navy3 transition-all duration-150 ${n.isRead ? '' : 'bg-gold/5'}`}>
@@ -8287,6 +9144,7 @@ function App() {
     ...(canEditSite                           ? [{ type: 'website',     label: 'Edit Website' }] : []),
     ...(me.role === 'admin'                   ? [{ type: 'admin',       label: 'Admin Panel' }] : []),
     ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity' }] : []),
+    ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'siteactivity', label: 'Site Activity' }] : []),
     ...(me.role === 'admin'                   ? [{ type: 'ai',          label: 'AI Assistant' }] : []),
   ].filter(t => !meHiddenTabs.has(t.type));
   // "Agent Notes" is a modal, not a routed view — open it instead of navigating
@@ -8329,7 +9187,7 @@ function App() {
     grades: 'Grade Pipeline', reimbursements: 'Reimbursements', directory: 'Board Directory',
     resources: 'Resource Hub', volunteers: 'Volunteer Manager',
     photos: 'Photo Approvals',
-    org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity',
+    org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity', siteactivity: 'Site Activity',
     ai: 'AI Assistant', howto: 'How-To / Q&A', password: 'Change Password', profile: 'Edit Profile',
     testimonials: 'Testimonials', newsletter: 'Newsletter',
   };
@@ -8353,6 +9211,7 @@ function App() {
   else if (view.type === 'org') content = <OrgChart />;
   else if (view.type === 'admin') content = me.role === 'admin' ? <AdminPanel users={users} reload={bump} /> : null;
   else if (view.type === 'logistics') content = (me.role === 'admin' || me.canViewLogistics) ? <LogisticsPage /> : null;
+  else if (view.type === 'siteactivity') content = (me.role === 'admin' || me.canViewLogistics) ? <SiteActivityPage /> : null;
   else if (view.type === 'ai') content = me.role === 'admin' ? <AIChatPage me={me} /> : null;
   else if (view.type === 'howto') content = isMgrOrAdmin ? <HowToPage me={me} /> : null;
   else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;
@@ -8370,15 +9229,18 @@ function App() {
   else if (view.type === 'resources') content = <ResourceHubPage me={me} />;
   else if (view.type === 'volunteers') content = (me.role === 'admin' || me.role === 'manager') ? <VolunteerManagerPage me={me} /> : null;
   else if (view.type === 'testimonials') content = me.role === 'admin' ? <TestimonialsAdminPage me={me} /> : null;
-  else if (view.type === 'newsletter') content = me.role === 'admin' ? <NewsletterAdminPage me={me} /> : null;
+  else if (view.type === 'newsletter') content = (me.role === 'admin' || me.canManageNewsletter) ? <NewsletterAdminPage me={me} /> : null;
 
   return (
     <>
       {showWelcomeIntro && <WelcomeIntroModal me={me} navTiles={navTiles} onDone={introDismiss} />}
       {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={bump} />}
       {searchOpen && <SearchModal me={me} reports={reports} tiles={navTiles} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
-      <div className="min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
-        <header className="sticky top-0 z-20 flex items-center gap-3 bg-navy2/95 backdrop-blur border-b border-cream/10 px-4 py-3">
+      <div className="relative min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
+        {view.type !== 'home' && <PatriotBackdrop stars={10} />}
+        <header className="sticky top-0 z-20 bg-navy2/95 backdrop-blur border-b border-cream/10">
+          <TricolorBar />
+          <div className="flex items-center gap-3 px-4 py-3">
           <button onClick={() => navigate({ type: 'apphome' })} aria-label="Back to home"
             className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-cream hover:bg-navy3 transition-colors">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -8397,8 +9259,9 @@ function App() {
               <span className="absolute -top-1 -right-1 bg-gold text-navy text-[9px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-0.5">{aiNotesCount}</span>
             )}
           </button>
+          </div>
         </header>
-        <main className={`flex-1 overflow-x-hidden ${view.type === 'home' ? '' : 'p-4 sm:p-6 lg:p-8'}`}>
+        <main className={`relative flex-1 overflow-x-hidden ${view.type === 'home' ? '' : 'p-4 sm:p-6 lg:p-8'}`}>
           <div key={view.type + (view.userId || '')} className="ca-slide-up">
             {view.type !== 'home' && <TabIntroBanner userId={me.id} tabType={view.type} />}
             {content}
@@ -8592,11 +9455,11 @@ function MeetingsPage({ me }) {
         <div>
           {!calLoaded && <Loading label="Loading club meetings…" />}
           {calLoaded && !calConfigured && (
-            <EmptyState icon="📅" title="No calendar connected"
+            <EmptyState icon="calendar" title="No calendar connected"
               hint={isManager ? 'Connect a calendar URL in Edit Website to auto-populate club meetings.' : 'No calendar has been connected yet.'} />
           )}
           {calLoaded && calConfigured && calEvents.length === 0 && (
-            <EmptyState icon="📅" title="No upcoming club meetings" hint="No events found in the next few weeks on the connected calendar." />
+            <EmptyState icon="calendar" title="No upcoming club meetings" hint="No events found in the next few weeks on the connected calendar." />
           )}
           <div className="space-y-3">
             {calEvents.map((e, i) => (
@@ -8635,7 +9498,7 @@ function MeetingsPage({ me }) {
           )}
           {!loaded && <Loading label="Loading board meetings…" />}
           {loaded && meetings.length === 0 && (
-            <EmptyState icon="📋" title="No board meetings yet" hint={isManager ? 'Create the first board meeting record above.' : 'Board meeting records will appear here once added.'} />
+            <EmptyState icon="meetings" title="No board meetings yet" hint={isManager ? 'Create the first board meeting record above.' : 'Board meeting records will appear here once added.'} />
           )}
           <div className="space-y-3">
             {meetings.map((m) => (
@@ -8788,7 +9651,7 @@ function GrantsPage({ me }) {
       )}
 
       {!loaded && <Loading label="Loading grants…" />}
-      {loaded && grants.length === 0 && <EmptyState icon="💰" title="No grant applications yet" hint="Track grants submitted to TPUSA national or other funders." />}
+      {loaded && grants.length === 0 && <EmptyState icon="grants" title="No grant applications yet" hint="Track grants submitted to TPUSA national or other funders." />}
       <div className="space-y-3">
         {grants.map((g) => (
           <div key={g.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-colors">
@@ -8840,7 +9703,9 @@ const SPEAKER_STATUSES = ['Planning','Confirmed','Completed','Cancelled'];
 const SPEAKER_STATUS_TONES = { Planning: 'slate', Confirmed: 'blue', Completed: 'green', Cancelled: 'red' };
 
 function SpeakerEventsPage({ me }) {
+  const [tab, setTab] = useState('events'); // events | applications | form
   const [events, setEvents] = useState([]);
+  const [pendingApps, setPendingApps] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -8850,7 +9715,14 @@ function SpeakerEventsPage({ me }) {
   const isManager = me.role === 'admin' || me.role === 'manager';
 
   const load = useCallback(async () => {
-    try { const d = await api('/speaker-events'); setEvents(d.events || []); }
+    try {
+      const [d, a] = await Promise.all([
+        api('/speaker-events'),
+        api('/speaker-applications').catch(() => ({ applications: [] })),
+      ]);
+      setEvents(d.events || []);
+      setPendingApps((a.applications || []).filter((x) => !x.handled).length);
+    }
     catch (e) { setError(e.message); }
     finally { setLoaded(true); }
   }, [setError]);
@@ -8900,13 +9772,34 @@ function SpeakerEventsPage({ me }) {
     { key: 'tpusaNotified',  label: 'TPUSA national notified' },
   ];
 
+  const TabBtn = ({ id, children }) => (
+    <button type="button" onClick={() => setTab(id)}
+      className={`px-4 py-2 rounded-md text-sm transition-all duration-150 active:scale-95 ${tab === id
+        ? 'bg-red text-cream shadow-md shadow-red/20'
+        : 'bg-navy border border-cream/20 text-cream/70 hover:border-gold hover:text-cream/90'}`}>
+      {children}
+    </button>
+  );
+
   return (
     <div className="max-w-3xl">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h1 className="font-display text-4xl sm:text-5xl text-cream">Speaker Events</h1>
-        {isManager && !showForm && <Button variant="gold" onClick={openCreate}>+ New Event</Button>}
+        {tab === 'events' && isManager && !showForm && <Button variant="gold" onClick={openCreate}>+ New Event</Button>}
       </div>
 
+      <div className="flex gap-2 mb-6 flex-wrap">
+        <TabBtn id="events">Events</TabBtn>
+        <TabBtn id="applications">
+          Applications{pendingApps > 0 && <span className="ml-1.5 inline-block bg-gold text-navy text-xs font-bold rounded-full px-1.5">{pendingApps}</span>}
+        </TabBtn>
+        {me.role === 'admin' && <TabBtn id="form">Application Form</TabBtn>}
+      </div>
+
+      {tab === 'applications' && <SpeakerApplicationsInbox me={me} onChanged={load} />}
+      {tab === 'form' && me.role === 'admin' && <SpeakerFormEditor />}
+
+      {tab === 'events' && <>
       {showForm && (
         <form onSubmit={save} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-6 space-y-3 ca-slide-up">
           <div className="font-display text-xl text-gold">{editId ? 'Edit Speaker Event' : 'New Speaker Event'}</div>
@@ -8935,7 +9828,7 @@ function SpeakerEventsPage({ me }) {
       )}
 
       {!loaded && <Loading label="Loading speaker events…" />}
-      {loaded && events.length === 0 && <EmptyState icon="🎤" title="No speaker events yet" hint={isManager ? 'Plan your first speaker event above.' : 'Speaker events will appear here once planned.'} />}
+      {loaded && events.length === 0 && <EmptyState icon="speaker" title="No speaker events yet" hint={isManager ? 'Plan your first speaker event above.' : 'Speaker events will appear here once planned.'} />}
       <div className="space-y-3">
         {events.map((ev) => {
           const done = CHECKLIST.filter((c) => ev[c.key]).length;
@@ -8951,7 +9844,7 @@ function SpeakerEventsPage({ me }) {
                     </div>
                     <div className="text-xs text-cream/40 mt-1 flex flex-wrap gap-x-3">
                       {ev.eventDate && <span>{fmtShortDate(ev.eventDate)}</span>}
-                      {ev.location && <span>📍 {ev.location}</span>}
+                      {ev.location && <span className="inline-flex items-center gap-1"><AppIcon name="pin" size={12} className="text-cream/40" />{ev.location}</span>}
                       {ev.expectedAttendance > 0 && <span>~{ev.expectedAttendance} expected</span>}
                       {ev.budgetEstimate > 0 && <span>${ev.budgetEstimate.toLocaleString()} budget</span>}
                     </div>
@@ -9014,6 +9907,319 @@ function SpeakerEventsPage({ me }) {
             </div>
           );
         })}
+      </div>
+      </>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Speaker Applications inbox + VP form editor (Speaker Events sub-tabs)
+// ---------------------------------------------------------------------------
+function SpeakerApplicationsInbox({ me, onChanged }) {
+  const [apps, setApps] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+  const [error, setError] = useState('');
+  const [confirmEl, confirm] = useConfirm();
+
+  const load = useCallback(async () => {
+    try { const d = await api('/speaker-applications'); setApps(d.applications || []); }
+    catch (e) { setError(e.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function toggleHandled(a) {
+    try { await api(`/speaker-applications/${a.id}/handled`, { method: 'POST' }); load(); onChanged && onChanged(); }
+    catch (e) { setError(e.message); }
+  }
+
+  async function remove(a) {
+    if (!(await confirm({ message: `Delete the application from ${a.applicantName || 'this applicant'}? This cannot be undone.`, danger: true, confirmLabel: 'Delete' }))) return;
+    try { await api(`/speaker-applications/${a.id}`, { method: 'DELETE' }); load(); onChanged && onChanged(); }
+    catch (e) { setError(e.message); }
+  }
+
+  // Authenticated download: fetch the PDF with the bearer token, then hand the
+  // bytes to the browser as a normal file download.
+  async function downloadUpload(a, u) {
+    try {
+      const token = localStorage.getItem(TOKEN_KEY);
+      const res = await fetch(`/api/speaker-applications/${a.id}/upload/${encodeURIComponent(u.questionId)}`, { headers: { Authorization: 'Bearer ' + token } });
+      if (!res.ok) throw new Error('Could not download the PDF');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = u.fileName || 'form.pdf';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) { setError(e.message); }
+  }
+
+  if (error && !apps) return <ErrorState message={error} onRetry={load} />;
+  if (!apps) return <Loading label="Loading applications…" />;
+  if (apps.length === 0) {
+    return <EmptyState icon="🎤" title="No speaker applications yet"
+      hint={<span>Share the public link: <span className="text-gold">{window.location.origin}/apply-to-speak</span></span>} />;
+  }
+
+  return (
+    <div className="space-y-3">
+      {confirmEl}
+      {error && <div className="text-red text-sm">{error}</div>}
+      {apps.map((a) => {
+        const isExpanded = expanded === a.id;
+        return (
+          <div key={a.id} className={`bg-navy2 border rounded-xl overflow-hidden transition-colors ${a.handled ? 'border-cream/10 opacity-70' : 'border-gold/25'}`}>
+            <div className="p-4 flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="font-medium text-cream flex items-center gap-2 flex-wrap">
+                  {a.applicantName || 'Unnamed applicant'}
+                  {a.needsLogistics && <Badge tone="red">AV / travel</Badge>}
+                  {a.handled && <Badge tone="green">Handled</Badge>}
+                </div>
+                <div className="text-xs text-cream/40 mt-1 flex flex-wrap gap-x-3">
+                  {a.applicantEmail && <span>{a.applicantEmail}</span>}
+                  <span>{timeAgo(a.createdAt)}</span>
+                </div>
+              </div>
+              <button onClick={() => setExpanded(isExpanded ? null : a.id)}
+                className="text-xs text-cream/50 hover:text-cream shrink-0">
+                {isExpanded ? 'Close' : 'View answers'}
+              </button>
+            </div>
+
+            {isExpanded && (
+              <div className="border-t border-cream/10 p-4 space-y-3 bg-navy/30">
+                {a.answers.map((ans) => (
+                  <div key={ans.id} className="text-sm">
+                    <div className="text-cream/40">{ans.label}</div>
+                    <div className="text-cream/85 whitespace-pre-wrap">{ans.answer || <span className="text-cream/30">—</span>}</div>
+                  </div>
+                ))}
+                <div className="flex gap-3 flex-wrap pt-2 border-t border-cream/10">
+                  {(a.uploads || []).map((u) => (
+                    <button key={u.questionId} onClick={() => downloadUpload(a, u)} className="text-xs text-gold/70 hover:text-gold">
+                      ⬇ Download signed PDF — {u.label}
+                    </button>
+                  ))}
+                  <button onClick={() => toggleHandled(a)} className="text-xs text-cream/50 hover:text-cream">
+                    {a.handled ? 'Mark as new' : 'Mark handled'}
+                  </button>
+                  {me.role === 'admin' && (
+                    <button onClick={() => remove(a)} className="text-xs text-red/60 hover:text-red">Delete</button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// VP editor for the public application form: title, intro, and the question
+// list (labels, types, order, required flags, and the PDF-trigger question)
+// are all edited here and stored server-side — no code changes needed.
+const SPEAKER_Q_TYPES = [
+  ['text', 'Short answer'],
+  ['textarea', 'Paragraph'],
+  ['email', 'Email'],
+  ['select', 'Dropdown'],
+  ['yesno', 'Yes / No'],
+];
+
+const SPEAKER_TEMPLATE_MAX_BYTES = 5 * 1024 * 1024;
+
+// PDF template manager for one triggersUpload question. Uploading/removing a
+// template saves immediately (independent of the main "Save Form" button)
+// since the file lives in its own server-side table keyed by question id.
+function SpeakerTemplateUploader({ questionId, fileName, available, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const fileRef = useRef(null);
+
+  function pickFile(e) {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    setError('');
+    const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+    if (!isPdf) { setError('Please upload a PDF file.'); return; }
+    if (f.size > SPEAKER_TEMPLATE_MAX_BYTES) { setError('That PDF is too large — please keep it under 5 MB.'); return; }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      setBusy(true);
+      try {
+        await api(`/speaker-form/template/${encodeURIComponent(questionId)}`, {
+          method: 'PUT', body: { fileName: f.name, fileData: reader.result },
+        });
+        onChanged();
+      } catch (err) { setError(err.message); }
+      finally { setBusy(false); }
+    };
+    reader.readAsDataURL(f);
+  }
+
+  async function removeTemplate() {
+    setBusy(true); setError('');
+    try {
+      await api(`/speaker-form/template/${encodeURIComponent(questionId)}`, { method: 'DELETE' });
+      onChanged();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-3 flex-wrap">
+        {available ? (
+          <span className="text-xs text-emerald-300 truncate">✓ Template: {fileName || 'uploaded'}</span>
+        ) : (
+          <span className="text-xs text-cream/45">No template uploaded yet</span>
+        )}
+        <button type="button" disabled={busy} onClick={() => fileRef.current && fileRef.current.click()}
+          className="text-xs text-gold/70 hover:text-gold disabled:opacity-40">
+          {busy ? 'Saving…' : available ? 'Replace PDF' : 'Upload PDF'}
+        </button>
+        {available && (
+          <button type="button" disabled={busy} onClick={removeTemplate} className="text-xs text-red/60 hover:text-red disabled:opacity-40">Remove</button>
+        )}
+        <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={pickFile} />
+      </div>
+      {error && <div className="text-red text-xs">{error}</div>}
+    </div>
+  );
+}
+
+function SpeakerFormEditor() {
+  const [title, setTitle] = useState('');
+  const [intro, setIntro] = useState('');
+  const [questions, setQuestions] = useState(null); // options held as comma-separated optionsText while editing
+  const [savedAt, setSavedAt] = useState(null);
+  const { loading, error, setError, run } = useAction();
+
+  const load = useCallback(async () => {
+    try {
+      const d = await api('/public/speaker-form');
+      setTitle(d.form.title);
+      setIntro(d.form.intro || '');
+      setQuestions(d.form.questions.map((q) => ({ ...q, optionsText: (q.options || []).join(', ') })));
+    } catch (e) { setError(e.message); }
+  }, [setError]);
+  useEffect(() => { load(); }, [load]);
+
+  if (!questions) return error ? <ErrorState message={error} onRetry={load} /> : <Loading label="Loading form settings…" />;
+
+  const setQ = (i, patch) => setQuestions((qs) => qs.map((q, idx) => idx === i ? { ...q, ...patch } : q));
+  const move = (i, dir) => setQuestions((qs) => {
+    const j = i + dir;
+    if (j < 0 || j >= qs.length) return qs;
+    const next = qs.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    return next;
+  });
+  const removeQ = (i) => setQuestions((qs) => qs.filter((_, idx) => idx !== i));
+  const addQ = () => setQuestions((qs) => [...qs, { id: '', label: '', type: 'text', required: false, optionsText: '' }]);
+
+  async function save() {
+    setSavedAt(null);
+    const payload = {
+      title, intro,
+      questions: questions.map(({ optionsText, templateFileName, templateAvailable, ...q }) => ({
+        ...q,
+        options: q.type === 'select' ? String(optionsText || '').split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+        triggersUpload: q.type === 'yesno' ? !!q.triggersUpload : undefined,
+      })),
+    };
+    try {
+      const d = await run(() => api('/speaker-form', { method: 'PUT', body: payload }));
+      setQuestions(d.form.questions.map((q) => ({ ...q, optionsText: (q.options || []).join(', ') })));
+      setSavedAt(Date.now());
+    } catch (_) {}
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-navy2 border border-cream/10 rounded-xl p-5 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="font-display text-xl text-gold">Public Application Form</div>
+          <a href="/apply-to-speak" target="_blank" rel="noopener" className="text-xs text-gold/60 hover:text-gold">Preview live form ↗</a>
+        </div>
+        <p className="text-xs text-cream/45">
+          Changes here update the public form at <span className="text-gold">/apply-to-speak</span> immediately —
+          reorder, reword, add, or remove questions without touching code.
+        </p>
+        <Field label="Form Title"><input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} /></Field>
+        <Field label="Intro Text"><textarea className={inputCls + ' min-h-[70px]'} value={intro} onChange={(e) => setIntro(e.target.value)} /></Field>
+      </div>
+
+      <div className="space-y-3">
+        {questions.map((q, i) => (
+          <div key={i} className="bg-navy2 border border-cream/10 rounded-xl p-4 space-y-3">
+            <div className="flex items-start gap-2">
+              <div className="flex-1 min-w-0">
+                <Field label={`Question ${i + 1}`}>
+                  <input className={inputCls} value={q.label} placeholder="Question text…" onChange={(e) => setQ(i, { label: e.target.value })} />
+                </Field>
+              </div>
+              <div className="flex flex-col gap-1 pt-5 shrink-0">
+                <button onClick={() => move(i, -1)} disabled={i === 0} className="text-cream/40 hover:text-gold disabled:opacity-20 leading-none" title="Move up">▲</button>
+                <button onClick={() => move(i, 1)} disabled={i === questions.length - 1} className="text-cream/40 hover:text-gold disabled:opacity-20 leading-none" title="Move down">▼</button>
+              </div>
+              <button onClick={() => removeQ(i)} className="text-red/50 hover:text-red pt-5 shrink-0" title="Remove question">✕</button>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+              <label className="flex items-center gap-2 text-sm text-cream/70">
+                Type
+                <select className="bg-navy border border-cream/20 rounded px-2 py-1 text-sm text-cream/80"
+                  value={q.type} onChange={(e) => setQ(i, { type: e.target.value })}>
+                  {SPEAKER_Q_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-sm text-cream/70 cursor-pointer">
+                <input type="checkbox" className="w-4 h-4 accent-gold" checked={!!q.required} onChange={(e) => setQ(i, { required: e.target.checked })} />
+                Required
+              </label>
+              {q.type === 'yesno' && (
+                <label className="flex items-center gap-2 text-sm text-cream/70 cursor-pointer">
+                  <input type="checkbox" className="w-4 h-4 accent-gold" checked={!!q.triggersUpload} onChange={(e) => setQ(i, { triggersUpload: e.target.checked })} />
+                  “Yes” requires a signed PDF
+                </label>
+              )}
+            </div>
+            {q.type === 'select' && (
+              <Field label="Choices (comma-separated)">
+                <input className={inputCls} value={q.optionsText} placeholder="Option one, Option two, Option three"
+                  onChange={(e) => setQ(i, { optionsText: e.target.value })} />
+              </Field>
+            )}
+            {q.type === 'yesno' && q.triggersUpload && (
+              <div className="border-t border-cream/10 pt-3 space-y-3">
+                <Field label="Upload Section Heading"><input className={inputCls} value={q.uploadHeading || ''} placeholder="e.g. AV & Travel Logistics Form (required)" onChange={(e) => setQ(i, { uploadHeading: e.target.value })} /></Field>
+                <Field label="Upload Section Instructions"><textarea className={inputCls + ' min-h-[60px]'} value={q.uploadInstructions || ''} onChange={(e) => setQ(i, { uploadInstructions: e.target.value })} /></Field>
+                {q.id ? (
+                  <SpeakerTemplateUploader questionId={q.id} fileName={q.templateFileName} available={q.templateAvailable} onChanged={load} />
+                ) : (
+                  <p className="text-xs text-cream/45">Save the form once to attach a PDF template for this question.</p>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <Button variant="ghost" onClick={addQ}>+ Add Question</Button>
+
+      {error && <div className="text-red text-sm">{error}</div>}
+      <div className="flex items-center gap-3">
+        <Button variant="gold" onClick={save} disabled={loading}>
+          {loading ? <span className="flex items-center gap-2"><Spinner /> Saving…</span> : 'Save Form'}
+        </Button>
+        {savedAt && <span className="text-emerald-300 text-sm ca-fade-in">✓ Saved — the public form is updated</span>}
       </div>
     </div>
   );
@@ -9089,7 +10295,7 @@ function SocialTrackerPage({ me }) {
 
       {daysSince !== null && daysSince >= 3 && (
         <div className="mb-4 bg-red/10 border border-red/30 rounded-xl px-4 py-3 flex items-start gap-3">
-          <span className="text-xl shrink-0">⚠️</span>
+          <span className="mt-0.5 text-red/80 shrink-0"><AppIcon name="warning" size={18} /></span>
           <div>
             <div className="text-cream font-medium text-sm">No posts logged in {daysSince === 999 ? 'a while' : `${daysSince} day${daysSince === 1 ? '' : 's'}`}</div>
             <div className="text-cream/60 text-xs mt-0.5">The socials manager should log or schedule a new post soon to keep the chapter visible.</div>
@@ -9132,7 +10338,7 @@ function SocialTrackerPage({ me }) {
       {!loaded && <Loading label="Loading posts…" />}
 
       {loaded && posts.length === 0 && (
-        <EmptyState icon="📱" title="No posts tracked yet" hint={canPost ? 'Plan your first post with "+ Add Post" above.' : 'Planned posts will show up here.'} />
+        <EmptyState icon="social" title="No posts tracked yet" hint={canPost ? 'Plan your first post with "+ Add Post" above.' : 'Planned posts will show up here.'} />
       )}
 
       {planned.length > 0 && (
@@ -9147,8 +10353,8 @@ function SocialTrackerPage({ me }) {
                     {p.captionDraft && <div className="text-sm text-cream/80 whitespace-pre-wrap">{p.captionDraft}</div>}
                     {p.imageDescription && <div className="text-xs text-cream/40 mt-1 italic">Visual: {p.imageDescription}</div>}
                     <div className="text-xs text-cream/40 mt-1 flex gap-3 flex-wrap">
-                      {p.scheduledDate && <span>📅 {fmtShortDate(p.scheduledDate)}</span>}
-                      {p.assignedToName && <span>👤 {p.assignedToName}</span>}
+                      {p.scheduledDate && <span className="inline-flex items-center gap-1"><AppIcon name="calendar" size={12} className="text-cream/40" />{fmtShortDate(p.scheduledDate)}</span>}
+                      {p.assignedToName && <span className="inline-flex items-center gap-1"><AppIcon name="person" size={12} className="text-cream/40" />{p.assignedToName}</span>}
                     </div>
                   </div>
                   {canPost && (
@@ -9235,7 +10441,7 @@ function TaskComments({ taskId, me }) {
         onClick={() => setOpen((o) => !o)}
         className="text-xs text-cream/50 hover:text-gold transition-colors flex items-center gap-1"
       >
-        💬 {count !== null ? count : '…'} comment{count !== 1 ? 's' : ''} {open ? '▲' : '▼'}
+        <AppIcon name="testimonial" size={13} className="text-cream/40" /> {count !== null ? count : '…'} comment{count !== 1 ? 's' : ''} {open ? '▲' : '▼'}
       </button>
 
       {open && (
@@ -9425,7 +10631,7 @@ function SearchModal({ me, reports = [], tiles = [], onNavigate, onClose }) {
                 <div className="px-4 py-1 text-[10px] uppercase tracking-wider text-cream/40 font-semibold">Announcements</div>
                 {results.announcements.map((a) => (
                   <div key={a.id} className="px-4 py-2.5 flex items-start gap-3">
-                    <span className="mt-0.5 text-gold/60 text-xs shrink-0">📢</span>
+                    <span className="mt-0.5 text-gold/60 shrink-0"><AppIcon name="megaphone" size={13} /></span>
                     <div className="min-w-0">
                       <div className="text-cream/45 text-xs">{a.authorName}</div>
                       <div className="text-cream text-sm truncate">{a.text}</div>
@@ -9572,7 +10778,7 @@ function GradePipelinePage({ me }) {
       <div>
         <div className="font-display text-2xl text-gold mb-3">Active Prospects & Contacted ({prospects.length})</div>
         {prospects.length === 0
-          ? <EmptyState icon="🎯" title="No active prospects" hint="Add prospects to the roster to start tracking." />
+          ? <EmptyState icon="grades" title="No active prospects" hint="Add prospects to the roster to start tracking." />
           : (
             <div className="space-y-2">
               {prospects.map((p) => {
@@ -9587,7 +10793,7 @@ function GradePipelinePage({ me }) {
                           {p.email && <span>{p.email}</span>}
                           {p.phone && <span>{p.phone}</span>}
                           <Badge tone={p.status === 'Contacted' ? 'blue' : 'slate'}>{p.status}</Badge>
-                          <span className={stale ? 'text-red font-medium' : 'text-cream/40'}>{days} day{days !== 1 ? 's' : ''} in pipeline{stale ? ' ⚠' : ''}</span>
+                          <span className={stale ? 'text-red font-medium' : 'text-cream/40'}>{days} day{days !== 1 ? 's' : ''} in pipeline</span>
                         </div>
                       </div>
                       <div className="flex gap-2 shrink-0">
@@ -9618,7 +10824,6 @@ function GradePipelinePage({ me }) {
 // Expense Reimbursements
 // ---------------------------------------------------------------------------
 const REIMBURSEMENT_CATEGORIES = ['Supplies', 'Food', 'Printing', 'Travel', 'Other'];
-const REIMBURSEMENT_CATEGORY_ICONS = { Supplies: '📦', Food: '🍕', Printing: '🖨', Travel: '🚗', Other: '📎' };
 
 function ReimbursementsPage({ me }) {
   const [items, setItems] = useState(null);
@@ -9716,7 +10921,7 @@ function ReimbursementsPage({ me }) {
               <div key={r.id} className="bg-navy2 border border-gold/20 rounded-xl p-4">
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div>
-                    <div className="font-medium text-cream">{fmt(r.amount)} · {REIMBURSEMENT_CATEGORY_ICONS[r.category] || ''} {r.category}</div>
+                    <div className="font-medium text-cream">{fmt(r.amount)} · {r.category}</div>
                     {r.description && <div className="text-sm text-cream/60 mt-0.5">{r.description}</div>}
                     <div className="text-xs text-cream/40 mt-1">By {r.submitterName}{r.submitterTitle ? ` · ${r.submitterTitle}` : ''} · purchased {r.purchaseDate}</div>
                   </div>
@@ -9747,13 +10952,13 @@ function ReimbursementsPage({ me }) {
         {items === null && <Loading label="Loading…" />}
         {items !== null && (
           (isManager ? items : mine).length === 0
-            ? <EmptyState icon="💳" title="No reimbursements yet" hint="Submit a request when you make a purchase for the club." />
+            ? <EmptyState icon="reimbursements" title="No reimbursements yet" hint="Submit a request when you make a purchase for the club." />
             : (
               <div className="space-y-2">
                 {(isManager ? items : mine).map((r) => (
                 <div key={r.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 flex items-center justify-between gap-3 flex-wrap">
                   <div className="min-w-0">
-                    <div className="text-cream text-sm font-medium">{fmt(r.amount)} · {REIMBURSEMENT_CATEGORY_ICONS[r.category] || ''} {r.category}</div>
+                    <div className="text-cream text-sm font-medium">{fmt(r.amount)} · {r.category}</div>
                     {r.description && <div className="text-xs text-cream/50 truncate">{r.description}</div>}
                     <div className="text-xs text-cream/40 mt-0.5">
                       {isManager && r.submitterName ? `${r.submitterName} · ` : ''}purchased {r.purchaseDate}
@@ -9813,7 +11018,7 @@ function DirectoryPage({ me }) {
 
       {users === null && <Loading label="Loading directory…" />}
       {users !== null && filtered.length === 0 && (
-        <EmptyState icon="👥" title="No members found" hint="Try a different search term." />
+        <EmptyState icon="team" title="No members found" hint="Try a different search term." />
       )}
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -10058,7 +11263,7 @@ function AttendancePage({ me }) {
         <div className="md:col-span-2 space-y-2">
           {events === null && <Loading label="Loading events…" />}
           {events !== null && events.length === 0 && (
-            <EmptyState icon="📅" title="No events yet" hint="Create an event to start tracking attendance." />
+            <EmptyState icon="calendar" title="No events yet" hint="Create an event to start tracking attendance." />
           )}
           {(events || []).map((ev) => (
             <div key={ev.id} className={`bg-navy2 border rounded-xl transition-all duration-150 ${activeEvent === ev.id ? 'border-gold/60 bg-navy3' : 'border-cream/10'}`}>
@@ -10082,7 +11287,7 @@ function AttendancePage({ me }) {
                 <div className="px-4 pb-3">
                   <button onClick={() => setRollCallEvent(ev.id)}
                     className="text-xs text-gold/70 hover:text-gold border border-gold/30 hover:border-gold/60 rounded px-2.5 py-1 transition-colors">
-                    📋 Roll Call
+                    Roll Call
                   </button>
                 </div>
               )}
@@ -10351,7 +11556,7 @@ function PollsPage({ me }) {
       )}
 
       {polls === null && <Loading label="Loading polls…" />}
-      {polls !== null && polls.length === 0 && <EmptyState icon="🗳️" title="No polls yet" hint={canCreate ? 'Create a poll to get the board\'s opinion on something.' : 'No active polls from the President.'} />}
+      {polls !== null && polls.length === 0 && <EmptyState icon="poll" title="No polls yet" hint={canCreate ? 'Create a poll to get the board\'s opinion on something.' : 'No active polls from the President.'} />}
 
       <div className="space-y-4">
         {(polls || []).map((poll) => {
@@ -10503,7 +11708,7 @@ function TestimonialsSection({ bare = false }) {
     return bare ? <div className="flex items-center justify-center gap-2 text-cream/50 py-12"><Spinner /> Loading…</div> : null;
   }
   if (items.length === 0) {
-    return bare ? <EmptyState icon="💬" title="No testimonials yet" hint="Check back soon to hear what our members have to say." /> : null;
+    return bare ? <EmptyState icon="testimonial" title="No testimonials yet" hint="Check back soon to hear what our members have to say." /> : null;
   }
 
   const grid = (
@@ -10564,7 +11769,7 @@ function TestimonialsCarousel({ onNavigate }) {
     if (paused || count <= 1) return;
     const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (reduce) return;
-    const id = setInterval(() => setIdx((i) => (i + 1) % count), 6500);
+    const id = setInterval(() => setIdx((i) => (i + 1) % count), 9000);
     return () => clearInterval(id);
   }, [paused, count]);
 
@@ -10659,7 +11864,9 @@ function NewsletterSignup() {
   if (done) {
     return (
       <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6 text-center">
-        <div className="text-3xl mb-2">✉️</div>
+        <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-gold/15 border border-gold/40 flex items-center justify-center">
+          <AppIcon name="newsletter" size={22} className="text-gold" />
+        </div>
         <div className="font-display text-2xl text-gold mb-1">You're subscribed!</div>
         <p className="text-cream/60 text-sm">We'll keep you in the loop on Club America news and events.</p>
       </section>
@@ -10743,7 +11950,9 @@ function TestimonialSubmitPage({ token }) {
   if (tokenError) return (
     <div className="min-h-screen flex items-center justify-center p-6 text-center" style={{ background: '#0d1b2e' }}>
       <div>
-        <div className="text-5xl mb-4">🔗</div>
+        <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-red/10 border border-red/30 flex items-center justify-center">
+          <AppIcon name="warning" size={24} className="text-red/80" />
+        </div>
         <div className="font-display text-3xl text-gold mb-2">Link Not Valid</div>
         <p className="text-cream/60 max-w-sm">{tokenError}</p>
       </div>
@@ -10757,9 +11966,10 @@ function TestimonialSubmitPage({ token }) {
   );
 
   if (done) return (
-    <div className="min-h-screen flex items-center justify-center p-6 text-center" style={{ background: '#0d1b2e' }}>
-      <div>
-        <div className="text-5xl mb-4">🎉</div>
+    <div className="relative min-h-screen flex items-center justify-center p-6 text-center" style={{ background: '#0d1b2e' }}>
+      <PatriotBackdrop stripes />
+      <div className="relative">
+        <SuccessMark className="mb-4" />
         <div className="font-display text-3xl text-gold mb-2">Thanks{form.name ? `, ${form.name}` : ''}!</div>
         <p className="text-cream/60 max-w-sm">Your testimonial has been submitted and is under review. We'll publish it once approved.</p>
       </div>
@@ -10767,11 +11977,13 @@ function TestimonialSubmitPage({ token }) {
   );
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6" style={{ background: '#0d1b2e' }}>
-      <div className="w-full max-w-lg">
+    <div className="relative min-h-screen flex items-center justify-center p-6" style={{ background: '#0d1b2e' }}>
+      <PatriotBackdrop />
+      <div className="relative w-full max-w-lg">
         <div className="text-center mb-8">
           <Logo size="sidebar" className="mb-4 mx-auto" />
           <h1 className="font-display text-3xl text-gold">Share Your Story</h1>
+          <StarDivider compact className="mt-2" />
           <p className="text-cream/60 text-sm mt-1">
             {token && prefill
               ? `Hi ${prefill.name}! Tell the world what Club America means to you.`
@@ -11075,7 +12287,7 @@ function TestimonialsAdminPage({ me }) {
       <div>
         <div className="font-display text-2xl text-gold mb-3">Published ({approved.length})</div>
         {approved.length === 0 ? (
-          <EmptyState icon="💬" title="No published testimonials yet" hint="Approve a submission above, or add one directly." />
+          <EmptyState icon="testimonial" title="No published testimonials yet" hint="Approve a submission above, or add one directly." />
         ) : (
           <div className="space-y-2">
             {approved.map((t, idx) => (
@@ -11251,7 +12463,7 @@ function NewsletterAdminPage({ me }) {
         </div>
         <div className="flex flex-wrap gap-3">
           <Button variant="gold" onClick={copyEmails} disabled={allActive.length === 0}>
-            📋 Copy All Emails ({allActive.length})
+            Copy All Emails ({allActive.length})
           </Button>
           <Button variant="ghost" onClick={exportCSV} disabled={allActive.length === 0}>
             ↓ Export CSV
@@ -11314,7 +12526,7 @@ function NewsletterAdminPage({ me }) {
           );
         })}
         {visibleList.length === 0 && subscribers && (
-          <EmptyState icon="✉️" title="No subscribers yet" hint="Subscribers appear here once members or visitors sign up." />
+          <EmptyState icon="newsletter" title="No subscribers yet" hint="Subscribers appear here once members or visitors sign up." />
         )}
       </div>
     </div>
@@ -11330,7 +12542,9 @@ class ErrorBoundary extends React.Component {
     if (this.state.err) {
       return (
         <div className="min-h-screen flex flex-col items-center justify-center text-center gap-3 p-6">
-          <div className="text-4xl">⚠️</div>
+          <div className="w-14 h-14 rounded-full bg-red/10 border border-red/30 flex items-center justify-center">
+            <AppIcon name="warning" size={26} className="text-red/80" />
+          </div>
           <div className="font-display text-2xl text-gold">Something went wrong</div>
           <div className="text-cream/70 max-w-md text-sm">{String((this.state.err && this.state.err.message) || this.state.err)}</div>
           <button onClick={() => location.reload()} className="mt-2 bg-red text-cream px-4 py-2 rounded-md text-sm">Reload</button>
