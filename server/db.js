@@ -525,6 +525,75 @@ function init() {
       subscribedAt TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_newsletter_email ON newsletter_subscribers(lower(email));
+
+    -- Merch shop: items the secretary/admins stock and sell publicly.
+    CREATE TABLE IF NOT EXISTS merch_items (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      name          TEXT NOT NULL,
+      description   TEXT NOT NULL DEFAULT '',
+      price         INTEGER NOT NULL DEFAULT 0,
+      photo         TEXT NOT NULL DEFAULT '',
+      hasVariants   INTEGER NOT NULL DEFAULT 0,
+      inventory     INTEGER NOT NULL DEFAULT 0,
+      active        INTEGER NOT NULL DEFAULT 1,
+      createdById   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      createdAt     TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_merch_items_active ON merch_items(active, name);
+
+    -- Size/color variants for an item, each with its own inventory count.
+    CREATE TABLE IF NOT EXISTS merch_variants (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      itemId         INTEGER NOT NULL REFERENCES merch_items(id) ON DELETE CASCADE,
+      label          TEXT NOT NULL,
+      inventory      INTEGER NOT NULL DEFAULT 0,
+      priceOverride  INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_merch_variants_item ON merch_variants(itemId);
+
+    -- Promo codes: free items or discounts, optionally student-only + capped usage.
+    CREATE TABLE IF NOT EXISTS merch_promo_codes (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      code          TEXT NOT NULL UNIQUE,
+      type          TEXT NOT NULL DEFAULT 'percent',
+      value         INTEGER NOT NULL DEFAULT 0,
+      itemId        INTEGER REFERENCES merch_items(id) ON DELETE CASCADE,
+      studentOnly   INTEGER NOT NULL DEFAULT 0,
+      usageLimit    INTEGER,
+      usedCount     INTEGER NOT NULL DEFAULT 0,
+      active        INTEGER NOT NULL DEFAULT 1,
+      createdById   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      createdAt     TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Orders placed from the public shop.
+    CREATE TABLE IF NOT EXISTS merch_orders (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      itemId                INTEGER REFERENCES merch_items(id) ON DELETE SET NULL,
+      variantId             INTEGER REFERENCES merch_variants(id) ON DELETE SET NULL,
+      itemName              TEXT NOT NULL DEFAULT '',
+      variantLabel          TEXT NOT NULL DEFAULT '',
+      quantity              INTEGER NOT NULL DEFAULT 1,
+      buyerName             TEXT NOT NULL DEFAULT '',
+      buyerEmail            TEXT NOT NULL DEFAULT '',
+      buyerPhone            TEXT NOT NULL DEFAULT '',
+      deliveryMethod        TEXT NOT NULL DEFAULT 'ship',
+      shippingAddress       TEXT NOT NULL DEFAULT '',
+      studentEmail          TEXT NOT NULL DEFAULT '',
+      promoCodeId           INTEGER REFERENCES merch_promo_codes(id) ON DELETE SET NULL,
+      promoCode             TEXT NOT NULL DEFAULT '',
+      discountAmount        INTEGER NOT NULL DEFAULT 0,
+      subtotal              INTEGER NOT NULL DEFAULT 0,
+      total                 INTEGER NOT NULL DEFAULT 0,
+      paymentMethod         TEXT NOT NULL DEFAULT 'inperson',
+      paymentStatus         TEXT NOT NULL DEFAULT 'pending',
+      fulfillmentStatus     TEXT NOT NULL DEFAULT 'pending',
+      stripePaymentIntentId TEXT NOT NULL DEFAULT '',
+      notes                 TEXT NOT NULL DEFAULT '',
+      createdAt             TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_merch_orders_status ON merch_orders(fulfillmentStatus, createdAt DESC);
+    CREATE INDEX IF NOT EXISTS idx_merch_orders_stripe ON merch_orders(stripePaymentIntentId);
   `);
 
   // User column migrations.
