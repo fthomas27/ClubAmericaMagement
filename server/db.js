@@ -179,6 +179,25 @@ function init() {
       ipAddress TEXT NOT NULL DEFAULT ''
     );
 
+    -- Public website visit log (page views on the public marketing site).
+    CREATE TABLE IF NOT EXISTS site_visits (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      visitorId   TEXT NOT NULL DEFAULT '',
+      path        TEXT NOT NULL DEFAULT '/',
+      referrer    TEXT NOT NULL DEFAULT '',
+      ipAddress   TEXT NOT NULL DEFAULT '',
+      country     TEXT NOT NULL DEFAULT '',
+      region      TEXT NOT NULL DEFAULT '',
+      city        TEXT NOT NULL DEFAULT '',
+      userAgent   TEXT NOT NULL DEFAULT '',
+      durationSec INTEGER NOT NULL DEFAULT 0,
+      viewedAt    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_site_visits_viewedat
+      ON site_visits(viewedAt DESC);
+    CREATE INDEX IF NOT EXISTS idx_site_visits_visitor
+      ON site_visits(visitorId);
+
     -- AI-generated private notes for individual board members.
     CREATE TABLE IF NOT EXISTS ai_notes (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -4,6 +4,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
+const geoip = require('geoip-lite');
 
 // Keep a single stray error from taking the whole process down (which makes the
 // host restart the app — the "crash then reboot and load" loop). We log it and
@@ -436,6 +437,38 @@ app.post('/api/track', rateLimit({ windowMs: 60 * 1000, max: 120, name: 'track' 
   if (!event || typeof event !== 'string') return res.status(400).json({ error: 'event required' });
   db.prepare('INSERT INTO page_events (event, label) VALUES (?, ?)')
     .run(String(event).slice(0, 80), String(label || '').slice(0, 200));
+  res.json({ ok: true });
+});
+
+// Public site-visit tracking — records a page view on the public marketing
+// site (path, referrer, rough geo from IP). No auth required.
+app.post('/api/site-visit', rateLimit({ windowMs: 60 * 1000, max: 120, name: 'site-visit' }), (req, res) => {
+  const { visitorId, path: visitPath, referrer } = req.body || {};
+  const ip = String(req.ip || '').trim();
+  const geo = geoip.lookup(ip) || {};
+  const info = db.prepare(`
+    INSERT INTO site_visits (visitorId, path, referrer, ipAddress, country, region, city, userAgent)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    String(visitorId || '').slice(0, 64),
+    String(visitPath || '/').slice(0, 200),
+    String(referrer || '').slice(0, 300),
+    ip,
+    geo.country || '',
+    (geo.region || ''),
+    geo.city || '',
+    String(req.headers['user-agent'] || '').slice(0, 300)
+  );
+  res.json({ ok: true, id: info.lastInsertRowid });
+});
+
+// Beacon-friendly duration update for a previously logged site visit — sent
+// via navigator.sendBeacon on page change / unload, so it must accept a POST.
+app.post('/api/site-visit/:id/duration', rateLimit({ windowMs: 60 * 1000, max: 120, name: 'site-visit-duration' }), (req, res) => {
+  const id = Number(req.params.id);
+  const durationSec = Math.max(0, Math.min(21600, Number(req.body?.durationSec) || 0));
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
+  db.prepare('UPDATE site_visits SET durationSec = ? WHERE id = ?').run(durationSec, id);
   res.json({ ok: true });
 });
 
@@ -2882,6 +2915,83 @@ app.get('/api/logistics/stats', (req, res) => {
     ORDER BY CAST(label AS INTEGER) ASC, label ASC
   `).all();
   res.json({ stats, perUserDaily, teamDaily, recentLogins, demographics: { totalMembers, genderBreakdown, gradeBreakdown }, engagementSummary, recentEvents });
+});
+
+// ---- Site Activity dashboard (public website traffic — admin or canViewLogistics) -
+app.get('/api/site-activity/stats', (req, res) => {
+  if (req.user.role !== 'admin' && !req.user.canViewLogistics) return res.status(403).json({ error: 'Access denied' });
+
+  const totals = db.prepare(`
+    SELECT
+      COUNT(*) AS allTimeViews,
+      COUNT(DISTINCT visitorId) AS allTimeVisitors,
+      SUM(CASE WHEN date(viewedAt) = date('now') THEN 1 ELSE 0 END) AS todayViews,
+      COUNT(DISTINCT CASE WHEN date(viewedAt) = date('now') THEN visitorId END) AS todayVisitors,
+      AVG(CASE WHEN durationSec > 0 THEN durationSec END) AS avgDurationSec
+    FROM site_visits
+  `).get();
+
+  const dailyTrend = db.prepare(`
+    SELECT DATE(viewedAt) AS day, COUNT(*) AS views, COUNT(DISTINCT visitorId) AS visitors
+    FROM site_visits
+    WHERE viewedAt >= DATE('now', '-13 days')
+    GROUP BY day
+    ORDER BY day ASC
+  `).all();
+
+  const topPages = db.prepare(`
+    SELECT path, COUNT(*) AS views, AVG(CASE WHEN durationSec > 0 THEN durationSec END) AS avgDurationSec
+    FROM site_visits
+    GROUP BY path
+    ORDER BY views DESC
+    LIMIT 20
+  `).all();
+
+  const topLocations = db.prepare(`
+    SELECT
+      CASE WHEN city != '' THEN city ELSE 'Unknown' END AS city,
+      region, country, COUNT(*) AS views
+    FROM site_visits
+    WHERE country != ''
+    GROUP BY city, region, country
+    ORDER BY views DESC
+    LIMIT 15
+  `).all();
+
+  const directCount = db.prepare(`SELECT COUNT(*) AS n FROM site_visits WHERE referrer = ''`).get().n;
+  const referrerRows = db.prepare(`
+    SELECT referrer, COUNT(*) AS count FROM site_visits
+    WHERE referrer != ''
+    GROUP BY referrer
+    ORDER BY count DESC
+    LIMIT 100
+  `).all();
+  // Bucket raw referrer URLs into a friendly source name by hostname.
+  const sourceCounts = new Map();
+  const bump = (name, n) => sourceCounts.set(name, (sourceCounts.get(name) || 0) + n);
+  bump('Direct', directCount);
+  for (const r of referrerRows) {
+    let host = '';
+    try { host = new URL(r.referrer).hostname.replace(/^www\./, ''); } catch (_) { host = ''; }
+    if (!host) { bump('Other', r.count); continue; }
+    if (host.includes('google.')) bump('Google', r.count);
+    else if (host.includes('instagram.')) bump('Instagram', r.count);
+    else if (host.includes('facebook.') || host.includes('fb.')) bump('Facebook', r.count);
+    else if (host.includes('youtube.')) bump('YouTube', r.count);
+    else if (host.includes('bing.')) bump('Bing', r.count);
+    else if (host.includes('t.co') || host.includes('twitter.') || host.includes('x.com')) bump('Twitter/X', r.count);
+    else bump(host, r.count);
+  }
+  const topSources = Array.from(sourceCounts, ([source, count]) => ({ source, count })).sort((a, b) => b.count - a.count);
+
+  const recentVisits = db.prepare(`
+    SELECT id, visitorId, path, referrer, country, region, city, ipAddress, durationSec, viewedAt
+    FROM site_visits
+    ORDER BY viewedAt DESC
+    LIMIT 200
+  `).all();
+
+  res.json({ totals, dailyTrend, topPages, topLocations, topSources, recentVisits });
 });
 
 // ---- Grade Pipeline ---------------------------------------------------------

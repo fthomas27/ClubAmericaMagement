@@ -43,6 +43,36 @@ function track(event, label = '') {
 }
 
 // ---------------------------------------------------------------------------
+// Public site visit tracking — page views on the marketing site (path,
+// referrer, rough geo from IP, time on page). Never blocks the UI.
+// ---------------------------------------------------------------------------
+const VISITOR_ID_KEY = 'ca_visitor_id';
+function getVisitorId() {
+  let id = localStorage.getItem(VISITOR_ID_KEY);
+  if (!id) {
+    id = window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem(VISITOR_ID_KEY, id);
+  }
+  return id;
+}
+
+function trackSiteVisit(path) {
+  return fetch('/api/site-visit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ visitorId: getVisitorId(), path, referrer: document.referrer }),
+  }).then((r) => r.json()).catch(() => null);
+}
+
+// Sent via sendBeacon so it survives tab close / navigation away.
+function sendVisitDuration(id, durationSec) {
+  if (!id || durationSec <= 0) return;
+  const payload = new Blob([JSON.stringify({ durationSec })], { type: 'application/json' });
+  if (navigator.sendBeacon) navigator.sendBeacon(`/api/site-visit/${id}/duration`, payload);
+  else fetch(`/api/site-visit/${id}/duration`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true }).catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
 // Small UI primitives
 // ---------------------------------------------------------------------------
 function Badge({ children, tone = 'gold' }) {
@@ -1884,6 +1914,7 @@ const ALL_TABS_BY_SECTION = [
     { type: 'newsletter',   label: 'Newsletter' },
     { type: 'admin',        label: 'Admin Panel' },
     { type: 'logistics',    label: 'Login Activity' },
+    { type: 'siteactivity', label: 'Site Activity' },
     { type: 'ai',           label: 'AI Assistant' },
   ]},
 ];
@@ -3772,6 +3803,31 @@ function PublicSite({ home, events, volunteerEvents, onEnterPortal }) {
     const onPop = () => setPage(publicPageFromPath(window.location.pathname));
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  // Log a page view every time the visible page changes, and report back how
+  // long the visitor spent on the previous page (site-activity analytics).
+  const visitRef = useRef({ id: null, start: 0 });
+  useEffect(() => {
+    const prev = visitRef.current;
+    if (prev.id) sendVisitDuration(prev.id, Math.round((Date.now() - prev.start) / 1000));
+    visitRef.current = { id: null, start: Date.now() };
+    trackSiteVisit(window.location.pathname).then((d) => {
+      if (d && d.id) visitRef.current.id = d.id;
+    });
+  }, [page]);
+  useEffect(() => {
+    const flush = () => {
+      const cur = visitRef.current;
+      if (cur.id) sendVisitDuration(cur.id, Math.round((Date.now() - cur.start) / 1000));
+    };
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flush(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', flush);
+    };
   }, []);
 
   const navigate = useCallback((key) => {
@@ -5948,6 +6004,229 @@ function LogisticsPage() {
 }
 
 // ---------------------------------------------------------------------------
+// Site Activity dashboard — public website traffic (views, source, location,
+// time on page). Same audience as Login Activity (admin / canViewLogistics).
+// ---------------------------------------------------------------------------
+function SiteActivityPage() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [tab, setTab] = useState('overview');
+  const [visitsVisible, setVisitsVisible] = useState(50);
+
+  const load = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const d = await api('/site-activity/stats');
+      setData(d);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  function fmtDate(dt) {
+    if (!dt) return '—';
+    const d = new Date(dt.includes('T') || dt.includes('Z') ? dt : dt + 'Z');
+    return d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+
+  function fmtDuration(sec) {
+    const n = Number(sec) || 0;
+    if (n <= 0) return '—';
+    if (n < 60) return `${n}s`;
+    const m = Math.floor(n / 60);
+    const s = n % 60;
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  }
+
+  if (loading) return <Loading label="Loading site activity…" />;
+  if (error) return <div className="p-6 max-w-6xl"><ErrorState message={error} onRetry={load} /></div>;
+  if (!data) return null;
+
+  const { totals, dailyTrend = [], topPages = [], topLocations = [], topSources = [], recentVisits = [] } = data;
+
+  const DAY_LABELS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+  const dayLabel = (iso) => DAY_LABELS[new Date(iso + 'T12:00:00Z').getUTCDay()];
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  const pageLabel = (p) => (PUBLIC_PAGES.find((x) => x.path === p) || {}).label || p;
+
+  const TabBtn = ({ id, label }) => (
+    <button
+      onClick={() => setTab(id)}
+      className={`text-sm px-4 py-2 border-b-2 transition-all duration-150 ${
+        tab === id ? 'border-gold text-gold' : 'border-transparent text-cream/50 hover:text-cream/80'
+      }`}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="p-6 max-w-6xl space-y-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold text-cream">Site Activity Dashboard</h1>
+          <p className="text-cream/45 text-xs mt-0.5">Public website traffic — page views, sources, and locations</p>
+        </div>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="shrink-0 text-xs text-gold/80 hover:text-gold border border-gold/30 hover:border-gold/60 px-3 py-1.5 rounded transition-colors disabled:opacity-40 flex items-center gap-1.5"
+        >
+          {loading ? <><Spinner className="w-3 h-3" /> Refreshing…</> : 'Refresh'}
+        </button>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[
+          { label: 'Views Today', value: totals.todayViews || 0, color: 'text-gold' },
+          { label: 'Visitors Today', value: totals.todayVisitors || 0, color: 'text-emerald-400' },
+          { label: 'All-Time Views', value: totals.allTimeViews || 0, color: 'text-sky-400' },
+          { label: 'Avg. Time on Page', value: fmtDuration(Math.round(totals.avgDurationSec || 0)), color: 'text-cream/80' },
+        ].map(({ label, value, color }) => (
+          <div key={label} className="bg-navy2 rounded-lg p-4 border border-cream/10">
+            <div className={`text-2xl font-bold ${color}`}>{value}</div>
+            <div className="text-cream/50 text-xs mt-0.5">{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-0 border-b border-cream/10">
+        <TabBtn id="overview" label="Overview" />
+        <TabBtn id="sources" label="Sources & Locations" />
+        <TabBtn id="visits" label={`Recent Visits (${recentVisits.length})`} />
+      </div>
+
+      {tab === 'overview' && (
+        <div className="space-y-4">
+          {/* 14-day trend chart */}
+          {dailyTrend.length > 0 && (() => {
+            const maxViews = Math.max(...dailyTrend.map((d) => d.views), 1);
+            return (
+              <div className="bg-navy2 rounded-lg p-4 border border-cream/10">
+                <div className="text-cream/50 text-xs mb-3">Page views — last 14 days</div>
+                <div className="flex items-end gap-1 h-12">
+                  {dailyTrend.map((d) => {
+                    const h = Math.max(4, Math.round((d.views / maxViews) * 48));
+                    const isToday = d.day === todayStr;
+                    return (
+                      <div key={d.day} className="flex-1 flex flex-col items-center gap-0.5 group relative">
+                        <div
+                          className={`w-full rounded-sm ${isToday ? 'bg-gold' : 'bg-cream/25 group-hover:bg-cream/40'} transition-colors`}
+                          style={{ height: h }}
+                          title={`${d.day}: ${d.views} view${d.views !== 1 ? 's' : ''}, ${d.visitors} visitor${d.visitors !== 1 ? 's' : ''}`}
+                        />
+                        {isToday && <div className="absolute -bottom-4 text-gold text-[9px]">today</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
+                  <th className="pb-2 pr-4 font-medium">Page</th>
+                  <th className="pb-2 pr-4 font-medium text-center">Views</th>
+                  <th className="pb-2 font-medium text-center">Avg. Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topPages.map((p) => (
+                  <tr key={p.path} className="border-b border-cream/5 hover:bg-cream/3">
+                    <td className="py-2.5 pr-4 text-cream font-medium">{pageLabel(p.path)}</td>
+                    <td className="py-2.5 pr-4 text-cream/70 text-center">{p.views}</td>
+                    <td className="py-2.5 text-cream/50 text-center">{fmtDuration(Math.round(p.avgDurationSec || 0))}</td>
+                  </tr>
+                ))}
+                {topPages.length === 0 && (
+                  <tr><td colSpan={3} className="py-8 text-center text-cream/25 text-sm">No visits recorded yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'sources' && (
+        <div className="grid md:grid-cols-2 gap-6">
+          <div>
+            <div className="text-cream/50 text-xs mb-2">Where visitors come from</div>
+            <div className="space-y-1.5">
+              {topSources.map((s) => (
+                <div key={s.source} className="flex items-center justify-between bg-navy2 rounded px-3 py-2 border border-cream/10">
+                  <span className="text-cream text-sm">{s.source}</span>
+                  <span className="text-cream/60 text-xs font-semibold">{s.count}</span>
+                </div>
+              ))}
+              {topSources.length === 0 && <div className="text-cream/25 text-sm py-4 text-center">No visits recorded yet.</div>}
+            </div>
+          </div>
+          <div>
+            <div className="text-cream/50 text-xs mb-2">Visitor locations</div>
+            <div className="space-y-1.5">
+              {topLocations.map((l, i) => (
+                <div key={`${l.city}-${l.region}-${l.country}-${i}`} className="flex items-center justify-between bg-navy2 rounded px-3 py-2 border border-cream/10">
+                  <span className="text-cream text-sm">{[l.city, l.region, l.country].filter(Boolean).join(', ')}</span>
+                  <span className="text-cream/60 text-xs font-semibold">{l.views}</span>
+                </div>
+              ))}
+              {topLocations.length === 0 && <div className="text-cream/25 text-sm py-4 text-center">No location data yet.</div>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'visits' && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
+                <th className="pb-2 pr-4 font-medium">Time</th>
+                <th className="pb-2 pr-4 font-medium">Page</th>
+                <th className="pb-2 pr-4 font-medium">Location</th>
+                <th className="pb-2 pr-4 font-medium">Duration</th>
+                <th className="pb-2 font-medium">IP Address</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentVisits.slice(0, visitsVisible).map((v) => (
+                <tr key={v.id} className="border-b border-cream/5 hover:bg-cream/3">
+                  <td className="py-2.5 pr-4 text-cream/55 text-xs whitespace-nowrap">{fmtDate(v.viewedAt)}</td>
+                  <td className="py-2.5 pr-4 text-cream font-medium">{pageLabel(v.path)}</td>
+                  <td className="py-2.5 pr-4 text-cream/55 text-xs">{[v.city, v.region, v.country].filter(Boolean).join(', ') || '—'}</td>
+                  <td className="py-2.5 pr-4 text-cream/55 text-xs">{fmtDuration(v.durationSec)}</td>
+                  <td className="py-2.5 text-cream/35 text-xs font-mono">{v.ipAddress || '—'}</td>
+                </tr>
+              ))}
+              {recentVisits.length === 0 && (
+                <tr><td colSpan={5} className="py-8 text-center text-cream/25 text-sm">No visits recorded yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+          {recentVisits.length > visitsVisible && (
+            <div className="text-center pt-3">
+              <Button variant="ghost" onClick={() => setVisitsVisible((v) => v + 50)}>Show more ({recentVisits.length - visitsVisible} more)</Button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // AI Notes panel (modal overlay)
 // ---------------------------------------------------------------------------
 function AINotesPanel({ onClose, onRead }) {
@@ -7071,6 +7350,7 @@ function AppIcon({ name, className, size = 26 }) {
     case 'org':       return <svg {...p}><circle cx="12" cy="4" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 6v5M12 11H5v6M12 11h7v6"/></svg>;
     case 'admin':     return <svg {...p}><path d="M12 2 3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7Z"/><path d="m9 12 2 2 4-4"/></svg>;
     case 'activity':  return <svg {...p}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>;
+    case 'globe':     return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18Z"/></svg>;
     case 'ai':        return <svg {...p}><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/><circle cx="12" cy="12" r="4.5"/></svg>;
     case 'bell':      return <svg {...p}><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>;
     case 'search':    return <svg {...p}><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>;
@@ -7172,6 +7452,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
         ...(me.role === 'admin' && visible('newsletter')   ? [{ type: 'newsletter',   label: 'Newsletter',     icon: 'newsletter'  }] : []),
         ...(me.role === 'admin' && visible('admin')        ? [{ type: 'admin',        label: 'Admin Panel',    icon: 'admin'       }] : []),
         ...((me.role === 'admin' || !!me.canViewLogistics) && visible('logistics') ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }] : []),
+        ...((me.role === 'admin' || !!me.canViewLogistics) && visible('siteactivity') ? [{ type: 'siteactivity', label: 'Site Activity', icon: 'globe' }] : []),
         ...(me.role === 'admin' && visible('ai')           ? [{ type: 'ai',           label: 'AI Assistant',   icon: 'ai'          }] : []),
       ],
     },
@@ -7677,6 +7958,7 @@ function App() {
     ...(canEditSite                           ? [{ type: 'website',     label: 'Edit Website' }] : []),
     ...(me.role === 'admin'                   ? [{ type: 'admin',       label: 'Admin Panel' }] : []),
     ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity' }] : []),
+    ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'siteactivity', label: 'Site Activity' }] : []),
     ...(me.role === 'admin'                   ? [{ type: 'ai',          label: 'AI Assistant' }] : []),
   ].filter(t => !meHiddenTabs.has(t.type));
   // "Agent Notes" is a modal, not a routed view — open it instead of navigating
@@ -7719,7 +8001,7 @@ function App() {
     grades: 'Grade Pipeline', reimbursements: 'Reimbursements', directory: 'Board Directory',
     resources: 'Resource Hub', volunteers: 'Volunteer Manager',
     photos: 'Photo Approvals',
-    org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity',
+    org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity', siteactivity: 'Site Activity',
     ai: 'AI Assistant', howto: 'How-To / Q&A', password: 'Change Password', profile: 'Edit Profile',
     testimonials: 'Testimonials', newsletter: 'Newsletter',
   };
@@ -7742,6 +8024,7 @@ function App() {
   else if (view.type === 'org') content = <OrgChart />;
   else if (view.type === 'admin') content = me.role === 'admin' ? <AdminPanel users={users} reload={bump} /> : null;
   else if (view.type === 'logistics') content = (me.role === 'admin' || me.canViewLogistics) ? <LogisticsPage /> : null;
+  else if (view.type === 'siteactivity') content = (me.role === 'admin' || me.canViewLogistics) ? <SiteActivityPage /> : null;
   else if (view.type === 'ai') content = me.role === 'admin' ? <AIChatPage me={me} /> : null;
   else if (view.type === 'howto') content = isMgrOrAdmin ? <HowToPage me={me} /> : null;
   else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;
