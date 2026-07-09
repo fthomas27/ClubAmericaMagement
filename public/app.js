@@ -4550,6 +4550,188 @@ function AddRosterMemberForm({ me, onCreated }) {
   );
 }
 
+function ImportRosterMembersForm({ me, onImported }) {
+  const [open, setOpen] = useState(false);
+  const [importType, setImportType] = useState(null); // 'file' or 'google-sheets'
+  const [googleSheetUrl, setGoogleSheetUrl] = useState('');
+  const { loading, error, setError, run } = useAction();
+
+  async function handleFileUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setError('');
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      await run(() =>
+        fetch('/api/roster/import-file', {
+          method: 'POST',
+          body: formData,
+        }).then(async (res) => {
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || 'Import failed');
+          }
+          return res.json();
+        })
+      );
+      setOpen(false);
+      setImportType(null);
+      onImported();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleGoogleSheets(e) {
+    e.preventDefault();
+    if (!googleSheetUrl.trim()) {
+      setError('Please enter a Google Sheets URL');
+      return;
+    }
+
+    setError('');
+    try {
+      await run(() =>
+        api('/roster/import-google-sheets', {
+          method: 'POST',
+          body: { url: googleSheetUrl.trim() },
+        })
+      );
+      setGoogleSheetUrl('');
+      setOpen(false);
+      setImportType(null);
+      onImported();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  if (!open) {
+    return <Button variant="ghost">📥 Import Members</Button>;
+  }
+
+  if (!importType) {
+    return (
+      <div className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3 ca-slide-up">
+        <div className="font-display text-xl text-gold">Import Members</div>
+        <p className="text-sm text-cream/70">Choose import method:</p>
+        <div className="flex gap-3 flex-wrap">
+          <Button
+            variant="gold"
+            onClick={() => setImportType('file')}
+            className="text-sm"
+          >
+            📄 From Excel/CSV
+          </Button>
+          <Button
+            variant="gold"
+            onClick={() => setImportType('google-sheets')}
+            className="text-sm"
+          >
+            📊 From Google Sheets
+          </Button>
+        </div>
+        <Button variant="ghost" onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+      </div>
+    );
+  }
+
+  if (importType === 'file') {
+    return (
+      <div className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3 ca-slide-up">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setImportType(null)}
+            className="text-cream/50 hover:text-cream text-2xl leading-none"
+          >
+            ←
+          </button>
+          <div className="font-display text-xl text-gold">Upload File</div>
+        </div>
+        <p className="text-sm text-cream/70">
+          Upload an Excel (.xlsx, .xls) or CSV file. Required columns: First Name.
+        </p>
+        <p className="text-xs text-cream/50">
+          Suggested columns: First Name, Last Name, Email, Phone, Grade, Gender, Role, Status, Notes
+        </p>
+        <div className="relative">
+          <input
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            onChange={handleFileUpload}
+            disabled={loading}
+            className="block w-full text-sm text-cream/50 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-gold file:text-navy hover:file:bg-gold/90 cursor-pointer"
+          />
+        </div>
+        {error && <div className="text-red text-sm">{error}</div>}
+        <Button
+          variant="ghost"
+          onClick={() => {
+            setImportType(null);
+            setError('');
+          }}
+          disabled={loading}
+        >
+          Back
+        </Button>
+      </div>
+    );
+  }
+
+  if (importType === 'google-sheets') {
+    return (
+      <form onSubmit={handleGoogleSheets} className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3 ca-slide-up">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setImportType(null)}
+            className="text-cream/50 hover:text-cream text-2xl leading-none"
+          >
+            ←
+          </button>
+          <div className="font-display text-xl text-gold">Google Sheets</div>
+        </div>
+        <p className="text-sm text-cream/70">
+          Paste the URL of a public Google Sheets. Make sure the sheet is shared publicly or with "Anyone with the link can view".
+        </p>
+        <Field label="Google Sheets URL">
+          <input
+            className={inputCls}
+            type="url"
+            placeholder="https://docs.google.com/spreadsheets/d/..."
+            value={googleSheetUrl}
+            onChange={(e) => setGoogleSheetUrl(e.target.value)}
+            autoFocus
+          />
+        </Field>
+        {error && <div className="text-red text-sm">{error}</div>}
+        <div className="flex gap-2">
+          <Button type="submit" variant="gold" disabled={loading}>
+            {loading ? <span className="flex items-center gap-2"><Spinner /> Importing…</span> : 'Import'}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              setImportType(null);
+              setError('');
+            }}
+            disabled={loading}
+          >
+            Cancel
+          </Button>
+        </div>
+      </form>
+    );
+  }
+}
+
 function EditRosterMemberModal({ member, onSaved, onClose }) {
   const [form, setForm] = useState({
     firstName: member.firstName || '',
@@ -4851,7 +5033,10 @@ function RosterPage({ me }) {
       </div>
 
       {(isPrivileged || !!me.canManageRoster) && (
-        <AddRosterMemberForm me={me} onCreated={load} />
+        <div className="flex gap-2 flex-wrap">
+          <AddRosterMemberForm me={me} onCreated={load} />
+          <ImportRosterMembersForm me={me} onImported={load} />
+        </div>
       )}
 
       {editing && (

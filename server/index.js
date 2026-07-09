@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const geoip = require('geoip-lite');
+const multer = require('multer');
 
 // Keep a single stray error from taking the whole process down (which makes the
 // host restart the app — the "crash then reboot and load" loop). We log it and
@@ -28,6 +29,11 @@ const {
   requireAdmin,
   JWT_SECRET,
 } = require('./auth');
+const {
+  parseSpreadsheet,
+  parseGoogleSheets,
+  importMembers,
+} = require('./import');
 
 init();
 const seeded = seed();
@@ -86,6 +92,25 @@ app.use((req, res, next) => {
   const limit = isSpeakerApply ? '8mb'
     : isProfilePhoto || isEventPhoto || isIgHighlight || isTestimonial ? '6mb' : '50kb';
   express.json({ limit })(req, res, next);
+});
+
+// Multer for file uploads (member imports)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
+      'text/csv',
+      'application/csv',
+    ];
+    if (allowedMimes.includes(file.mimetype) || file.originalname.endsWith('.xlsx') || file.originalname.endsWith('.xls') || file.originalname.endsWith('.csv')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only Excel (.xlsx, .xls) and CSV files are allowed'));
+    }
+  },
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
 });
 
 // Pre-computed bcrypt hash used to spend ~the same time on logins for unknown
@@ -1304,6 +1329,56 @@ app.post('/api/roster/import-board', (req, res) => {
   });
   importMany();
   res.json({ imported, skipped });
+});
+
+// Import members from Excel/CSV file upload
+app.post('/api/roster/import-file', upload.single('file'), (req, res) => {
+  if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  if (!req.file) return res.status(400).json({ error: 'No file provided' });
+
+  try {
+    const members = parseSpreadsheet(req.file.buffer);
+    if (!members.length) return res.status(400).json({ error: 'Spreadsheet is empty' });
+
+    const { imported, skipped, errors } = importMembers(db, members, {
+      skipDuplicates: true,
+    });
+
+    res.json({
+      imported,
+      skipped,
+      total: members.length,
+      errors: errors.length > 0 ? errors : undefined,
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Import members from Google Sheets URL
+app.post('/api/roster/import-google-sheets', (req, res) => {
+  if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const { url } = req.body || {};
+  if (!url) return res.status(400).json({ error: 'No URL provided' });
+
+  parseGoogleSheets(url)
+    .then((members) => {
+      if (!members.length) return res.status(400).json({ error: 'Spreadsheet is empty' });
+
+      const { imported, skipped, errors } = importMembers(db, members, {
+        skipDuplicates: true,
+      });
+
+      res.json({
+        imported,
+        skipped,
+        total: members.length,
+        errors: errors.length > 0 ? errors : undefined,
+      });
+    })
+    .catch((error) => {
+      res.status(400).json({ error: error.message });
+    });
 });
 
 app.post('/api/roster', (req, res) => {
