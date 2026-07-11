@@ -1024,7 +1024,13 @@ function handlePaymentIntentSucceeded(intent) {
     promoCode: md.promoCode || undefined,
     shippingAddress: md.addr ? safeJsonParse(md.addr) : undefined,
   }, { ignoreStock: true });
-  if (!rebuilt.error) { finalizeStripeOrder(intent, rebuilt); return; }
+  // Only auto-finalize when today's recomputed total still equals what was
+  // actually charged — if the price changed mid-checkout, fall through to the
+  // needs_review record below, which stores the true paid amount.
+  if (!rebuilt.error && rebuilt.pricing.total === intent.amount) {
+    finalizeStripeOrder(intent, rebuilt);
+    return;
+  }
   // Couldn't re-price (item changed/removed since checkout). Record a minimal
   // paid order so the sale isn't lost, flagged for the secretary to reconcile.
   const info = db.prepare(`INSERT INTO merch_orders (
@@ -1106,7 +1112,11 @@ app.post('/api/shop/order', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name:
     let intent;
     try { intent = await stripe.paymentIntents.retrieve(String(paymentIntentId)); }
     catch (e) { return res.status(400).json({ error: 'Could not verify payment.' }); }
-    if (!intent || intent.status !== 'succeeded' || intent.amount !== p.total) {
+    // Only accept intents our shop created (kind=merch is set server-side at
+    // creation) — a succeeded payment from any other use of this Stripe
+    // account (future invoicing, dashboard charges) can't be redeemed for merch.
+    if (!intent || intent.status !== 'succeeded' || intent.amount !== p.total ||
+        intent.currency !== 'usd' || (intent.metadata || {}).kind !== 'merch') {
       return res.status(400).json({ error: 'Payment was not completed.' });
     }
     let result;
