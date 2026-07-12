@@ -3036,7 +3036,10 @@ function OrderModal({ item, config, onClose }) {
   const total = Math.max(0, subtotal - discount);
   const studentOnlyPromoActive = !!(promo && promo.studentOnly);
   const effectiveDelivery = studentOnlyPromoActive ? 'pickup' : deliveryMethod;
-  const requiresPrepay = effectiveDelivery === 'ship' || payChoice === 'stripe';
+  // Stripe won't charge a card less than 50¢, so tiny totals are in-person only.
+  const belowCardMinimum = total > 0 && total < 50;
+  const effectivePayChoice = belowCardMinimum ? 'inperson' : payChoice;
+  const requiresPrepay = effectiveDelivery === 'ship' || effectivePayChoice === 'stripe';
 
   async function applyPromo() {
     if (!promoInput.trim()) return;
@@ -3113,7 +3116,9 @@ function OrderModal({ item, config, onClose }) {
     const stripeInstance = window.Stripe(config.publishableKey);
     stripeRef.current = stripeInstance;
     const elements = stripeInstance.elements();
-    const card = elements.create('card', { style: CARD_ELEMENT_STYLE });
+    // disableLink: Stripe's Link sign-up overlay is confusing for guest buyers
+    // and its popup can trap taps inside this modal on iOS Safari.
+    const card = elements.create('card', { style: CARD_ELEMENT_STYLE, disableLink: true });
     card.mount(cardMountRef.current);
     cardElRef.current = card;
     return () => { try { card.unmount(); } catch (_) {} cardElRef.current = null; };
@@ -3262,6 +3267,11 @@ function OrderModal({ item, config, onClose }) {
                 This order is free — no payment needed.
               </div>
             ) : effectiveDelivery === 'pickup' ? (
+              belowCardMinimum ? (
+                <div className="text-sm text-cream/70 bg-navy border border-cream/20 rounded-md px-3 py-2">
+                  Orders under $0.50 are paid in person at pickup.
+                </div>
+              ) : (
               <div>
                 <span className="block text-xs uppercase tracking-wider text-cream/60 mb-1.5">How will you pay?</span>
                 <div className="flex gap-2">
@@ -3275,6 +3285,7 @@ function OrderModal({ item, config, onClose }) {
                   </button>
                 </div>
               </div>
+              )
             ) : (
               <div className="text-sm text-cream/60">Shipped orders are paid online to guarantee your order.</div>
             )}

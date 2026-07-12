@@ -1053,6 +1053,9 @@ app.post('/api/shop/create-payment-intent', rateLimit({ windowMs: 60 * 60 * 1000
   if (v.error) return res.status(400).json({ error: v.error });
   const p = v.pricing;
   if (p.total <= 0) return res.status(400).json({ error: 'This order has no balance due — place it directly.' });
+  // Stripe rejects card charges under 50¢. Say so plainly instead of failing
+  // with a generic error at intent creation.
+  if (p.total < 50) return res.status(400).json({ error: 'Online payments must be at least $0.50 — for smaller amounts, choose student pickup and pay in person.' });
   // Client sends a stable key per cart state so a retry can't create a second
   // PaymentIntent (and thus a possible double charge).
   const idemKey = String((req.body || {}).idempotencyKey || '').trim().slice(0, 200);
