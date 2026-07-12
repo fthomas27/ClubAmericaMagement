@@ -565,6 +565,11 @@ function CropModal({ src, onCrop, onCancel }) {
 
   function startDrag(e, type) {
     e.preventDefault();
+    // Pointer capture keeps move/up events flowing to this element even if the
+    // finger/cursor strays outside it mid-drag (common on touch screens).
+    if (e.currentTarget.setPointerCapture && e.pointerId != null) {
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+    }
     setDrag({ type, sx: e.clientX, sy: e.clientY, crop: { ...crop } });
   }
 
@@ -609,10 +614,11 @@ function CropModal({ src, onCrop, onCancel }) {
     onCrop(c.toDataURL('image/jpeg', 0.82));
   }
 
-  const HS = 14;
+  const HS = 14;   // visible handle marker size
+  const HIT = 32;  // touch-friendly hit area around each handle
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
-      onMouseMove={onMove} onMouseUp={() => setDrag(null)} onMouseLeave={() => setDrag(null)}>
+      onPointerMove={onMove} onPointerUp={() => setDrag(null)} onPointerCancel={() => setDrag(null)}>
       <div className="bg-navy2 border border-cream/10 rounded-xl p-5 max-w-2xl w-full ca-scale-in">
         <div className="font-display text-xl text-gold mb-1">Crop Photo</div>
         <p className="text-xs text-cream/50 mb-3">Drag the circle to reposition · drag a corner to resize</p>
@@ -632,12 +638,16 @@ function CropModal({ src, onCrop, onCancel }) {
                   fill="none" stroke="white" strokeWidth="2" strokeDasharray="6 3" />
               </svg>
               <div className="absolute rounded-full cursor-move"
-                style={{ left: crop.x, top: crop.y, width: crop.size, height: crop.size }}
-                onMouseDown={(e) => startDrag(e, 'move')} />
+                style={{ left: crop.x, top: crop.y, width: crop.size, height: crop.size, touchAction: 'none' }}
+                onPointerDown={(e) => startDrag(e, 'move')} />
               {[['nw', 0, 0], ['ne', crop.size - HS, 0], ['sw', 0, crop.size - HS], ['se', crop.size - HS, crop.size - HS]].map(([id, cx, cy]) => (
-                <div key={id} className="absolute bg-white border border-gold/60 rounded-sm"
-                  style={{ left: crop.x + cx, top: crop.y + cy, width: HS, height: HS, cursor: `${id}-resize`, zIndex: 10 }}
-                  onMouseDown={(e) => { e.stopPropagation(); startDrag(e, id); }} />
+                // Enlarged transparent hit area for easy touch grabbing, centered
+                // on a small visible white marker.
+                <div key={id} className="absolute flex items-center justify-center"
+                  style={{ left: crop.x + cx - (HIT - HS) / 2, top: crop.y + cy - (HIT - HS) / 2, width: HIT, height: HIT, cursor: `${id}-resize`, zIndex: 10, touchAction: 'none' }}
+                  onPointerDown={(e) => { e.stopPropagation(); startDrag(e, id); }}>
+                  <div className="bg-white border border-gold/60 rounded-sm" style={{ width: HS, height: HS }} />
+                </div>
               ))}
             </>
           )}
