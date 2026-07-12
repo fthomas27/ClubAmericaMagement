@@ -3110,9 +3110,12 @@ function OrderModal({ item, config, onClose }) {
     return () => { cancelled = true; };
   }, [step, requiresPrepay]);
 
-  // Mount the Stripe card element once we have both a clientSecret and a DOM node.
+  // Mount the Stripe card element once we have both a clientSecret and a DOM
+  // node. Keyed on step too, so the iframe is properly unmounted when leaving
+  // the payment step and remounted if the buyer goes Back and returns —
+  // otherwise the field comes back dead.
   useEffect(() => {
-    if (!clientSecret || !cardMountRef.current || !window.Stripe || !config.publishableKey) return;
+    if (step !== 'payment' || !clientSecret || !cardMountRef.current || !window.Stripe || !config.publishableKey) return;
     const stripeInstance = window.Stripe(config.publishableKey);
     stripeRef.current = stripeInstance;
     const elements = stripeInstance.elements();
@@ -3122,7 +3125,16 @@ function OrderModal({ item, config, onClose }) {
     card.mount(cardMountRef.current);
     cardElRef.current = card;
     return () => { try { card.unmount(); } catch (_) {} cardElRef.current = null; };
-  }, [clientSecret]);
+  }, [step, clientSecret]);
+
+  // iOS Safari can leave the visual viewport offset after the card iframe's
+  // keyboard closes, so taps on the confirmation land off-target ("Done"
+  // appears unclickable). Blur and reset scroll when the order completes.
+  useEffect(() => {
+    if (step !== 'done') return;
+    try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (_) {}
+    window.scrollTo(0, 0);
+  }, [step]);
 
   function orderBody(paymentMethod) {
     return {
@@ -3158,7 +3170,7 @@ function OrderModal({ item, config, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={step !== 'done' ? onClose : undefined}>
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
       <div className="bg-navy2 border border-cream/15 rounded-xl p-6 max-w-md w-full ca-scale-in max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
