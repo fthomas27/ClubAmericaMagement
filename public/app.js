@@ -2957,6 +2957,10 @@ function ShopPage() {
       {orderItem && config && (
         <OrderModal item={orderItem} config={config} onClose={() => setOrderItem(null)} />
       )}
+      <p className="text-center text-xs text-cream/40 pt-2">
+        The Club America shop is a club fundraiser — every purchase helps fund our meetings,
+        speakers, and events at Park City High School.
+      </p>
     </PublicPageShell>
   );
 }
@@ -3310,6 +3314,7 @@ function OrderModal({ item, config, onClose }) {
                 ? "We'll email you when your order is ready for pickup at school."
                 : "We'll ship your order and reach out if we need anything else."}
             </p>
+            <p className="text-xs text-cream/40">Thanks for supporting the Club America fundraiser!</p>
             <Button variant="gold" onClick={onClose}>Done</Button>
           </div>
         )}
