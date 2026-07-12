@@ -17,6 +17,7 @@
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "geoip-lite": "^1.4.10",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "stripe": "^17.0.0"
   }
 }

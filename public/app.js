@@ -1398,7 +1398,7 @@ function TeamAnnouncementView({ me, reports }) {
   );
 }
 
-function TaskPage({ me, userId, users, refreshSignal }) {
+function TaskPage({ me, userId, users, refreshSignal, onNavigate }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [pageSettings, setPageSettings] = useState(null);
@@ -1523,7 +1523,7 @@ function TaskPage({ me, userId, users, refreshSignal }) {
 
       {isSelf && (
         <div className="mt-10">
-          <MeetTheBoard />
+          <MeetTheBoard me={me} onNavigate={onNavigate} />
         </div>
       )}
     </div>
@@ -1900,6 +1900,7 @@ const ALL_TABS_BY_SECTION = [
     { type: 'approvals',   label: 'Approvals' },
     { type: 'submissions', label: 'Get Involved' },
     { type: 'roster',      label: 'Roster' },
+    { type: 'shop',        label: 'Shop Manager' },
     { type: 'dashboard',   label: 'Dashboard' },
     { type: 'volunteers',  label: 'Volunteers' },
     { type: 'speaker',     label: 'Speaker Events' },
@@ -2911,6 +2912,418 @@ function CharlieKirkTribute() {
 }
 
 // ---------------------------------------------------------------------------
+// Merch Shop — public browsing + ordering (ship-to-me or student pickup).
+// ---------------------------------------------------------------------------
+function formatCents(c) {
+  return '$' + (Number(c || 0) / 100).toFixed(2);
+}
+function computeDiscountClient(promo, subtotal) {
+  if (!promo) return 0;
+  if (promo.type === 'free') return subtotal;
+  if (promo.type === 'percent') return Math.round(subtotal * (Number(promo.value) / 100));
+  if (promo.type === 'dollar') return Math.min(subtotal, Math.round(Number(promo.value)));
+  return 0;
+}
+
+function ShopPage() {
+  const [items, setItems] = useState(null);
+  const [config, setConfig] = useState(null);
+  const [error, setError] = useState('');
+  const [orderItem, setOrderItem] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const [i, c] = await Promise.all([api('/shop/items'), api('/shop/config')]);
+      setItems(i.items || []);
+      setConfig(c);
+    } catch (err) { setError(err.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  if (error) return <ErrorState message={error} onRetry={() => { setError(''); load(); }} />;
+  if (items === null) return <Loading label="Loading shop…" />;
+
+  return (
+    <PublicPageShell title="Club America Shop" subtitle="Grab some gear — ship it to you or pick it up at school.">
+      {items.length === 0 ? (
+        <EmptyState icon="🛍️" title="Nothing in stock right now" hint="Check back soon — new merch drops regularly." />
+      ) : (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {items.map((item) => (
+            <ShopItemCard key={item.id} item={item} onOrder={() => setOrderItem(item)} />
+          ))}
+        </div>
+      )}
+      {orderItem && config && (
+        <OrderModal item={orderItem} config={config} onClose={() => setOrderItem(null)} />
+      )}
+      <p className="text-center text-xs text-cream/40 pt-2">
+        The Club America shop is a club fundraiser — every purchase helps fund our meetings,
+        speakers, and events at Park City High School.
+      </p>
+    </PublicPageShell>
+  );
+}
+
+function ShopItemCard({ item, onOrder }) {
+  const inStock = item.hasVariants ? item.variants.some((v) => v.inventory > 0) : item.inventory > 0;
+  const prices = item.hasVariants && item.variants.length
+    ? item.variants.map((v) => (v.priceOverride != null ? v.priceOverride : item.price))
+    : [item.price];
+  const minP = Math.min(...prices), maxP = Math.max(...prices);
+  return (
+    <div className="bg-navy2 border border-cream/10 rounded-xl overflow-hidden flex flex-col hover:border-gold/30 transition-colors">
+      <div className="aspect-square bg-navy3 flex items-center justify-center overflow-hidden">
+        {item.hasPhoto
+          ? <img src={`/api/shop/items/${item.id}/photo`} alt={item.name} loading="lazy" className="w-full h-full object-cover" />
+          : <span className="text-4xl opacity-30">🛍️</span>}
+      </div>
+      <div className="p-4 flex-1 flex flex-col">
+        <div className="font-display text-xl text-cream">{item.name}</div>
+        {item.description && <p className="text-sm text-cream/60 mt-1 flex-1">{item.description}</p>}
+        <div className="flex items-center justify-between mt-3">
+          <span className="text-gold font-semibold">{minP === maxP ? formatCents(minP) : `${formatCents(minP)}–${formatCents(maxP)}`}</span>
+          {!inStock && <Badge tone="red">Sold out</Badge>}
+        </div>
+        <Button variant="gold" className="mt-3" disabled={!inStock} onClick={onOrder}>{inStock ? 'Order Now' : 'Sold Out'}</Button>
+      </div>
+    </div>
+  );
+}
+
+const CARD_ELEMENT_STYLE = {
+  base: { color: '#F5F0E8', fontSize: '16px', '::placeholder': { color: 'rgba(245,240,232,0.4)' } },
+  invalid: { color: '#CC1C2E' },
+};
+
+// Multi-step order flow: pick option/qty → delivery + buyer info (+ promo) →
+// payment (Stripe or in-person) → confirmation. A student-only promo code
+// forces pickup and hides the "Ship to Me" choice, per club policy.
+function OrderModal({ item, config, onClose }) {
+  const hasVariants = item.hasVariants;
+  const firstInStock = hasVariants ? (item.variants.find((v) => v.inventory > 0) || item.variants[0]) : null;
+  const [variantId, setVariantId] = useState(firstInStock ? firstInStock.id : '');
+  const [quantity, setQuantity] = useState(1);
+  const [deliveryMethod, setDeliveryMethod] = useState('ship');
+  const [buyerName, setBuyerName] = useState('');
+  const [buyerEmail, setBuyerEmail] = useState('');
+  const [buyerPhone, setBuyerPhone] = useState('');
+  const [address, setAddress] = useState({ street: '', city: '', state: '', zip: '' });
+  const [studentEmail, setStudentEmail] = useState('');
+  const [promoInput, setPromoInput] = useState('');
+  const [promo, setPromo] = useState(null);
+  const [promoBusy, setPromoBusy] = useState(false);
+  const [promoError, setPromoError] = useState('');
+  const [step, setStep] = useState('details'); // details -> payment -> done
+  const [payChoice, setPayChoice] = useState('stripe'); // pickup only: stripe | inperson
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [orderResult, setOrderResult] = useState(null);
+  const [clientSecret, setClientSecret] = useState(null);
+  const [paymentIntentId, setPaymentIntentId] = useState(null);
+  const cardMountRef = useRef(null);
+  const stripeRef = useRef(null);
+  const cardElRef = useRef(null);
+  // Stable per-modal token; combined with the amount it forms the Stripe
+  // idempotency key so a retried request can't create a second PaymentIntent.
+  const idemSessionRef = useRef(Math.random().toString(36).slice(2) + Date.now().toString(36));
+
+  const variant = hasVariants ? item.variants.find((v) => v.id === Number(variantId)) : null;
+  const unitPrice = variant && variant.priceOverride != null ? variant.priceOverride : item.price;
+  const availableStock = variant ? variant.inventory : item.inventory;
+  const subtotal = unitPrice * Math.max(1, quantity);
+  const discount = computeDiscountClient(promo, subtotal);
+  const total = Math.max(0, subtotal - discount);
+  const studentOnlyPromoActive = !!(promo && promo.studentOnly);
+  const effectiveDelivery = studentOnlyPromoActive ? 'pickup' : deliveryMethod;
+  const requiresPrepay = effectiveDelivery === 'ship' || payChoice === 'stripe';
+
+  async function applyPromo() {
+    if (!promoInput.trim()) return;
+    setPromoBusy(true); setPromoError('');
+    try {
+      const d = await api('/shop/validate-promo', {
+        method: 'POST',
+        body: { code: promoInput.trim(), itemId: item.id, studentEmail },
+      });
+      setPromo(d.promo);
+      if (d.promo.studentOnly) setDeliveryMethod('pickup');
+    } catch (err) { setPromoError(err.message); setPromo(null); }
+    finally { setPromoBusy(false); }
+  }
+  function removePromo() { setPromo(null); setPromoInput(''); setPromoError(''); }
+
+  function validateDetails() {
+    if (hasVariants && !variantId) return 'Please choose an option.';
+    if (!quantity || quantity < 1) return 'Quantity must be at least 1.';
+    if (quantity > availableStock) return `Only ${availableStock} left in stock.`;
+    if (!buyerName.trim()) return 'Name is required.';
+    if (!buyerEmail.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(buyerEmail)) return 'A valid email is required.';
+    if (effectiveDelivery === 'ship') {
+      if (!buyerPhone.trim()) return 'A phone number is required for shipping.';
+      if (!address.street.trim() || !address.city.trim() || !address.state.trim() || !address.zip.trim()) {
+        return 'A full shipping address is required.';
+      }
+    } else if (!/^[^@\s]+@pcstudents\.us$/i.test(studentEmail.trim())) {
+      return 'A valid @pcstudents.us student email is required for pickup.';
+    }
+    return '';
+  }
+
+  function goToPayment() {
+    const v = validateDetails();
+    if (v) { setError(v); return; }
+    setError('');
+    setStep('payment');
+  }
+
+  // Once on the payment step (and prepayment is actually needed), create the
+  // PaymentIntent so the card element has a clientSecret to confirm against.
+  useEffect(() => {
+    if (step !== 'payment' || total === 0 || !requiresPrepay) return;
+    if (!config.stripeEnabled) { setError('Online payment is not available right now — please choose to pay in person, or contact the secretary.'); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = await api('/shop/create-payment-intent', {
+          method: 'POST',
+          body: {
+            itemId: item.id, variantId: variant ? variant.id : null, quantity,
+            buyerName, buyerEmail, buyerPhone,
+            deliveryMethod: effectiveDelivery,
+            shippingAddress: effectiveDelivery === 'ship' ? address : undefined,
+            studentEmail, promoCode: promo ? promo.code : '',
+            // Key on the full cart, not just the amount, so switching between
+            // two same-priced items doesn't reuse a key with different params
+            // (which Stripe rejects). Same cart re-entry safely reuses the key.
+            idempotencyKey: `${idemSessionRef.current}-${item.id}-${variant ? variant.id : 'x'}-${quantity}-${promo ? promo.code : 'x'}-${total}`,
+          },
+        });
+        if (cancelled) return;
+        setClientSecret(d.clientSecret);
+        setPaymentIntentId(d.paymentIntentId);
+      } catch (err) { if (!cancelled) setError(err.message); }
+    })();
+    return () => { cancelled = true; };
+  }, [step, requiresPrepay]);
+
+  // Mount the Stripe card element once we have both a clientSecret and a DOM node.
+  useEffect(() => {
+    if (!clientSecret || !cardMountRef.current || !window.Stripe || !config.publishableKey) return;
+    const stripeInstance = window.Stripe(config.publishableKey);
+    stripeRef.current = stripeInstance;
+    const elements = stripeInstance.elements();
+    const card = elements.create('card', { style: CARD_ELEMENT_STYLE });
+    card.mount(cardMountRef.current);
+    cardElRef.current = card;
+    return () => { try { card.unmount(); } catch (_) {} cardElRef.current = null; };
+  }, [clientSecret]);
+
+  function orderBody(paymentMethod) {
+    return {
+      itemId: item.id, variantId: variant ? variant.id : null, quantity,
+      buyerName, buyerEmail, buyerPhone,
+      deliveryMethod: effectiveDelivery,
+      shippingAddress: effectiveDelivery === 'ship' ? address : undefined,
+      studentEmail, promoCode: promo ? promo.code : '',
+      paymentMethod, paymentIntentId: paymentIntentId || undefined,
+    };
+  }
+
+  async function submitOrder(paymentMethod) {
+    setBusy(true); setError('');
+    try {
+      const d = await api('/shop/order', { method: 'POST', body: orderBody(paymentMethod) });
+      setOrderResult(d);
+      setStep('done');
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function payAndSubmit() {
+    if (!stripeRef.current || !cardElRef.current) { setError('Payment form is not ready yet.'); return; }
+    setBusy(true); setError('');
+    try {
+      const result = await stripeRef.current.confirmCardPayment(clientSecret, {
+        payment_method: { card: cardElRef.current, billing_details: { name: buyerName, email: buyerEmail } },
+      });
+      if (result.error) { setError(result.error.message || 'Payment failed.'); setBusy(false); return; }
+      await submitOrder('stripe');
+    } catch (err) { setError(err.message); setBusy(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={step !== 'done' ? onClose : undefined}>
+      <div className="bg-navy2 border border-cream/15 rounded-xl p-6 max-w-md w-full ca-scale-in max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <div className="font-display text-2xl text-gold">{item.name}</div>
+            {step !== 'done' && <div className="text-cream/50 text-sm">{formatCents(unitPrice)} each</div>}
+          </div>
+          <button onClick={onClose} className="text-cream/40 hover:text-cream text-xl leading-none">×</button>
+        </div>
+
+        {error && <div className="text-red text-sm mb-3 whitespace-pre-wrap">{error}</div>}
+
+        {step === 'details' && (
+          <div className="space-y-3">
+            {hasVariants && (
+              <Field label="Option">
+                <select className={inputCls} value={variantId} onChange={(e) => setVariantId(e.target.value)}>
+                  <option value="" disabled>Choose an option…</option>
+                  {item.variants.map((v) => (
+                    <option key={v.id} value={v.id} disabled={v.inventory <= 0}>
+                      {v.label}{v.inventory <= 0 ? ' (sold out)' : ` (${v.inventory} left)`}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+            <Field label="Quantity">
+              <input type="number" min="1" max={Math.max(1, availableStock)} className={inputCls} value={quantity}
+                onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))} />
+            </Field>
+
+            <div className="pt-2 border-t border-cream/10">
+              <span className="block text-xs uppercase tracking-wider text-cream/60 mb-1.5">Delivery</span>
+              {studentOnlyPromoActive ? (
+                <div className="text-sm text-cream/70 bg-navy border border-gold/30 rounded-md px-3 py-2">
+                  This promo code is student pickup only.
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setDeliveryMethod('ship')}
+                    className={`flex-1 px-3 py-2 rounded-md text-sm border transition-colors ${deliveryMethod === 'ship' ? 'border-gold text-gold bg-gold/10' : 'border-cream/20 text-cream/70 hover:border-cream/40'}`}>
+                    Ship to Me
+                  </button>
+                  <button type="button" onClick={() => setDeliveryMethod('pickup')}
+                    className={`flex-1 px-3 py-2 rounded-md text-sm border transition-colors ${deliveryMethod === 'pickup' ? 'border-gold text-gold bg-gold/10' : 'border-cream/20 text-cream/70 hover:border-cream/40'}`}>
+                    Student Pick Up
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <Field label="Your Name"><input className={inputCls} value={buyerName} onChange={(e) => setBuyerName(e.target.value)} /></Field>
+            <Field label="Email"><input type="email" className={inputCls} value={buyerEmail} onChange={(e) => setBuyerEmail(e.target.value)} /></Field>
+
+            {effectiveDelivery === 'ship' ? (
+              <>
+                <Field label="Phone"><input className={inputCls} value={buyerPhone} onChange={(e) => setBuyerPhone(e.target.value)} /></Field>
+                <Field label="Street Address"><input className={inputCls} value={address.street} onChange={(e) => setAddress((a) => ({ ...a, street: e.target.value }))} /></Field>
+                <div className="grid grid-cols-3 gap-2">
+                  <Field label="City"><input className={inputCls} value={address.city} onChange={(e) => setAddress((a) => ({ ...a, city: e.target.value }))} /></Field>
+                  <Field label="State"><input className={inputCls} value={address.state} onChange={(e) => setAddress((a) => ({ ...a, state: e.target.value }))} /></Field>
+                  <Field label="Zip"><input className={inputCls} value={address.zip} onChange={(e) => setAddress((a) => ({ ...a, zip: e.target.value }))} /></Field>
+                </div>
+              </>
+            ) : (
+              <Field label="School Email (@pcstudents.us)">
+                <input type="email" className={inputCls} value={studentEmail} onChange={(e) => setStudentEmail(e.target.value)} placeholder="you@pcstudents.us" />
+              </Field>
+            )}
+
+            <div className="pt-2 border-t border-cream/10">
+              <span className="block text-xs uppercase tracking-wider text-cream/60 mb-1.5">Promo Code</span>
+              {promo ? (
+                <div className="flex items-center justify-between bg-navy border border-emerald-500/40 rounded-md px-3 py-2 text-sm">
+                  <span className="text-emerald-300">"{promo.code}" applied — {promo.type === 'free' ? 'free item' : promo.type === 'percent' ? `${promo.value}% off` : `${formatCents(promo.value)} off`}</span>
+                  <button onClick={removePromo} className="text-cream/50 hover:text-cream text-xs">Remove</button>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <input className={inputCls} value={promoInput} onChange={(e) => setPromoInput(e.target.value.toUpperCase())} placeholder="Optional" />
+                  <Button variant="ghost" onClick={applyPromo} disabled={promoBusy || !promoInput.trim()}>{promoBusy ? <Spinner className="w-4 h-4" /> : 'Apply'}</Button>
+                </div>
+              )}
+              {promoError && <div className="text-red text-xs mt-1">{promoError}</div>}
+            </div>
+
+            <div className="pt-3 border-t border-cream/10 flex items-center justify-between text-sm">
+              <span className="text-cream/60">Subtotal</span><span className="text-cream">{formatCents(subtotal)}</span>
+            </div>
+            {discount > 0 && (
+              <div className="flex items-center justify-between text-sm"><span className="text-cream/60">Discount</span><span className="text-emerald-300">-{formatCents(discount)}</span></div>
+            )}
+            <div className="flex items-center justify-between font-semibold"><span className="text-cream">Total</span><span className="text-gold">{formatCents(total)}</span></div>
+
+            <Button variant="gold" className="w-full mt-2" onClick={goToPayment}>Continue</Button>
+          </div>
+        )}
+
+        {step === 'payment' && (
+          <div className="space-y-4">
+            <div className="text-sm text-cream/60">
+              {item.name}{variant ? ` — ${variant.label}` : ''} × {quantity} · <span className="text-gold font-semibold">{formatCents(total)}</span>
+            </div>
+
+            {total === 0 ? (
+              <div className="text-sm text-cream/70 bg-navy border border-emerald-500/30 rounded-md px-3 py-2">
+                This order is free — no payment needed.
+              </div>
+            ) : effectiveDelivery === 'pickup' ? (
+              <div>
+                <span className="block text-xs uppercase tracking-wider text-cream/60 mb-1.5">How will you pay?</span>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setPayChoice('stripe')}
+                    className={`flex-1 px-3 py-2 rounded-md text-sm border transition-colors ${payChoice === 'stripe' ? 'border-gold text-gold bg-gold/10' : 'border-cream/20 text-cream/70 hover:border-cream/40'}`}>
+                    Pay Online Now
+                  </button>
+                  <button type="button" onClick={() => setPayChoice('inperson')}
+                    className={`flex-1 px-3 py-2 rounded-md text-sm border transition-colors ${payChoice === 'inperson' ? 'border-gold text-gold bg-gold/10' : 'border-cream/20 text-cream/70 hover:border-cream/40'}`}>
+                    Pay In Person
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm text-cream/60">Shipped orders are paid online to guarantee your order.</div>
+            )}
+
+            {total > 0 && requiresPrepay && (
+              <div>
+                <span className="block text-xs uppercase tracking-wider text-cream/60 mb-1.5">Card Details</span>
+                <div ref={cardMountRef} className="bg-navy border border-cream/20 rounded-md px-3 py-3" />
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={() => setStep('details')} disabled={busy}>Back</Button>
+              {total === 0 ? (
+                <Button variant="gold" className="flex-1" onClick={() => submitOrder('free')} disabled={busy}>
+                  {busy ? <span className="flex items-center justify-center gap-2"><Spinner /> Placing…</span> : 'Place Free Order'}
+                </Button>
+              ) : requiresPrepay ? (
+                <Button variant="gold" className="flex-1" onClick={payAndSubmit} disabled={busy || !clientSecret}>
+                  {busy ? <span className="flex items-center justify-center gap-2"><Spinner /> Paying…</span> : `Pay ${formatCents(total)}`}
+                </Button>
+              ) : (
+                <Button variant="gold" className="flex-1" onClick={() => submitOrder('inperson')} disabled={busy}>
+                  {busy ? <span className="flex items-center justify-center gap-2"><Spinner /> Placing…</span> : 'Place Order'}
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {step === 'done' && orderResult && (
+          <div className="text-center py-4 space-y-3">
+            <div className="text-4xl">🎉</div>
+            <div className="font-display text-xl text-gold">Order placed!</div>
+            <p className="text-sm text-cream/60">
+              {effectiveDelivery === 'pickup'
+                ? "We'll email you when your order is ready for pickup at school."
+                : "We'll ship your order and reach out if we need anything else."}
+            </p>
+            <p className="text-xs text-cream/40">Thanks for supporting the Club America fundraiser!</p>
+            <Button variant="gold" onClick={onClose}>Done</Button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Event Photos — anyone can share photos from an event; they appear in a
 // public gallery once a board member approves them.
 // ---------------------------------------------------------------------------
@@ -3392,12 +3805,13 @@ function buildBoardTree(members) {
   return roots;
 }
 
-function BoardModal({ member, onClose }) {
+function BoardModal({ member, onClose, me, onNavigate }) {
   useEffect(() => {
     const fn = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', fn);
     return () => document.removeEventListener('keydown', fn);
   }, [onClose]);
+  const isMe = !!(me && me.id === member.id);
   return (
     <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
       <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-md w-full p-6 relative max-h-[85vh] overflow-y-auto ca-scale-in">
@@ -3413,12 +3827,17 @@ function BoardModal({ member, onClose }) {
         <p className="text-cream/80 mt-4 whitespace-pre-line leading-relaxed">
           {member.bio || "This board member hasn't added an intro yet."}
         </p>
+        {isMe && onNavigate && (
+          <Button variant="ghost" className="mt-4 text-xs px-3 py-1.5" onClick={() => { onClose(); onNavigate({ type: 'profile' }); }}>
+            Edit My Bio
+          </Button>
+        )}
       </div>
     </div>
   );
 }
 
-function MeetTheBoard() {
+function MeetTheBoard({ me, onNavigate }) {
   const [members, setMembers] = useState(null);
   const [sel, setSel] = useState(null);
   const [error, setError] = useState('');
@@ -3496,7 +3915,7 @@ function MeetTheBoard() {
         <span className="flex items-center gap-2"><span className="inline-block w-3 h-3 rounded border-2 border-cream/30" /> Board Member</span>
       </div>
 
-      {sel && <BoardModal member={sel} onClose={() => setSel(null)} />}
+      {sel && <BoardModal member={sel} onClose={() => setSel(null)} me={me} onNavigate={onNavigate} />}
     </section>
   );
 }
@@ -3786,6 +4205,7 @@ const PUBLIC_PAGES = [
   { key: 'home',         label: 'Home',                   path: '/' },
   { key: 'about',        label: 'About Us',               path: '/about' },
   { key: 'board',        label: 'Meet the Board',         path: '/board' },
+  { key: 'shop',         label: 'Shop',                   path: '/shop' },
   { key: 'testimonials', label: 'What People Are Saying', path: '/testimonials' },
   { key: 'involved',     label: 'Get Involved',           path: '/get-involved' },
   { key: 'speak',        label: 'Apply to Speak',         path: '/apply-to-speak' },
@@ -3865,6 +4285,8 @@ function PublicSite({ home, events, volunteerEvents, onEnterPortal }) {
             <MeetTheBoard />
           </PublicPageShell>
         )}
+
+        {page === 'shop' && <ShopPage />}
 
         {page === 'testimonials' && (
           <PublicPageShell title="What People Are Saying" subtitle="Hear from the people who make Club America what it is.">
@@ -7269,6 +7691,535 @@ function VolunteerSignUpPage({ eventId }) {
 }
 
 // ---------------------------------------------------------------------------
+// Shop Manager Page (secretary + admins) — products, orders, promo codes.
+// ---------------------------------------------------------------------------
+function ShopManagerPage({ me }) {
+  const [tab, setTab] = useState('products');
+  const [items, setItems] = useState([]);
+
+  const loadItems = useCallback(async () => {
+    try { const d = await api('/shop/admin/items'); setItems(d.items || []); } catch (_) {}
+  }, []);
+  useEffect(() => { loadItems(); }, [loadItems]);
+
+  return (
+    <div className="max-w-5xl space-y-6">
+      <div>
+        <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Shop Manager</h1>
+        <p className="text-cream/50 mt-1">Manage products, inventory, orders, and promo codes for the merch shop.</p>
+      </div>
+
+      <div className="flex gap-1 bg-navy2 border border-cream/10 rounded-lg p-1 w-fit">
+        {[['products', 'Products'], ['orders', 'Orders'], ['promos', 'Promo Codes']].map(([t, label]) => (
+          <button key={t} onClick={() => { setTab(t); if (t === 'promos') loadItems(); }}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-150 ${tab === t ? 'bg-gold text-navy' : 'text-cream/60 hover:text-cream'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'products' && <ShopProductsTab />}
+      {tab === 'orders' && <ShopOrdersTab />}
+      {tab === 'promos' && <ShopPromoCodesTab items={items} />}
+    </div>
+  );
+}
+
+function ShopProductsTab() {
+  const [items, setItems] = useState(null);
+  const [error, setError] = useState('');
+  const [showNew, setShowNew] = useState(false);
+  const [confirmEl, confirm] = useConfirm();
+
+  const load = useCallback(async () => {
+    try { const d = await api('/shop/admin/items'); setItems(d.items || []); }
+    catch (err) { setError(err.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function removeItem(id) {
+    if (!(await confirm({ title: 'Delete product?', message: 'This removes its variants too. This cannot be undone.', confirmLabel: 'Delete', danger: true }))) return;
+    try { await api(`/shop/admin/items/${id}`, { method: 'DELETE' }); load(); }
+    catch (err) { setError(err.message); }
+  }
+
+  return (
+    <div className="space-y-4">
+      {confirmEl}
+      {error && <div className="text-red text-sm">{error}</div>}
+      {!showNew ? (
+        <Button variant="gold" onClick={() => setShowNew(true)}>+ Add Product</Button>
+      ) : (
+        <NewProductForm onDone={() => { setShowNew(false); load(); }} onCancel={() => setShowNew(false)} />
+      )}
+
+      {items === null && <Loading label="Loading products…" />}
+      {items !== null && items.length === 0 && <EmptyState icon="🛍️" title="No products yet" hint="Add your first item above." />}
+      <div className="grid sm:grid-cols-2 gap-4">
+        {(items || []).map((item) => (
+          <ProductCard key={item.id} item={item} onChanged={load} onDelete={() => removeItem(item.id)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NewProductForm({ onDone, onCancel }) {
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [price, setPrice] = useState('');
+  const [photo, setPhoto] = useState('');
+  const [hasVariants, setHasVariants] = useState(false);
+  const [inventory, setInventory] = useState('0');
+  const [variants, setVariants] = useState([{ label: '', inventory: '0', priceOverride: '' }]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const fileRef = useRef(null);
+
+  function pickPhoto(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setError('');
+    if (!/^image\//.test(file.type)) { setError('Please choose an image file.'); return; }
+    resizeImage(file, 1080, (d) => { if (!d) { setError("Couldn't read that image."); return; } setPhoto(d); });
+  }
+
+  function updateVariant(i, key, val) {
+    setVariants((vs) => vs.map((v, idx) => (idx === i ? { ...v, [key]: val } : v)));
+  }
+  function addVariantRow() { setVariants((vs) => [...vs, { label: '', inventory: '0', priceOverride: '' }]); }
+  function removeVariantRow(i) { setVariants((vs) => vs.filter((_, idx) => idx !== i)); }
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!name.trim()) { setError('Name is required.'); return; }
+    setBusy(true); setError('');
+    try {
+      await api('/shop/admin/items', {
+        method: 'POST',
+        body: {
+          name: name.trim(), description, price: Math.round(Number(price || 0) * 100), photo,
+          hasVariants, inventory: Number(inventory) || 0,
+          variants: hasVariants
+            ? variants.filter((v) => v.label.trim()).map((v) => ({
+                label: v.label.trim(),
+                inventory: Number(v.inventory) || 0,
+                priceOverride: v.priceOverride !== '' ? Math.round(Number(v.priceOverride) * 100) : null,
+              }))
+            : undefined,
+        },
+      });
+      onDone();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3 ca-slide-up">
+      <div className="font-display text-xl text-gold">New Product</div>
+      <Field label="Name *"><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} autoFocus /></Field>
+      <Field label="Description"><textarea className={inputCls} rows="2" value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
+      <Field label="Price ($)"><input type="number" min="0" step="0.01" className={inputCls} value={price} onChange={(e) => setPrice(e.target.value)} /></Field>
+      <Field label="Photo">
+        <input ref={fileRef} type="file" accept="image/*" onChange={pickPhoto}
+          className="block w-full text-sm text-cream/70 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-gold file:text-navy file:font-semibold file:cursor-pointer hover:file:bg-gold/85" />
+      </Field>
+      {photo && <img src={photo} alt="Preview" className="max-h-32 rounded-lg border border-cream/15 object-contain" />}
+
+      <label className="flex items-center gap-2 text-sm text-cream/80">
+        <input type="checkbox" checked={hasVariants} onChange={(e) => setHasVariants(e.target.checked)} />
+        This item has sizes/colors (variants)
+      </label>
+
+      {!hasVariants ? (
+        <Field label="Inventory"><input type="number" min="0" className={inputCls} value={inventory} onChange={(e) => setInventory(e.target.value)} /></Field>
+      ) : (
+        <div className="space-y-2">
+          <span className="block text-xs uppercase tracking-wider text-cream/60">Variants</span>
+          {variants.map((v, i) => (
+            <div key={i} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center">
+              <input className={inputCls} placeholder="Label (e.g. Small)" value={v.label} onChange={(e) => updateVariant(i, 'label', e.target.value)} />
+              <input type="number" min="0" className={inputCls + ' w-20'} placeholder="Qty" value={v.inventory} onChange={(e) => updateVariant(i, 'inventory', e.target.value)} />
+              <input type="number" min="0" step="0.01" className={inputCls + ' w-24'} placeholder="Price $" value={v.priceOverride} onChange={(e) => updateVariant(i, 'priceOverride', e.target.value)} />
+              <button type="button" onClick={() => removeVariantRow(i)} className="text-cream/40 hover:text-red text-sm">Remove</button>
+            </div>
+          ))}
+          <Button variant="ghost" type="button" onClick={addVariantRow}>+ Add Option</Button>
+        </div>
+      )}
+
+      {error && <div className="text-red text-sm">{error}</div>}
+      <div className="flex gap-2">
+        <Button type="submit" variant="gold" disabled={busy}>{busy ? <span className="flex items-center gap-2"><Spinner /> Saving…</span> : 'Add Product'}</Button>
+        <Button variant="ghost" type="button" onClick={onCancel} disabled={busy}>Cancel</Button>
+      </div>
+    </form>
+  );
+}
+
+function ProductCard({ item, onChanged, onDelete }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(item.name);
+  const [description, setDescription] = useState(item.description);
+  const [price, setPrice] = useState((item.price / 100).toFixed(2));
+  const [photo, setPhoto] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [newVariant, setNewVariant] = useState({ label: '', inventory: '0', priceOverride: '' });
+  const fileRef = useRef(null);
+
+  function pickPhoto(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setError('');
+    if (!/^image\//.test(file.type)) { setError('Please choose an image file.'); return; }
+    resizeImage(file, 1080, (d) => { if (!d) { setError("Couldn't read that image."); return; } setPhoto(d); });
+  }
+
+  async function save() {
+    setBusy(true); setError('');
+    try {
+      await api(`/shop/admin/items/${item.id}`, {
+        method: 'PATCH',
+        body: { name, description, price: Math.round(Number(price || 0) * 100), photo: photo || undefined },
+      });
+      setEditing(false); setPhoto(''); onChanged();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function toggleActive() {
+    setBusy(true); setError('');
+    try { await api(`/shop/admin/items/${item.id}`, { method: 'PATCH', body: { active: !item.active } }); onChanged(); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function updateItemInventory(val) {
+    try { await api(`/shop/admin/items/${item.id}`, { method: 'PATCH', body: { inventory: Number(val) || 0 } }); onChanged(); }
+    catch (err) { setError(err.message); }
+  }
+  async function updateVariantInventory(variantId, val) {
+    try { await api(`/shop/admin/variants/${variantId}`, { method: 'PATCH', body: { inventory: Number(val) || 0 } }); onChanged(); }
+    catch (err) { setError(err.message); }
+  }
+  async function removeVariant(variantId) {
+    try { await api(`/shop/admin/variants/${variantId}`, { method: 'DELETE' }); onChanged(); }
+    catch (err) { setError(err.message); }
+  }
+  async function addVariant() {
+    if (!newVariant.label.trim()) return;
+    setBusy(true); setError('');
+    try {
+      await api(`/shop/admin/items/${item.id}/variants`, {
+        method: 'POST',
+        body: {
+          label: newVariant.label.trim(), inventory: Number(newVariant.inventory) || 0,
+          priceOverride: newVariant.priceOverride !== '' ? Math.round(Number(newVariant.priceOverride) * 100) : null,
+        },
+      });
+      setNewVariant({ label: '', inventory: '0', priceOverride: '' });
+      onChanged();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="bg-navy2 border border-cream/10 rounded-xl p-4">
+      <div className="flex gap-3">
+        <div className="w-16 h-16 rounded-lg bg-navy3 flex items-center justify-center overflow-hidden shrink-0">
+          {item.hasPhoto ? <img src={`/api/shop/items/${item.id}/photo`} alt={item.name} className="w-full h-full object-cover" /> : <span className="text-xl opacity-30">🛍️</span>}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-medium text-cream truncate">{item.name}</span>
+            <Badge tone={item.active ? 'green' : 'slate'}>{item.active ? 'Active' : 'Hidden'}</Badge>
+          </div>
+          <div className="text-sm text-cream/50">{formatCents(item.price)}{!item.hasVariants ? ` · ${item.inventory} in stock` : ''}</div>
+        </div>
+      </div>
+
+      {error && <div className="text-red text-xs mt-2">{error}</div>}
+
+      {!editing ? (
+        <div className="flex gap-2 mt-3 flex-wrap">
+          <Button variant="ghost" className="text-xs px-3 py-1" onClick={() => setEditing(true)}>Edit</Button>
+          <Button variant="ghost" className="text-xs px-3 py-1" onClick={toggleActive} disabled={busy}>{item.active ? 'Hide' : 'Unhide'}</Button>
+          <Button variant="danger" className="text-xs px-3 py-1" onClick={onDelete}>Delete</Button>
+        </div>
+      ) : (
+        <div className="mt-3 space-y-2 border-t border-cream/10 pt-3">
+          <Field label="Name"><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} /></Field>
+          <Field label="Description"><textarea className={inputCls} rows="2" value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
+          <Field label="Price ($)"><input type="number" min="0" step="0.01" className={inputCls} value={price} onChange={(e) => setPrice(e.target.value)} /></Field>
+          <Field label="Replace Photo">
+            <input ref={fileRef} type="file" accept="image/*" onChange={pickPhoto}
+              className="block w-full text-sm text-cream/70 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-gold file:text-navy file:font-semibold file:cursor-pointer hover:file:bg-gold/85" />
+          </Field>
+          {photo && <img src={photo} alt="Preview" className="max-h-28 rounded-lg border border-cream/15 object-contain" />}
+          {!item.hasVariants && (
+            <Field label="Inventory"><input type="number" min="0" className={inputCls} defaultValue={item.inventory} onBlur={(e) => updateItemInventory(e.target.value)} /></Field>
+          )}
+          <div className="flex gap-2">
+            <Button variant="gold" className="text-xs px-3 py-1.5" onClick={save} disabled={busy}>{busy ? <Spinner className="w-3 h-3" /> : 'Save'}</Button>
+            <Button variant="ghost" className="text-xs px-3 py-1.5" onClick={() => { setEditing(false); setPhoto(''); }}>Cancel</Button>
+          </div>
+        </div>
+      )}
+
+      {item.hasVariants && (
+        <div className="mt-3 border-t border-cream/10 pt-3 space-y-1.5">
+          <span className="block text-xs uppercase tracking-wider text-cream/60">Variants</span>
+          {item.variants.map((v) => (
+            <div key={v.id} className="flex items-center gap-2 text-sm">
+              <span className="flex-1 text-cream/80 truncate">{v.label}{v.priceOverride != null ? ` · ${formatCents(v.priceOverride)}` : ''}</span>
+              <input type="number" min="0" className={inputCls + ' w-20 py-1'} defaultValue={v.inventory}
+                onBlur={(e) => updateVariantInventory(v.id, e.target.value)} />
+              <button onClick={() => removeVariant(v.id)} className="text-cream/40 hover:text-red text-xs">Remove</button>
+            </div>
+          ))}
+          <div className="flex gap-1.5 items-center pt-1">
+            <input className={inputCls + ' py-1 text-sm'} placeholder="New option" value={newVariant.label}
+              onChange={(e) => setNewVariant((v) => ({ ...v, label: e.target.value }))} />
+            <input type="number" min="0" className={inputCls + ' w-16 py-1 text-sm'} placeholder="Qty" value={newVariant.inventory}
+              onChange={(e) => setNewVariant((v) => ({ ...v, inventory: e.target.value }))} />
+            <Button variant="ghost" className="text-xs px-2 py-1" onClick={addVariant} disabled={busy}>Add</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ShopOrdersTab() {
+  const [orders, setOrders] = useState(null);
+  const [error, setError] = useState('');
+  const [filter, setFilter] = useState('');
+  const [busyId, setBusyId] = useState(null);
+  const [confirmEl, confirm] = useConfirm();
+
+  const load = useCallback(async () => {
+    try {
+      const q = filter ? `?fulfillmentStatus=${filter}` : '';
+      const d = await api('/shop/admin/orders' + q);
+      setOrders(d.orders || []);
+    } catch (err) { setError(err.message); }
+  }, [filter]);
+  useEffect(() => { load(); }, [load]);
+
+  async function act(order, action, extra) {
+    if (action === 'cancel' && !(await confirm({ title: 'Cancel order?', message: 'Inventory will be restored.', confirmLabel: 'Cancel Order', danger: true }))) return;
+    setBusyId(order.id);
+    try { await api(`/shop/admin/orders/${order.id}`, { method: 'PATCH', body: { action, ...extra } }); load(); }
+    catch (err) { setError(err.message); }
+    finally { setBusyId(null); }
+  }
+
+  const statusColors = { pending: 'slate', fulfilled: 'green', cancelled: 'red', needs_review: 'gold' };
+
+  return (
+    <div className="space-y-4">
+      {confirmEl}
+      {error && <div className="text-red text-sm">{error}</div>}
+      <div className="flex gap-1 bg-navy2 border border-cream/10 rounded-lg p-1 w-fit">
+        {[['', 'All'], ['pending', 'Pending'], ['needs_review', 'Needs Review'], ['fulfilled', 'Fulfilled'], ['cancelled', 'Cancelled']].map(([v, label]) => (
+          <button key={v} onClick={() => setFilter(v)}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${filter === v ? 'bg-gold text-navy' : 'text-cream/60 hover:text-cream'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {orders === null && <Loading label="Loading orders…" />}
+      {orders !== null && orders.length === 0 && <EmptyState icon="📦" title="No orders" hint="Orders placed from the public shop will appear here." />}
+
+      <div className="space-y-3">
+        {(orders || []).map((o) => (
+          <OrderRow key={o.id} order={o} busy={busyId === o.id} onAction={(action, extra) => act(o, action, extra)} statusColors={statusColors} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OrderRow({ order, busy, onAction, statusColors }) {
+  const [notes, setNotes] = useState(order.notes || '');
+  return (
+    <div className="bg-navy2 border border-cream/10 rounded-xl p-4">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <div className="font-medium text-cream">{order.itemName}{order.variantLabel ? ` — ${order.variantLabel}` : ''} × {order.quantity}</div>
+          <div className="text-sm text-cream/60 mt-0.5">{order.buyerName} · {order.buyerEmail}{order.buyerPhone ? ' · ' + order.buyerPhone : ''}</div>
+          <div className="text-xs text-cream/40 mt-1">
+            {order.deliveryMethod === 'ship' ? 'Ship to buyer' : 'Student pickup'}
+            {order.deliveryMethod === 'pickup' && order.studentEmail ? ` (${order.studentEmail})` : ''}
+            {order.promoCode ? ` · Promo: ${order.promoCode}` : ''} · {timeAgo(order.createdAt)}
+          </div>
+          {order.deliveryMethod === 'ship' && order.shippingAddress && (
+            <div className="text-xs text-cream/40 mt-1">
+              {order.shippingAddress.street}, {order.shippingAddress.city}, {order.shippingAddress.state} {order.shippingAddress.zip}
+            </div>
+          )}
+        </div>
+        <div className="text-right shrink-0">
+          <div className="text-gold font-semibold">{formatCents(order.total)}</div>
+          <div className="flex gap-1.5 mt-1 justify-end flex-wrap">
+            <Badge tone={order.paymentStatus === 'paid' || order.paymentStatus === 'free' ? 'green' : 'slate'}>{order.paymentStatus}</Badge>
+            <Badge tone={statusColors[order.fulfillmentStatus] || 'slate'}>{order.fulfillmentStatus}</Badge>
+          </div>
+        </div>
+      </div>
+
+      {order.fulfillmentStatus !== 'cancelled' && (
+        <div className="flex gap-2 mt-3 flex-wrap items-center">
+          {order.paymentStatus === 'pending' && (
+            <Button variant="ghost" className="text-xs px-3 py-1" onClick={() => onAction('mark-paid')} disabled={busy}>Mark Paid</Button>
+          )}
+          {order.fulfillmentStatus !== 'fulfilled' && (
+            <Button variant="ghost" className="text-xs px-3 py-1" onClick={() => onAction('mark-fulfilled')} disabled={busy}>Mark Fulfilled</Button>
+          )}
+          <Button variant="danger" className="text-xs px-3 py-1" onClick={() => onAction('cancel')} disabled={busy}>Cancel</Button>
+        </div>
+      )}
+
+      <div className="flex gap-2 mt-2">
+        <input className={inputCls + ' text-xs py-1'} placeholder="Internal notes…" value={notes} onChange={(e) => setNotes(e.target.value)} />
+        <Button variant="ghost" className="text-xs px-3 py-1" onClick={() => onAction('notes', { notes })} disabled={busy}>Save Note</Button>
+      </div>
+    </div>
+  );
+}
+
+function ShopPromoCodesTab({ items }) {
+  const [codes, setCodes] = useState(null);
+  const [error, setError] = useState('');
+  const [showNew, setShowNew] = useState(false);
+  const [busyId, setBusyId] = useState(null);
+
+  const load = useCallback(async () => {
+    try { const d = await api('/shop/admin/promo-codes'); setCodes(d.codes || []); }
+    catch (err) { setError(err.message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function toggleActive(c) {
+    setBusyId(c.id);
+    try { await api(`/shop/admin/promo-codes/${c.id}`, { method: 'PATCH', body: { active: !c.active } }); load(); }
+    catch (err) { setError(err.message); }
+    finally { setBusyId(null); }
+  }
+  async function remove(id) {
+    setBusyId(id);
+    try { await api(`/shop/admin/promo-codes/${id}`, { method: 'DELETE' }); load(); }
+    catch (err) { setError(err.message); }
+    finally { setBusyId(null); }
+  }
+
+  return (
+    <div className="space-y-4">
+      {error && <div className="text-red text-sm">{error}</div>}
+      {!showNew ? (
+        <Button variant="gold" onClick={() => setShowNew(true)}>+ New Promo Code</Button>
+      ) : (
+        <NewPromoForm items={items} onDone={() => { setShowNew(false); load(); }} onCancel={() => setShowNew(false)} />
+      )}
+
+      {codes === null && <Loading label="Loading promo codes…" />}
+      {codes !== null && codes.length === 0 && <EmptyState icon="🏷️" title="No promo codes yet" />}
+
+      <div className="space-y-2">
+        {(codes || []).map((c) => (
+          <div key={c.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-mono font-semibold text-gold">{c.code}</span>
+                <Badge tone={c.active ? 'green' : 'slate'}>{c.active ? 'Active' : 'Disabled'}</Badge>
+                {c.studentOnly && <Badge tone="blue">Student Only</Badge>}
+              </div>
+              <div className="text-sm text-cream/50 mt-1">
+                {c.type === 'free' ? 'Free item' : c.type === 'percent' ? `${c.value}% off` : `${formatCents(c.value)} off`}
+                {c.itemId ? ' · specific item' : ' · any item'}
+                {' · '}{c.usedCount}{c.usageLimit != null ? ` / ${c.usageLimit} used` : ' used'}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="ghost" className="text-xs px-3 py-1" onClick={() => toggleActive(c)} disabled={busyId === c.id}>{c.active ? 'Disable' : 'Enable'}</Button>
+              <Button variant="danger" className="text-xs px-3 py-1" onClick={() => remove(c.id)} disabled={busyId === c.id}>Delete</Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NewPromoForm({ items, onDone, onCancel }) {
+  const [code, setCode] = useState('');
+  const [type, setType] = useState('percent');
+  const [value, setValue] = useState('');
+  const [itemId, setItemId] = useState('');
+  const [studentOnly, setStudentOnly] = useState(false);
+  const [usageLimit, setUsageLimit] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!code.trim()) { setError('A code is required.'); return; }
+    setBusy(true); setError('');
+    try {
+      await api('/shop/admin/promo-codes', {
+        method: 'POST',
+        body: {
+          code: code.trim(), type,
+          value: type === 'percent' ? Number(value) || 0 : type === 'dollar' ? Math.round(Number(value || 0) * 100) : 0,
+          itemId: itemId || null, studentOnly, usageLimit: usageLimit !== '' ? Number(usageLimit) : null,
+        },
+      });
+      onDone();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3 ca-slide-up">
+      <div className="font-display text-xl text-gold">New Promo Code</div>
+      <Field label="Code *"><input className={inputCls} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} autoFocus placeholder="e.g. WELCOME25" /></Field>
+      <Field label="Type">
+        <select className={inputCls} value={type} onChange={(e) => setType(e.target.value)}>
+          <option value="percent">Percent off</option>
+          <option value="dollar">Dollar amount off</option>
+          <option value="free">Free item</option>
+        </select>
+      </Field>
+      {type !== 'free' && (
+        <Field label={type === 'percent' ? 'Percent Off (%)' : 'Amount Off ($)'}>
+          <input type="number" min="0" step={type === 'percent' ? '1' : '0.01'} className={inputCls} value={value} onChange={(e) => setValue(e.target.value)} />
+        </Field>
+      )}
+      <Field label="Applies To">
+        <select className={inputCls} value={itemId} onChange={(e) => setItemId(e.target.value)}>
+          <option value="">All items</option>
+          {items.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
+        </select>
+      </Field>
+      <Field label="Usage Limit (optional)">
+        <input type="number" min="1" className={inputCls} value={usageLimit} onChange={(e) => setUsageLimit(e.target.value)} placeholder="Unlimited" />
+      </Field>
+      <label className="flex items-center gap-2 text-sm text-cream/80">
+        <input type="checkbox" checked={studentOnly} onChange={(e) => setStudentOnly(e.target.checked)} />
+        Student only — requires a @pcstudents.us email and forces pickup only
+      </label>
+      {error && <div className="text-red text-sm">{error}</div>}
+      <div className="flex gap-2">
+        <Button type="submit" variant="gold" disabled={busy}>{busy ? <span className="flex items-center gap-2"><Spinner /> Saving…</span> : 'Create Code'}</Button>
+        <Button variant="ghost" type="button" onClick={onCancel} disabled={busy}>Cancel</Button>
+      </div>
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Volunteer Manager Page (admin/manager only)
 // ---------------------------------------------------------------------------
 function VolunteerManagerPage({ me }) {
@@ -7586,6 +8537,7 @@ function AppIcon({ name, className, size = 26 }) {
     case 'check':     return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-5"/></svg>;
     case 'inbox':     return <svg {...p}><path d="M22 12H16l-2 3H10L8 12H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 17 4H7a2 2 0 0 0-1.55.89Z"/></svg>;
     case 'roster':    return <svg {...p}><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>;
+    case 'shop':      return <svg {...p}><path d="M6 7V6a6 6 0 0 1 12 0v1"/><path d="M4 7h16l-1.2 13.2a2 2 0 0 1-2 1.8H7.2a2 2 0 0 1-2-1.8Z"/></svg>;
     case 'calendar':  return <svg {...p}><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="m9 16 2 2 4-4"/></svg>;
     case 'funding':   return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9.5 9.5a2.5 2.5 0 0 1 5 0c0 1.5-1 2-2.5 2.5-1.5.5-2.5 1-2.5 2.5a2.5 2.5 0 0 0 5 0"/></svg>;
     case 'apply':     return <svg {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>;
@@ -7678,6 +8630,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
         ...(isManager && visible('approvals')   ? [{ type: 'approvals',   label: 'Approvals',       icon: 'check',     badge: approvalsCount   }] : []),
         ...(canSeeSubmissions && visible('submissions') ? [{ type: 'submissions', label: 'Get Involved', icon: 'inbox', badge: submissionsCount }] : []),
         ...(canRoster && visible('roster')      ? [{ type: 'roster',      label: 'Roster',          icon: 'roster'     }] : []),
+        ...((me.role === 'admin' || !!me.canManageRoster) && visible('shop') ? [{ type: 'shop', label: 'Shop Manager', icon: 'shop' }] : []),
         ...(isManager && visible('dashboard')   ? [{ type: 'dashboard',   label: 'Dashboard',       icon: 'dashboard'  }] : []),
         ...(isManager && visible('volunteers')  ? [{ type: 'volunteers',  label: 'Volunteers',      icon: 'volunteer'  }] : []),
         ...(isManager && visible('speaker')     ? [{ type: 'speaker',     label: 'Speaker Events',  icon: 'speaker'    }] : []),
@@ -8190,6 +9143,7 @@ function App() {
     ...(isMgrOrAdmin                          ? [{ type: 'approvals',   label: 'Approvals' }] : []),
     ...(me.role === 'admin' || !!me.grade     ? [{ type: 'submissions', label: 'Get Involved' }] : []),
     ...(isMgrOrAdmin || !!me.canManageRoster  ? [{ type: 'roster',      label: 'Roster' }] : []),
+    ...(me.role === 'admin' || !!me.canManageRoster ? [{ type: 'shop',  label: 'Shop Manager' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'dashboard',   label: 'Dashboard' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'volunteers',  label: 'Volunteers' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'speaker',     label: 'Speaker Events' }] : []),
@@ -8237,7 +9191,7 @@ function App() {
     home: 'Club Home', website: 'Edit Website', mytasks: 'My Page',
     person: (reports.find(r => r.id === view.userId) || {}).displayName || 'Team Member',
     myteam: 'My Team', announce: 'Team Announcement', approvals: 'Pending Approvals',
-    submissions: 'Get Involved', roster: 'Roster', checkin: 'Weekly Check-In',
+    submissions: 'Get Involved', roster: 'Roster', shop: 'Shop Manager', checkin: 'Weekly Check-In',
     funding: 'Funding Requests', apply: 'Apply for Position', dashboard: 'Dashboard',
     attendance: 'Attendance', polls: 'Polls & Voting', budget: 'Budget Overview',
     meetings: 'Meetings', speaker: 'Speaker Events', grants: 'Grant Tracker', social: 'Social Media',
@@ -8253,13 +9207,14 @@ function App() {
   if (view.type === 'home') content = <Home mode="portal" me={me} />;
   else if (view.type === 'website') content = canEditSite ? <Home mode="editor" me={me} editable={true} /> : <Home mode="portal" me={me} />;
   else if (view.type === 'photos') content = (me.role === 'admin' || me.canEditHome || me.canManageSocial) ? <PhotoModerationPage me={me} /> : null;
-  else if (view.type === 'mytasks') content = <TaskPage me={me} userId={me.id} users={users} refreshSignal={refreshSignal} />;
-  else if (view.type === 'person') content = <TaskPage me={me} userId={view.userId} users={users} refreshSignal={refreshSignal} />;
+  else if (view.type === 'mytasks') content = <TaskPage me={me} userId={me.id} users={users} refreshSignal={refreshSignal} onNavigate={navigate} />;
+  else if (view.type === 'person') content = <TaskPage me={me} userId={view.userId} users={users} refreshSignal={refreshSignal} onNavigate={navigate} />;
   else if (view.type === 'myteam') content = <MyTeamView reports={reports} onNavigate={navigate} />;
   else if (view.type === 'announce') content = (me.role === 'admin' || me.role === 'manager') ? <TeamAnnouncementView me={me} reports={reports} /> : null;
   else if (view.type === 'approvals') content = <Approvals onChanged={bump} refreshSignal={refreshSignal} />;
   else if (view.type === 'submissions') content = <SubmissionsInbox onChanged={bump} refreshSignal={refreshSignal} />;
   else if (view.type === 'roster') content = <RosterPage me={me} />;
+  else if (view.type === 'shop') content = (me.role === 'admin' || !!me.canManageRoster) ? <ShopManagerPage me={me} /> : null;
   else if (view.type === 'checkin') content = <WeeklyCheckinPage me={me} />;
   else if (view.type === 'funding') content = <FundingRequestPage me={me} />;
   else if (view.type === 'apply') content = <BoardApplicationsPage me={me} />;
