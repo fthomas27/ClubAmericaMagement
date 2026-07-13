@@ -883,8 +883,8 @@ app.post('/api/shop/validate-promo', rateLimit({ windowMs: 60 * 60 * 1000, max: 
 
 function safeJsonParse(s) { try { return JSON.parse(s); } catch (_) { return undefined; } }
 
-// Validate + price a full order payload. Shared by create-payment-intent and
-// the order/webhook finalize paths so the rules are enforced identically
+// Validate + price a full order payload. Shared by the checkout, order, and
+// webhook finalize paths so the rules are enforced identically
 // everywhere. Returns { error } or the normalized, priced order.
 function validateOrderPayload(body, opts = {}) {
   let { itemId, variantId, quantity, buyerName, buyerEmail, buyerPhone,
@@ -1047,57 +1047,111 @@ function handlePaymentIntentSucceeded(intent) {
   notifyManagersOfOrder(db.prepare('SELECT * FROM merch_orders WHERE id = ?').get(info.lastInsertRowid));
 }
 
-app.post('/api/shop/create-payment-intent', rateLimit({ windowMs: 60 * 60 * 1000, max: 30, name: 'shop-intent' }), async (req, res) => {
+// Order metadata we stash on the PaymentIntent so the webhook / confirmation
+// can rebuild and record the order after the buyer returns from Stripe.
+function orderMetadata(v) {
+  const p = v.pricing;
+  return {
+    kind: 'merch',
+    itemId: String(p.item.id),
+    itemName: p.item.name.slice(0, 120),
+    variantId: p.variant ? String(p.variant.id) : '',
+    variantLabel: p.variant ? p.variant.label.slice(0, 80) : '',
+    quantity: String(p.qty),
+    buyerName: v.buyerName, buyerEmail: v.buyerEmail, buyerPhone: v.buyerPhone,
+    deliveryMethod: v.deliveryMethod, studentEmail: v.studentEmail,
+    promoCode: v.promoCode || '',
+    addr: v.address ? JSON.stringify(v.address) : '',
+  };
+}
+
+// Online payment uses Stripe-hosted Checkout: we create a Checkout Session
+// priced from our own DB (never trusting the client) and hand back its URL for
+// the browser to redirect to. Inventory, promo, and pickup rules are all
+// enforced here before a session is ever created.
+app.post('/api/shop/create-checkout-session', rateLimit({ windowMs: 60 * 60 * 1000, max: 30, name: 'shop-checkout' }), async (req, res) => {
   if (!stripe) return res.status(503).json({ error: 'Online payment is not configured yet — please choose to pay in person.' });
   const v = validateOrderPayload(req.body);
   if (v.error) return res.status(400).json({ error: v.error });
   const p = v.pricing;
   if (p.total <= 0) return res.status(400).json({ error: 'This order has no balance due — place it directly.' });
-  // Stripe rejects card charges under 50¢. Say so plainly instead of failing
-  // with a generic error at intent creation.
+  // Stripe rejects card charges under 50¢. Say so plainly.
   if (p.total < 50) return res.status(400).json({ error: 'Online payments must be at least $0.50 — for smaller amounts, choose student pickup and pay in person.' });
-  // Client sends a stable key per cart state so a retry can't create a second
-  // PaymentIntent (and thus a possible double charge).
+
+  const base = (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+  const lineName = `${p.item.name}${p.variant ? ' — ' + p.variant.label : ''}${p.qty > 1 ? ' × ' + p.qty : ''}`;
   const idemKey = String((req.body || {}).idempotencyKey || '').trim().slice(0, 200);
   try {
-    const intent = await stripe.paymentIntents.create({
-      amount: p.total,
-      currency: 'usd',
-      automatic_payment_methods: { enabled: true },
-      description: `Club America merch — ${p.item.name}${p.variant ? ' (' + p.variant.label + ')' : ''}`,
-      receipt_email: v.buyerEmail || undefined,
-      metadata: {
-        kind: 'merch',
-        itemId: String(p.item.id),
-        itemName: p.item.name.slice(0, 120),
-        variantId: p.variant ? String(p.variant.id) : '',
-        variantLabel: p.variant ? p.variant.label.slice(0, 80) : '',
-        quantity: String(p.qty),
-        buyerName: v.buyerName, buyerEmail: v.buyerEmail, buyerPhone: v.buyerPhone,
-        deliveryMethod: v.deliveryMethod, studentEmail: v.studentEmail,
-        promoCode: v.promoCode || '',
-        addr: v.address ? JSON.stringify(v.address) : '',
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      // A single line item priced at the server-computed total (after any promo)
+      // so the amount charged always equals what we recorded.
+      line_items: [{
+        quantity: 1,
+        price_data: {
+          currency: 'usd',
+          unit_amount: p.total,
+          product_data: {
+            name: lineName,
+            ...(p.promo ? { description: `Promo ${p.promo.code} applied` } : {}),
+          },
+        },
+      }],
+      customer_email: v.buyerEmail || undefined,
+      success_url: `${base}/shop?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${base}/shop?checkout=cancel`,
+      // Metadata rides on the PaymentIntent so the webhook and the return-trip
+      // confirmation can both rebuild the order from it.
+      payment_intent_data: {
+        description: `Club America merch — ${p.item.name}${p.variant ? ' (' + p.variant.label + ')' : ''}`,
+        metadata: orderMetadata(v),
       },
+      metadata: { kind: 'merch' },
     }, idemKey ? { idempotencyKey: idemKey } : undefined);
-    res.json({ clientSecret: intent.client_secret, paymentIntentId: intent.id, total: p.total });
+    res.json({ url: session.url });
   } catch (e) {
-    console.error('[stripe] create intent failed:', e.message);
-    res.status(502).json({ error: 'Could not start payment — please try again.' });
+    console.error('[stripe] create checkout session failed:', e.message);
+    res.status(502).json({ error: 'Could not start checkout — please try again.' });
   }
 });
 
-app.post('/api/shop/order', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name: 'shop-order' }), async (req, res) => {
-  const { paymentMethod, paymentIntentId } = req.body || {};
-  // When the buyer has already paid (a PaymentIntent id is present) tolerate a
-  // stock shortfall: the charge is done, so finalize + flag needs_review rather
-  // than reject. Free and in-person orders still enforce stock up front (and
-  // their insertOrder path re-checks it), so this can't be used to oversell.
-  const v = validateOrderPayload(req.body, { ignoreStock: !!paymentIntentId });
+// Called when the buyer returns from Stripe-hosted Checkout. Verifies the
+// session was actually paid, then records the order idempotently (the same
+// path the webhook uses) so fulfillment never depends on the webhook alone.
+app.post('/api/shop/confirm-checkout', rateLimit({ windowMs: 60 * 60 * 1000, max: 40, name: 'shop-confirm' }), async (req, res) => {
+  if (!stripe) return res.status(503).json({ error: 'Online payment is not configured.' });
+  const sessionId = String((req.body || {}).sessionId || '').trim().slice(0, 200);
+  if (!sessionId) return res.status(400).json({ error: 'Missing checkout session.' });
+  let session;
+  try { session = await stripe.checkout.sessions.retrieve(sessionId, { expand: ['payment_intent'] }); }
+  catch (e) { return res.status(400).json({ error: 'Could not verify checkout.' }); }
+  const intent = session && (typeof session.payment_intent === 'object' ? session.payment_intent : null);
+  // Only trust a fully-paid session whose PaymentIntent our shop created.
+  if (!session || session.payment_status !== 'paid' || !intent ||
+      intent.status !== 'succeeded' || intent.currency !== 'usd' ||
+      (intent.metadata || {}).kind !== 'merch') {
+    return res.status(400).json({ error: 'Payment was not completed.' });
+  }
+  handlePaymentIntentSucceeded(intent); // idempotent record/mark-paid, shared with the webhook
+  const order = db.prepare('SELECT * FROM merch_orders WHERE stripePaymentIntentId = ?').get(intent.id);
+  res.json({
+    ok: true,
+    orderId: order ? order.id : null,
+    total: intent.amount,
+    paymentStatus: 'paid',
+    deliveryMethod: (intent.metadata || {}).deliveryMethod === 'pickup' ? 'pickup' : 'ship',
+  });
+});
+
+// Orders that don't go through Stripe: promo-covered (free) and in-person
+// pickup (pay the secretary later). Both enforce stock up front.
+app.post('/api/shop/order', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name: 'shop-order' }), (req, res) => {
+  const v = validateOrderPayload(req.body);
   if (v.error) return res.status(400).json({ error: v.error });
   const p = v.pricing;
 
-  // Fully covered by a promo — no payment needed.
   if (p.total === 0) {
+    // Fully covered by a promo — no payment needed.
     let info;
     try { info = insertOrder(v, { paymentMethod: 'free', paymentStatus: 'free' }); }
     catch (e) { return orderInsertError(res, e); }
@@ -1106,26 +1160,9 @@ app.post('/api/shop/order', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name:
     return res.status(201).json({ ok: true, orderId: order.id, total: 0, paymentStatus: 'free' });
   }
 
-  // Paid online — always for shipped orders, and for pickup when the buyer
-  // chose to pay now. Verify the PaymentIntent actually succeeded for the exact
-  // amount, then finalize idempotently (the webhook shares this same path).
-  if (v.deliveryMethod === 'ship' || paymentMethod === 'stripe') {
-    if (!stripe) return res.status(503).json({ error: 'Online payment is not configured.' });
-    if (!paymentIntentId) return res.status(400).json({ error: 'Payment is required for shipped orders.' });
-    let intent;
-    try { intent = await stripe.paymentIntents.retrieve(String(paymentIntentId)); }
-    catch (e) { return res.status(400).json({ error: 'Could not verify payment.' }); }
-    // Only accept intents our shop created (kind=merch is set server-side at
-    // creation) — a succeeded payment from any other use of this Stripe
-    // account (future invoicing, dashboard charges) can't be redeemed for merch.
-    if (!intent || intent.status !== 'succeeded' || intent.amount !== p.total ||
-        intent.currency !== 'usd' || (intent.metadata || {}).kind !== 'merch') {
-      return res.status(400).json({ error: 'Payment was not completed.' });
-    }
-    let result;
-    try { result = finalizeStripeOrder(intent, v); }
-    catch (e) { return orderInsertError(res, e); }
-    return res.status(201).json({ ok: true, orderId: result.order.id, total: p.total, paymentStatus: 'paid' });
+  // A paid order must go through Stripe Checkout, not this route.
+  if (v.deliveryMethod !== 'pickup' || (req.body || {}).paymentMethod !== 'inperson') {
+    return res.status(400).json({ error: 'This order requires online payment — use checkout.' });
   }
 
   // In-person pickup — pay the secretary later (cash/Venmo), tracked as pending.

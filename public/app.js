@@ -2930,6 +2930,8 @@ function ShopPage() {
   const [config, setConfig] = useState(null);
   const [error, setError] = useState('');
   const [orderItem, setOrderItem] = useState(null);
+  const [checkoutResult, setCheckoutResult] = useState(null); // { deliveryMethod } after paid return
+  const [checkoutNotice, setCheckoutNotice] = useState('');   // canceled / confirm error
 
   const load = useCallback(async () => {
     try {
@@ -2940,11 +2942,34 @@ function ShopPage() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  // Handle the return trip from Stripe-hosted Checkout. On success we confirm
+  // the session server-side (which records the order idempotently) and show the
+  // confirmation; the query string is stripped so a refresh doesn't re-confirm.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get('checkout');
+    if (!status) return;
+    const sessionId = params.get('session_id');
+    window.history.replaceState(null, '', '/shop');
+    if (status === 'cancel') { setCheckoutNotice("Checkout canceled — you haven't been charged."); return; }
+    if (status === 'success' && sessionId) {
+      api('/shop/confirm-checkout', { method: 'POST', body: { sessionId } })
+        .then((d) => setCheckoutResult(d))
+        .catch((err) => setCheckoutNotice(err.message || 'We could not confirm your payment — please contact us.'))
+        .finally(() => load());
+    }
+  }, [load]);
+
   if (error) return <ErrorState message={error} onRetry={() => { setError(''); load(); }} />;
   if (items === null) return <Loading label="Loading shop…" />;
 
   return (
     <PublicPageShell title="Club America Shop" subtitle="Grab some gear — ship it to you or pick it up at school.">
+      {checkoutNotice && (
+        <div className="max-w-md mx-auto text-center text-sm text-cream/70 bg-navy2 border border-cream/15 rounded-lg px-4 py-3">
+          {checkoutNotice}
+        </div>
+      )}
       {items.length === 0 ? (
         <EmptyState icon="🛍️" title="Nothing in stock right now" hint="Check back soon — new merch drops regularly." />
       ) : (
@@ -2957,11 +2982,33 @@ function ShopPage() {
       {orderItem && config && (
         <OrderModal item={orderItem} config={config} onClose={() => setOrderItem(null)} />
       )}
+      {checkoutResult && (
+        <CheckoutSuccessModal result={checkoutResult} onClose={() => setCheckoutResult(null)} />
+      )}
       <p className="text-center text-xs text-cream/40 pt-2">
         The Club America shop is a club fundraiser — every purchase helps fund our meetings,
         speakers, and events at Park City High School.
       </p>
     </PublicPageShell>
+  );
+}
+
+// Shown after the buyer returns from Stripe-hosted Checkout with a paid order.
+function CheckoutSuccessModal({ result, onClose }) {
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
+      <div className="bg-navy2 border border-cream/15 rounded-xl p-6 max-w-md w-full ca-scale-in text-center space-y-3" onClick={(e) => e.stopPropagation()}>
+        <div className="text-4xl">🎉</div>
+        <div className="font-display text-xl text-gold">Payment received — order placed!</div>
+        <p className="text-sm text-cream/60">
+          {result.deliveryMethod === 'pickup'
+            ? "We'll email you when your order is ready for pickup at school."
+            : "We'll ship your order and reach out if we need anything else."}
+        </p>
+        <p className="text-xs text-cream/40">Thanks for supporting the Club America fundraiser!</p>
+        <Button variant="gold" onClick={onClose}>Done</Button>
+      </div>
+    </div>
   );
 }
 
@@ -2991,14 +3038,10 @@ function ShopItemCard({ item, onOrder }) {
   );
 }
 
-const CARD_ELEMENT_STYLE = {
-  base: { color: '#F5F0E8', fontSize: '16px', '::placeholder': { color: 'rgba(245,240,232,0.4)' } },
-  invalid: { color: '#CC1C2E' },
-};
-
 // Multi-step order flow: pick option/qty → delivery + buyer info (+ promo) →
-// payment (Stripe or in-person) → confirmation. A student-only promo code
-// forces pickup and hides the "Ship to Me" choice, per club policy.
+// payment. Card payments hand off to Stripe-hosted Checkout and return to the
+// shop page; free and in-person orders are placed directly here. A student-only
+// promo code forces pickup and hides the "Ship to Me" choice, per club policy.
 function OrderModal({ item, config, onClose }) {
   const hasVariants = item.hasVariants;
   const firstInStock = hasVariants ? (item.variants.find((v) => v.inventory > 0) || item.variants[0]) : null;
@@ -3019,13 +3062,8 @@ function OrderModal({ item, config, onClose }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [orderResult, setOrderResult] = useState(null);
-  const [clientSecret, setClientSecret] = useState(null);
-  const [paymentIntentId, setPaymentIntentId] = useState(null);
-  const cardMountRef = useRef(null);
-  const stripeRef = useRef(null);
-  const cardElRef = useRef(null);
-  // Stable per-modal token; combined with the amount it forms the Stripe
-  // idempotency key so a retried request can't create a second PaymentIntent.
+  // Stable per-modal token; combined with the cart it forms the Stripe
+  // idempotency key so a retried request can't create a duplicate Checkout Session.
   const idemSessionRef = useRef(Math.random().toString(36).slice(2) + Date.now().toString(36));
 
   const variant = hasVariants ? item.variants.find((v) => v.id === Number(variantId)) : null;
@@ -3080,92 +3118,50 @@ function OrderModal({ item, config, onClose }) {
     setStep('payment');
   }
 
-  // Once on the payment step (and prepayment is actually needed), create the
-  // PaymentIntent so the card element has a clientSecret to confirm against.
-  useEffect(() => {
-    if (step !== 'payment' || total === 0 || !requiresPrepay) return;
-    if (!config.stripeEnabled) { setError('Online payment is not available right now — please choose to pay in person, or contact the secretary.'); return; }
-    let cancelled = false;
-    (async () => {
-      try {
-        const d = await api('/shop/create-payment-intent', {
-          method: 'POST',
-          body: {
-            itemId: item.id, variantId: variant ? variant.id : null, quantity,
-            buyerName, buyerEmail, buyerPhone,
-            deliveryMethod: effectiveDelivery,
-            shippingAddress: effectiveDelivery === 'ship' ? address : undefined,
-            studentEmail, promoCode: promo ? promo.code : '',
-            // Key on the full cart, not just the amount, so switching between
-            // two same-priced items doesn't reuse a key with different params
-            // (which Stripe rejects). Same cart re-entry safely reuses the key.
-            idempotencyKey: `${idemSessionRef.current}-${item.id}-${variant ? variant.id : 'x'}-${quantity}-${promo ? promo.code : 'x'}-${total}`,
-          },
-        });
-        if (cancelled) return;
-        setClientSecret(d.clientSecret);
-        setPaymentIntentId(d.paymentIntentId);
-      } catch (err) { if (!cancelled) setError(err.message); }
-    })();
-    return () => { cancelled = true; };
-  }, [step, requiresPrepay]);
-
-  // Mount the Stripe card element once we have both a clientSecret and a DOM
-  // node. Keyed on step too, so the iframe is properly unmounted when leaving
-  // the payment step and remounted if the buyer goes Back and returns —
-  // otherwise the field comes back dead.
-  useEffect(() => {
-    if (step !== 'payment' || !clientSecret || !cardMountRef.current || !window.Stripe || !config.publishableKey) return;
-    const stripeInstance = window.Stripe(config.publishableKey);
-    stripeRef.current = stripeInstance;
-    const elements = stripeInstance.elements();
-    // disableLink: Stripe's Link sign-up overlay is confusing for guest buyers
-    // and its popup can trap taps inside this modal on iOS Safari.
-    const card = elements.create('card', { style: CARD_ELEMENT_STYLE, disableLink: true });
-    card.mount(cardMountRef.current);
-    cardElRef.current = card;
-    return () => { try { card.unmount(); } catch (_) {} cardElRef.current = null; };
-  }, [step, clientSecret]);
-
-  // iOS Safari can leave the visual viewport offset after the card iframe's
-  // keyboard closes, so taps on the confirmation land off-target ("Done"
-  // appears unclickable). Blur and reset scroll when the order completes.
+  // Reset scroll when a free/in-person order completes, so the confirmation
+  // is in view on mobile.
   useEffect(() => {
     if (step !== 'done') return;
     try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (_) {}
     window.scrollTo(0, 0);
   }, [step]);
 
-  function orderBody(paymentMethod) {
+  function orderPayload() {
     return {
       itemId: item.id, variantId: variant ? variant.id : null, quantity,
       buyerName, buyerEmail, buyerPhone,
       deliveryMethod: effectiveDelivery,
       shippingAddress: effectiveDelivery === 'ship' ? address : undefined,
       studentEmail, promoCode: promo ? promo.code : '',
-      paymentMethod, paymentIntentId: paymentIntentId || undefined,
     };
   }
 
+  // Free (promo-covered) and in-person pickup orders are placed directly.
   async function submitOrder(paymentMethod) {
     setBusy(true); setError('');
     try {
-      const d = await api('/shop/order', { method: 'POST', body: orderBody(paymentMethod) });
+      const d = await api('/shop/order', { method: 'POST', body: { ...orderPayload(), paymentMethod } });
       setOrderResult(d);
       setStep('done');
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   }
 
-  async function payAndSubmit() {
-    if (!stripeRef.current || !cardElRef.current) { setError('Payment form is not ready yet.'); return; }
+  // Card payments hand off to Stripe-hosted Checkout; the browser returns to
+  // /shop?checkout=success where ShopPage confirms and records the order.
+  async function startCheckout() {
     setBusy(true); setError('');
     try {
-      const result = await stripeRef.current.confirmCardPayment(clientSecret, {
-        payment_method: { card: cardElRef.current, billing_details: { name: buyerName, email: buyerEmail } },
+      const d = await api('/shop/create-checkout-session', {
+        method: 'POST',
+        body: {
+          ...orderPayload(),
+          // Key on the full cart so a retry reuses the same session instead of
+          // creating a second one, but a changed cart gets a fresh session.
+          idempotencyKey: `${idemSessionRef.current}-${item.id}-${variant ? variant.id : 'x'}-${quantity}-${promo ? promo.code : 'x'}-${total}`,
+        },
       });
-      if (result.error) { setError(result.error.message || 'Payment failed.'); setBusy(false); return; }
-      await submitOrder('stripe');
+      window.location.href = d.url; // leaving the page; keep busy=true through nav
     } catch (err) { setError(err.message); setBusy(false); }
   }
 
@@ -3302,10 +3298,14 @@ function OrderModal({ item, config, onClose }) {
               <div className="text-sm text-cream/60">Shipped orders are paid online to guarantee your order.</div>
             )}
 
-            {total > 0 && requiresPrepay && (
-              <div>
-                <span className="block text-xs uppercase tracking-wider text-cream/60 mb-1.5">Card Details</span>
-                <div ref={cardMountRef} className="bg-navy border border-cream/20 rounded-md px-3 py-3" />
+            {total > 0 && requiresPrepay && config.stripeEnabled && (
+              <div className="text-sm text-cream/60 bg-navy border border-cream/15 rounded-md px-3 py-2">
+                You'll be taken to Stripe's secure checkout to enter your card, then brought right back.
+              </div>
+            )}
+            {total > 0 && requiresPrepay && !config.stripeEnabled && (
+              <div className="text-red text-sm">
+                Online payment isn't available right now — choose student pickup and pay in person, or contact the secretary.
               </div>
             )}
 
@@ -3316,8 +3316,8 @@ function OrderModal({ item, config, onClose }) {
                   {busy ? <span className="flex items-center justify-center gap-2"><Spinner /> Placing…</span> : 'Place Free Order'}
                 </Button>
               ) : requiresPrepay ? (
-                <Button variant="gold" className="flex-1" onClick={payAndSubmit} disabled={busy || !clientSecret}>
-                  {busy ? <span className="flex items-center justify-center gap-2"><Spinner /> Paying…</span> : `Pay ${formatCents(total)}`}
+                <Button variant="gold" className="flex-1" onClick={startCheckout} disabled={busy || !config.stripeEnabled}>
+                  {busy ? <span className="flex items-center justify-center gap-2"><Spinner /> Redirecting…</span> : `Continue to Checkout · ${formatCents(total)}`}
                 </Button>
               ) : (
                 <Button variant="gold" className="flex-1" onClick={() => submitOrder('inperson')} disabled={busy}>
