@@ -140,7 +140,13 @@ const GRADES = ['9', '10', '11', '12'];
 // Allowed roster pipeline transitions. A member may move forward, be declined,
 // or be reactivated back to Prospect — but cannot skip straight from Prospect to
 // Onboarded without being contacted first.
+//
+// 'Pending' is the entry state for self-service submissions (someone filled out
+// the public /join form themselves). Nothing reaches the live pipeline until a
+// roster manager approves it, at which point it moves to Onboarded (or is routed
+// back to Prospect / Declined).
 const ROSTER_TRANSITIONS = {
+  Pending:   ['Onboarded', 'Prospect', 'Declined'],
   Prospect:  ['Contacted', 'Declined'],
   Contacted: ['Onboarded', 'Declined', 'Prospect'],
   Onboarded: ['Contacted', 'Declined'],
@@ -469,6 +475,30 @@ app.post('/api/roster/survey', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, na
     String(firstName).trim(), String(lastName || '').trim(),
     String(phone || '').trim(), String(email || '').trim(), String(gender || '').trim()
   );
+  res.status(201).json({ ok: true, id: info.lastInsertRowid });
+});
+
+// Public self-service member sign-up (shown at /join) — no auth required. The
+// secretary shares one link and members fill in their own details; the entry
+// lands as 'Pending' so nothing reaches the live roster until it's approved.
+app.post('/api/roster/self-submit', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name: 'self-submit' }), (req, res) => {
+  const { firstName, lastName, phone, email, grade, gender, notes } = req.body || {};
+  if (!firstName || !String(firstName).trim()) return res.status(400).json({ error: 'First name required' });
+  if (grade != null && grade !== '' && !GRADES.includes(String(grade))) {
+    return res.status(400).json({ error: 'Grade must be 9, 10, 11, or 12' });
+  }
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email).trim())) {
+    return res.status(400).json({ error: 'Please enter a valid email' });
+  }
+  const info = db.prepare(`INSERT INTO roster_members (firstName, lastName, phone, email, grade, gender, notes, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending')`).run(
+    String(firstName).trim().slice(0, 100), String(lastName || '').trim().slice(0, 100),
+    String(phone || '').trim().slice(0, 30), String(email || '').trim().slice(0, 200),
+    grade ? Number(grade) : null, String(gender || '').trim().slice(0, 30),
+    String(notes || '').trim().slice(0, 2000)
+  );
+  const name = `${String(firstName).trim()} ${String(lastName || '').trim()}`.trim();
+  notifyRosterManagers(`${name} submitted their info — review it in the roster.`, '', 'info');
   res.status(201).json({ ok: true, id: info.lastInsertRowid });
 });
 
@@ -1831,6 +1861,24 @@ app.post('/api/roster/:id/decline', (req, res) => {
   if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
   db.prepare(`UPDATE roster_members SET status='Declined', updatedAt=datetime('now') WHERE id=?`).run(Number(req.params.id));
   res.json({ ok: true });
+});
+
+// Approve a self-service (Pending) submission — adds it to the roster as an
+// onboarded member. Optional grade/roleDescription let the secretary fill in
+// anything the member left blank at approval time.
+app.post('/api/roster/:id/approve', (req, res) => {
+  if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const m = db.prepare('SELECT * FROM roster_members WHERE id=?').get(Number(req.params.id));
+  if (!m) return res.status(404).json({ error: 'Not found' });
+  if (m.status !== 'Pending') return res.status(400).json({ error: 'Only pending submissions can be approved' });
+  const { grade, roleDescription } = req.body || {};
+  if (grade != null && grade !== '' && !GRADES.includes(String(grade))) {
+    return res.status(400).json({ error: 'Grade must be 9, 10, 11, or 12' });
+  }
+  db.prepare(`UPDATE roster_members SET status='Onboarded', convertedAt=datetime('now'),
+    grade=COALESCE(?,grade), roleDescription=COALESCE(?,roleDescription), updatedAt=datetime('now')
+    WHERE id=?`).run(grade || null, roleDescription || null, m.id);
+  res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id) });
 });
 
 // Grade rep recruitment leaderboard — ranked by Onboarded members they claimed.
@@ -4188,6 +4236,15 @@ function notifyAdmins(message, link = '', type = 'info') {
   try {
     const admins = db.prepare("SELECT id FROM users WHERE role = 'admin'").all();
     for (const a of admins) pushNotification(a.id, message, link, type);
+  } catch (_) {}
+}
+
+// Notify everyone who can act on the roster (admins + the secretary / anyone
+// granted canManageRoster) — used for self-service sign-ups awaiting approval.
+function notifyRosterManagers(message, link = '', type = 'info') {
+  try {
+    const managers = db.prepare("SELECT id FROM users WHERE role = 'admin' OR canManageRoster = 1").all();
+    for (const m of managers) pushNotification(m.id, message, link, type);
   } catch (_) {}
 }
 
