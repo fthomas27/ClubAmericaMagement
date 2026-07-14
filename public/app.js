@@ -2925,6 +2925,53 @@ function computeDiscountClient(promo, subtotal) {
   return 0;
 }
 
+// ============================================================================
+// TEMP: SHOP PAGE PASSWORD PROTECTION
+// DELETE THIS ENTIRE SECTION (from "TEMP:" marker to "END TEMP:" marker)
+// when shop page is ready for public access. No other code depends on this.
+// ============================================================================
+function PasswordProtectedShopPage() {
+  const [password, setPassword] = useState('');
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (password === 'USArules2026') {
+      setIsUnlocked(true);
+      setError('');
+    } else {
+      setError('Incorrect password');
+      setPassword('');
+    }
+  };
+
+  if (isUnlocked) return <ShopPage />;
+
+  return (
+    <PublicPageShell title="Club America Shop" subtitle="Password protected">
+      <div className="max-w-sm mx-auto">
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <input
+            type="password"
+            placeholder="Enter password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full px-4 py-2 bg-navy2 border border-cream/20 rounded-lg text-cream placeholder-cream/40 focus:outline-none focus:border-gold"
+          />
+          <Button variant="gold" className="w-full" type="submit">
+            Unlock Shop
+          </Button>
+          {error && <p className="text-red text-sm text-center">{error}</p>}
+        </form>
+      </div>
+    </PublicPageShell>
+  );
+}
+// ============================================================================
+// END TEMP: SHOP PAGE PASSWORD PROTECTION
+// ============================================================================
+
 function ShopPage() {
   const [items, setItems] = useState(null);
   const [config, setConfig] = useState(null);
@@ -4228,13 +4275,15 @@ const PUBLIC_PAGES = [
   { key: 'home',         label: 'Home',                   path: '/' },
   { key: 'about',        label: 'About Us',               path: '/about' },
   { key: 'board',        label: 'Meet the Board',         path: '/board' },
-  { key: 'shop',         label: 'Shop',                   path: '/shop' },
+  // { key: 'shop',         label: 'Shop',                   path: '/shop' },  // TEMP: Temporarily hidden, password protected
   { key: 'testimonials', label: 'What People Are Saying', path: '/testimonials' },
   { key: 'involved',     label: 'Get Involved',           path: '/get-involved' },
   { key: 'speak',        label: 'Apply to Speak',         path: '/apply-to-speak' },
 ];
 
 function publicPageFromPath(pathname) {
+  // TEMP: Allow direct access to /shop even though it's hidden from navigation
+  if (pathname === '/shop') return 'shop';
   const hit = PUBLIC_PAGES.find((p) => p.path === pathname);
   return hit ? hit.key : 'home';
 }
@@ -4309,7 +4358,7 @@ function PublicSite({ home, events, volunteerEvents, onEnterPortal }) {
           </PublicPageShell>
         )}
 
-        {page === 'shop' && <ShopPage />}
+        {page === 'shop' && <PasswordProtectedShopPage />}
 
         {page === 'testimonials' && (
           <PublicPageShell title="What People Are Saying" subtitle="Hear from the people who make Club America what it is.">
