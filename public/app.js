@@ -4729,11 +4729,116 @@ function InterestSurvey({ onBack }) {
 }
 
 // ---------------------------------------------------------------------------
+// Member Self-Service Sign-Up (shown at /join path, no auth)
+// Members fill in their own roster info; it lands as a Pending submission the
+// secretary approves before it joins the live roster.
+// ---------------------------------------------------------------------------
+function MemberSignUpPage() {
+  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', notes: '' });
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function submit(e) {
+    e.preventDefault();
+    setError('');
+    if (!form.firstName.trim()) { setError('First name is required.'); return; }
+    if (form.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) { setError('Please enter a valid email.'); return; }
+    setBusy(true);
+    try {
+      const r = await fetch('/api/roster/self-submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Failed');
+      setSubmitted(true);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  if (submitted) {
+    return (
+      <div className="relative min-h-screen flex items-center justify-center p-4">
+        <PatriotBackdrop stripes />
+        <div className="relative w-full max-w-md text-center">
+          <SuccessMark className="mb-4" />
+          <div className="font-display text-4xl text-gold mb-3">You're on the list!</div>
+          <p className="text-cream/70 mb-6">
+            Thanks{form.firstName ? `, ${form.firstName.trim()}` : ''}! Your info has been sent to the
+            Club America secretary. Once it's approved you'll be part of the official roster.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative min-h-screen flex items-center justify-center p-4">
+      <PatriotBackdrop stripes />
+      <div className="relative w-full max-w-md">
+        <div className="mb-6">
+          <Logo size="login" />
+        </div>
+        <div className="font-display text-3xl text-gold mb-1">Join the Roster</div>
+        <p className="text-cream/60 text-sm mb-6">
+          Fill in your info below and you'll be added to the Club America roster once
+          the secretary approves it. Only your first name is required.
+        </p>
+        <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-slide-up" style={{ animationDelay: '80ms' }}>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="First Name *">
+              <input className={inputCls} value={form.firstName} onChange={set('firstName')} required autoFocus />
+            </Field>
+            <Field label="Last Name">
+              <input className={inputCls} value={form.lastName} onChange={set('lastName')} />
+            </Field>
+          </div>
+          <Field label="Phone Number">
+            <input className={inputCls} type="tel" value={form.phone} onChange={set('phone')} placeholder="(435) 555-0100" />
+          </Field>
+          <Field label="Email">
+            <input className={inputCls} type="email" value={form.email} onChange={set('email')} placeholder="you@example.com" />
+          </Field>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Grade">
+              <select className={inputCls} value={form.grade} onChange={set('grade')}>
+                <option value="">—</option>
+                {[9,10,11,12].map((g) => <option key={g} value={g}>{g}th</option>)}
+              </select>
+            </Field>
+            <Field label="Gender">
+              <select className={inputCls} value={form.gender} onChange={set('gender')}>
+                <option value="">Prefer not to say</option>
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+              </select>
+            </Field>
+          </div>
+          <Field label="Anything else? (optional)">
+            <textarea className={inputCls} rows="2" value={form.notes} onChange={set('notes')}
+              placeholder="Role you're interested in, questions, etc." />
+          </Field>
+          {error && <div className="text-red text-sm">{error}</div>}
+          <Button type="submit" variant="gold" className="w-full" disabled={busy}>
+            {busy ? <span className="flex items-center gap-2"><Spinner /> Submitting…</span> : 'Submit'}
+          </Button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Roster Page
 // ---------------------------------------------------------------------------
 const ROSTER_STATUSES = ['Prospect', 'Contacted', 'Onboarded', 'Declined'];
 // Mirror of the server's roster pipeline rules (server/index.js ROSTER_TRANSITIONS).
 const ROSTER_TRANSITIONS = {
+  Pending:   ['Onboarded', 'Prospect', 'Declined'],
   Prospect:  ['Contacted', 'Declined'],
   Contacted: ['Onboarded', 'Declined', 'Prospect'],
   Onboarded: ['Contacted', 'Declined'],
@@ -4779,7 +4884,7 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
   }
 
   const statusColors = {
-    Prospect: 'slate', Contacted: 'blue', Onboarded: 'green', Declined: 'red',
+    Pending: 'gold', Prospect: 'slate', Contacted: 'blue', Onboarded: 'green', Declined: 'red',
   };
 
   return (
@@ -4803,6 +4908,16 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
       </div>
 
       <div className="flex items-center gap-2 mt-3 flex-wrap">
+        {member.status === 'Pending' && (member.claimedByUserId === me.id || me.role === 'admin' || me.role === 'manager' || me.canManageRoster) && (
+          <>
+            <Button variant="gold" className="text-xs px-3 py-1" onClick={() => act('approve')} disabled={busy}>
+              {busyAction === 'approve' ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Approving…</span> : 'Approve ✓'}
+            </Button>
+            <Button variant="danger" className="text-xs px-3 py-1" onClick={() => act('decline')} disabled={busy}>
+              {busyAction === 'decline' ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Saving…</span> : 'Reject'}
+            </Button>
+          </>
+        )}
         {member.status === 'Prospect' && (
           <>
             {!member.claimedByUserId && (
@@ -5149,6 +5264,48 @@ function GradeRepLeaderboard({ me }) {
   );
 }
 
+// Share box for the public self-service sign-up link (/join). Roster managers
+// send this to members so they fill in their own info instead of the secretary
+// importing everyone by hand.
+function RosterInviteLink({ pendingCount }) {
+  const link = `${window.location.origin}/join`;
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (_) {
+      // Fallback for browsers without clipboard permission — select-and-prompt.
+      window.prompt('Copy this link:', link);
+    }
+  }
+
+  return (
+    <div className="bg-navy2 border border-gold/30 rounded-2xl p-5 mb-6">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-gold"><AppIcon name="person" size={18} /></span>
+        <div className="font-display text-xl text-gold">Member Sign-Up Link</div>
+      </div>
+      <p className="text-cream/60 text-sm mb-3">
+        Share this link and members fill in their own info. Each submission shows up
+        under <span className="text-gold">Pending Approval</span> for you to review before it joins the roster.
+        {pendingCount > 0 && (
+          <span className="text-gold font-medium"> {pendingCount} waiting.</span>
+        )}
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <code className="flex-1 min-w-0 truncate bg-navy border border-cream/15 rounded-md px-3 py-2 text-sm text-cream/80">{link}</code>
+        <Button variant="gold" className="text-sm px-4 py-2" onClick={copy}>
+          {copied ? 'Copied ✓' : 'Copy Link'}
+        </Button>
+        <a href="/join" target="_blank" rel="noopener" className="text-xs text-gold/60 hover:text-gold">Preview ↗</a>
+      </div>
+    </div>
+  );
+}
+
 function RosterPage({ me }) {
   const [members, setMembers] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -5202,24 +5359,31 @@ function RosterPage({ me }) {
   }
 
   const tabFilteredMembers = useMemo(() => {
+    if (tab === 'pending') return members.filter((m) => m.status === 'Pending');
     if (tab === 'pipeline') return members.filter((m) => m.status === 'Prospect' || m.status === 'Contacted');
     if (tab === 'members') return members.filter((m) => m.status === 'Onboarded');
     if (tab === 'declined') return members.filter((m) => m.status === 'Declined');
-    return members;
+    // The catch-all "All" view hides Pending sign-ups — they live in their own
+    // approval queue until a roster manager acts on them.
+    return members.filter((m) => m.status !== 'Pending');
   }, [members, tab]);
 
   // Reset visible count when the view changes.
   useEffect(() => { setVisible(PAGE); }, [tab, gradeFilter, statusFilter]);
 
   const counts = useMemo(() => ({
-    all: members.length,
+    all: members.filter((m) => m.status !== 'Pending').length,
+    pending: members.filter((m) => m.status === 'Pending').length,
     pipeline: members.filter((m) => m.status === 'Prospect' || m.status === 'Contacted').length,
     members: members.filter((m) => m.status === 'Onboarded').length,
     declined: members.filter((m) => m.status === 'Declined').length,
   }), [members]);
 
+  const canManage = isPrivileged || !!me.canManageRoster;
   const tabs = [
     { key: 'all', label: 'All' },
+    // Only roster managers see (and act on) the self-service approval queue.
+    ...(canManage ? [{ key: 'pending', label: 'Pending Approval' }] : []),
     { key: 'pipeline', label: 'Leads Pipeline' },
     { key: 'members', label: 'Members' },
     { key: 'declined', label: 'Declined' },
@@ -5237,6 +5401,8 @@ function RosterPage({ me }) {
       <p className="text-cream/50 mb-6">Club America recruitment pipeline and member directory.</p>
 
       <GradeRepLeaderboard me={me} />
+
+      {canManage && <RosterInviteLink pendingCount={counts.pending} />}
 
       {error && <div className="mb-4"><ErrorState message={error} onRetry={load} /></div>}
 
@@ -9019,6 +9185,7 @@ function App() {
   const portalActiveRef = useRef(false);
 
   const isSurveyPath = window.location.pathname === '/survey';
+  const isJoinPath = window.location.pathname === '/join';
   const volunteerMatch = window.location.pathname.match(/^\/volunteer\/(\d+)$/);
   // Match both /testimonial-submit (universal) and /testimonial-submit/:token (pre-filled)
   const testimonialSubmitMatch = window.location.pathname.match(/^\/testimonial-submit(?:\/([a-zA-Z0-9]*))?$/);
@@ -9134,6 +9301,7 @@ function App() {
 
   if (!booted) return <div className="min-h-screen flex items-center justify-center gap-2 text-cream/40"><Spinner className="w-5 h-5" /> Loading…</div>;
   if (isSurveyPath) return <InterestSurvey onBack={() => { window.history.pushState(null, '', '/'); window.location.reload(); }} />;
+  if (isJoinPath) return <MemberSignUpPage />;
   if (volunteerMatch) return <VolunteerSignUpPage eventId={Number(volunteerMatch[1])} />;
   if (testimonialSubmitMatch) return <TestimonialSubmitPage token={testimonialSubmitMatch[1] || null} />;
   if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;
