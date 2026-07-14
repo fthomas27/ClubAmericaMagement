@@ -86,7 +86,7 @@ app.use((req, res, next) => {
 // for payment success: it finalizes any paid order the buyer's browser didn't
 // manage to record (e.g. they closed the tab right after paying).
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
-app.post('/api/shop/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+app.post('/api/shop/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   if (!stripe) return res.status(503).end();
   if (!STRIPE_WEBHOOK_SECRET) {
     // Never trust an unsigned event — refuse until the signing secret is set.
@@ -101,8 +101,13 @@ app.post('/api/shop/webhook', express.raw({ type: 'application/json' }), (req, r
     return res.status(400).send(`Webhook Error: ${e.message}`);
   }
   try {
-    if (event.type === 'payment_intent.succeeded') {
-      handlePaymentIntentSucceeded(event.data.object);
+    // checkout.session.completed is the source of truth for a hosted-Checkout
+    // sale: it carries the buyer contact + shipping Stripe collected. Re-retrieve
+    // the session so contact/address fields are fully populated, then record the
+    // order (idempotent — a no-op if the browser's confirm-checkout beat us).
+    if (event.type === 'checkout.session.completed') {
+      const full = await stripe.checkout.sessions.retrieve(event.data.object.id);
+      recordCheckoutSession(full);
     }
   } catch (e) {
     console.error('[stripe webhook] handler error:', e.message);
@@ -776,35 +781,19 @@ app.post('/api/newsletter/subscribe',
 );
 
 // ---- Merch shop (public) -----------------------------------------------------
-// Who may manage the shop (products, inventory, orders, promo codes): admins
-// and the secretary (canManageRoster — the shop is her responsibility).
+// Who may manage the shop (products, inventory, orders): admins and the
+// secretary (canManageRoster — the shop is her responsibility). Promo codes are
+// managed in the Stripe Dashboard and applied on Stripe's hosted checkout page.
 function canManageShop(user) {
   return user.role === 'admin' || !!user.canManageRoster;
 }
 
-function findPromo(code) {
-  code = String(code || '').trim().toUpperCase();
-  if (!code) return null;
-  return db.prepare('SELECT * FROM merch_promo_codes WHERE code = ? AND active = 1').get(code);
-}
-function promoApplicable(promo, itemId) {
-  return !promo.itemId || promo.itemId === itemId;
-}
-function promoUsable(promo) {
-  if (promo.usageLimit != null && promo.usedCount >= promo.usageLimit) {
-    return { ok: false, error: 'This promo code has reached its usage limit.' };
-  }
-  return { ok: true };
-}
-function computeDiscount(promo, subtotal) {
-  if (promo.type === 'free') return subtotal;
-  if (promo.type === 'percent') return Math.round(subtotal * (Number(promo.value) / 100));
-  if (promo.type === 'dollar') return Math.min(subtotal, Math.round(Number(promo.value)));
-  return 0;
-}
-// Recomputes price/discount/total from scratch server-side — never trusts a
-// client-submitted total. Returns { error } or the full pricing breakdown.
-function computeOrderPricing({ itemId, variantId, quantity, promoCodeStr, studentEmail, ignoreStock }) {
+// Prices a cart from our own catalog (never trusts a client-sent total).
+// Discounts are handled by Stripe promotion codes on the hosted checkout page,
+// so pricing here is simply unit price × quantity. Returns { error } or a
+// pricing breakdown. Pass ignoreStock once a payment has already succeeded, so
+// a sold-out item is recorded as needs_review rather than rejected.
+function computeOrderPricing({ itemId, variantId, quantity, ignoreStock }) {
   const item = db.prepare('SELECT * FROM merch_items WHERE id = ? AND active = 1').get(Number(itemId));
   if (!item) return { error: 'Item not found.' };
   let variant = null;
@@ -815,25 +804,9 @@ function computeOrderPricing({ itemId, variantId, quantity, promoCodeStr, studen
   const qty = Math.max(1, Math.min(20, Number(quantity) || 1));
   const unitPrice = variant && variant.priceOverride != null ? variant.priceOverride : item.price;
   const inventory = variant ? variant.inventory : item.inventory;
-  // Skip the stock gate once a payment has already succeeded — the sale is
-  // finalized with allowBackorder and flagged for review instead of rejected.
   if (!ignoreStock && inventory < qty) return { error: 'Not enough in stock.' };
   const subtotal = unitPrice * qty;
-
-  let promo = null, discount = 0;
-  if (promoCodeStr) {
-    promo = findPromo(promoCodeStr);
-    if (!promo) return { error: 'Invalid promo code.' };
-    const usable = promoUsable(promo);
-    if (!usable.ok) return { error: usable.error };
-    if (!promoApplicable(promo, item.id)) return { error: 'This promo code does not apply to this item.' };
-    if (promo.studentOnly && !STUDENT_EMAIL_RE.test(String(studentEmail || '').trim())) {
-      return { error: 'This promo code requires a valid @pcstudents.us student email.' };
-    }
-    discount = computeDiscount(promo, subtotal);
-  }
-  const total = Math.max(0, subtotal - discount);
-  return { item, variant, qty, unitPrice, subtotal, promo, discount, total };
+  return { item, variant, qty, unitPrice, subtotal, total: subtotal };
 }
 
 app.get('/api/shop/config', (req, res) => {
@@ -866,96 +839,29 @@ app.get('/api/shop/items/:id/photo', (req, res) => {
   res.send(Buffer.from(m[2], 'base64'));
 });
 
-app.post('/api/shop/validate-promo', rateLimit({ windowMs: 60 * 60 * 1000, max: 60, name: 'shop-promo' }), (req, res) => {
-  const { code, itemId, studentEmail } = req.body || {};
-  const promo = findPromo(code);
-  if (!promo) return res.status(404).json({ error: 'Invalid promo code.' });
-  const usable = promoUsable(promo);
-  if (!usable.ok) return res.status(400).json({ error: usable.error });
-  if (itemId && !promoApplicable(promo, Number(itemId))) {
-    return res.status(400).json({ error: 'This promo code does not apply to this item.' });
-  }
-  if (promo.studentOnly && !STUDENT_EMAIL_RE.test(String(studentEmail || '').trim())) {
-    return res.status(400).json({ error: 'This promo code requires a valid @pcstudents.us student email.' });
-  }
-  res.json({ promo: { id: promo.id, code: promo.code, type: promo.type, value: promo.value, studentOnly: !!promo.studentOnly } });
-});
 
-function safeJsonParse(s) { try { return JSON.parse(s); } catch (_) { return undefined; } }
-
-// Validate + price a full order payload. Shared by the checkout, order, and
-// webhook finalize paths so the rules are enforced identically
-// everywhere. Returns { error } or the normalized, priced order.
-function validateOrderPayload(body, opts = {}) {
-  let { itemId, variantId, quantity, buyerName, buyerEmail, buyerPhone,
-        deliveryMethod, shippingAddress, studentEmail, promoCode } = body || {};
-  buyerName    = String(buyerName || '').trim().slice(0, 120);
-  buyerEmail   = String(buyerEmail || '').trim().slice(0, 200);
-  buyerPhone   = String(buyerPhone || '').trim().slice(0, 30);
-  studentEmail = String(studentEmail || '').trim().slice(0, 200);
-  deliveryMethod = deliveryMethod === 'pickup' ? 'pickup' : 'ship';
-  promoCode = String(promoCode || '').trim();
-
-  if (!buyerName || !buyerEmail) return { error: 'Name and email are required.' };
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(buyerEmail)) return { error: 'Please enter a valid email.' };
-
-  const pricing = computeOrderPricing({ itemId, variantId, quantity, promoCodeStr: promoCode, studentEmail, ignoreStock: opts.ignoreStock });
-  if (pricing.error) return { error: pricing.error };
-
-  // A student-only promo forces pickup, no matter what the client requested.
-  if (pricing.promo && pricing.promo.studentOnly) deliveryMethod = 'pickup';
-
-  let address = null;
-  if (deliveryMethod === 'ship') {
-    const a = shippingAddress || {};
-    const street = String(a.street || '').trim().slice(0, 200);
-    const city   = String(a.city   || '').trim().slice(0, 100);
-    const state  = String(a.state  || '').trim().slice(0, 50);
-    const zip    = String(a.zip    || '').trim().slice(0, 20);
-    if (!street || !city || !state || !zip) return { error: 'A full shipping address is required.' };
-    if (!buyerPhone) return { error: 'A phone number is required for shipping.' };
-    address = { street, city, state, zip };
-  } else if (!STUDENT_EMAIL_RE.test(studentEmail)) {
-    return { error: 'Student pickup requires a valid @pcstudents.us email.' };
-  }
-  return { pricing, buyerName, buyerEmail, buyerPhone, studentEmail, deliveryMethod, address, promoCode };
-}
-
-// Insert an order, decrementing inventory + promo usage in one transaction.
-// Throws Error with .code OUT_OF_STOCK / PROMO_EXHAUSTED when the guards fail —
-// unless allowBackorder is set (a payment already succeeded, so we must not
-// reject the sale): stock/promo overruns are recorded as 'needs_review'.
-function insertOrder(v, { paymentMethod, paymentStatus, stripeIntentId = '', allowBackorder = false }) {
+// Insert a non-Stripe order (in-person pickup), decrementing inventory in one
+// transaction. Throws Error with .code OUT_OF_STOCK when stock is short.
+function insertOrder(v, { paymentMethod, paymentStatus }) {
   const p = v.pricing;
   const addressJson = v.address ? JSON.stringify(v.address) : '';
   const tx = db.transaction(() => {
-    let fulfillmentStatus = 'pending';
     let upd;
     if (p.variant) {
       upd = db.prepare('UPDATE merch_variants SET inventory = inventory - ? WHERE id = ? AND inventory >= ?').run(p.qty, p.variant.id, p.qty);
     } else {
       upd = db.prepare('UPDATE merch_items SET inventory = inventory - ? WHERE id = ? AND inventory >= ?').run(p.qty, p.item.id, p.qty);
     }
-    if (upd.changes === 0) {
-      if (!allowBackorder) { const e = new Error('OUT_OF_STOCK'); e.code = 'OUT_OF_STOCK'; throw e; }
-      fulfillmentStatus = 'needs_review'; // paid, but stock ran out — flag for the secretary
-    }
-    if (p.promo) {
-      const pupd = db.prepare('UPDATE merch_promo_codes SET usedCount = usedCount + 1 WHERE id = ? AND (usageLimit IS NULL OR usedCount < usageLimit)').run(p.promo.id);
-      if (pupd.changes === 0 && !allowBackorder) { const e = new Error('PROMO_EXHAUSTED'); e.code = 'PROMO_EXHAUSTED'; throw e; }
-    }
+    if (upd.changes === 0) { const e = new Error('OUT_OF_STOCK'); e.code = 'OUT_OF_STOCK'; throw e; }
     return db.prepare(`INSERT INTO merch_orders (
       itemId, variantId, itemName, variantLabel, quantity,
       buyerName, buyerEmail, buyerPhone, deliveryMethod, shippingAddress, studentEmail,
-      promoCodeId, promoCode, discountAmount, subtotal, total,
-      paymentMethod, paymentStatus, fulfillmentStatus, stripePaymentIntentId
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      subtotal, total, paymentMethod, paymentStatus, fulfillmentStatus, stripePaymentIntentId
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', '')`).run(
       p.item.id, p.variant ? p.variant.id : null,
       p.item.name, p.variant ? p.variant.label : '', p.qty,
       v.buyerName, v.buyerEmail, v.buyerPhone, v.deliveryMethod, addressJson, v.studentEmail,
-      p.promo ? p.promo.id : null, p.promo ? p.promo.code : '',
-      p.discount, p.subtotal, p.total,
-      paymentMethod, paymentStatus, fulfillmentStatus, stripeIntentId,
+      p.subtotal, p.total, paymentMethod, paymentStatus,
     );
   });
   return tx();
@@ -963,7 +869,6 @@ function insertOrder(v, { paymentMethod, paymentStatus, stripeIntentId = '', all
 
 function orderInsertError(res, e) {
   if (e.code === 'OUT_OF_STOCK') return res.status(409).json({ error: 'Sorry, that item just sold out.' });
-  if (e.code === 'PROMO_EXHAUSTED') return res.status(409).json({ error: 'That promo code just reached its usage limit.' });
   console.error('[shop] order insert failed:', e.message);
   return res.status(500).json({ error: 'Could not place order — please try again.' });
 }
@@ -981,76 +886,10 @@ function notifyManagersOfOrder(order) {
 // Idempotently record a paid Stripe order. Called by both /api/shop/order (the
 // browser) and the webhook (Stripe) — whichever arrives first creates the row;
 // the other becomes a no-op. Keyed on the PaymentIntent id (unique index).
-function finalizeStripeOrder(intent, v) {
-  const existing = db.prepare('SELECT * FROM merch_orders WHERE stripePaymentIntentId = ?').get(intent.id);
-  if (existing) {
-    if (existing.paymentStatus !== 'paid') db.prepare("UPDATE merch_orders SET paymentStatus = 'paid' WHERE id = ?").run(existing.id);
-    return { order: db.prepare('SELECT * FROM merch_orders WHERE id = ?').get(existing.id), created: false };
-  }
-  let info;
-  try {
-    info = insertOrder(v, { paymentMethod: 'stripe', paymentStatus: 'paid', stripeIntentId: intent.id, allowBackorder: true });
-  } catch (e) {
-    // UNIQUE race: the other path inserted between our SELECT and INSERT.
-    if (/UNIQUE|constraint/i.test(e.message)) {
-      const row = db.prepare('SELECT * FROM merch_orders WHERE stripePaymentIntentId = ?').get(intent.id);
-      if (row) return { order: row, created: false };
-    }
-    throw e;
-  }
-  const order = db.prepare('SELECT * FROM merch_orders WHERE id = ?').get(info.lastInsertRowid);
-  notifyManagersOfOrder(order);
-  return { order, created: true };
-}
-
-// Webhook entry point for a succeeded PaymentIntent. Ensures the order exists
-// and is marked paid even if the buyer's browser never called /api/shop/order.
-function handlePaymentIntentSucceeded(intent) {
-  const md = (intent && intent.metadata) || {};
-  if (md.kind && md.kind !== 'merch') return; // not one of ours
-  const existing = db.prepare('SELECT * FROM merch_orders WHERE stripePaymentIntentId = ?').get(intent.id);
-  if (existing) {
-    if (existing.paymentStatus !== 'paid') db.prepare("UPDATE merch_orders SET paymentStatus = 'paid' WHERE id = ?").run(existing.id);
-    return;
-  }
-  if (md.kind !== 'merch') return; // no metadata to rebuild an order from
-  // Payment already happened, so ignore stock: a sold-out item still yields a
-  // proper, item-linked order flagged needs_review (via finalizeStripeOrder's
-  // allowBackorder) rather than the bare fallback below.
-  const rebuilt = validateOrderPayload({
-    itemId: md.itemId, variantId: md.variantId || undefined, quantity: md.quantity,
-    buyerName: md.buyerName, buyerEmail: md.buyerEmail, buyerPhone: md.buyerPhone,
-    deliveryMethod: md.deliveryMethod, studentEmail: md.studentEmail,
-    promoCode: md.promoCode || undefined,
-    shippingAddress: md.addr ? safeJsonParse(md.addr) : undefined,
-  }, { ignoreStock: true });
-  // Only auto-finalize when today's recomputed total still equals what was
-  // actually charged — if the price changed mid-checkout, fall through to the
-  // needs_review record below, which stores the true paid amount.
-  if (!rebuilt.error && rebuilt.pricing.total === intent.amount) {
-    finalizeStripeOrder(intent, rebuilt);
-    return;
-  }
-  // Couldn't re-price (item changed/removed since checkout). Record a minimal
-  // paid order so the sale isn't lost, flagged for the secretary to reconcile.
-  const info = db.prepare(`INSERT INTO merch_orders (
-    itemId, itemName, variantLabel, quantity, buyerName, buyerEmail, buyerPhone,
-    deliveryMethod, studentEmail, subtotal, total,
-    paymentMethod, paymentStatus, fulfillmentStatus, stripePaymentIntentId, notes
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'stripe', 'paid', 'needs_review', ?, ?)`).run(
-    md.itemId ? Number(md.itemId) : null, md.itemName || 'Merch order', md.variantLabel || '',
-    Number(md.quantity) || 1, md.buyerName || '', md.buyerEmail || '', md.buyerPhone || '',
-    md.deliveryMethod === 'pickup' ? 'pickup' : 'ship', md.studentEmail || '',
-    intent.amount, intent.amount, intent.id,
-    'Auto-recorded from Stripe webhook — original item changed; needs manual review.'
-  );
-  notifyManagersOfOrder(db.prepare('SELECT * FROM merch_orders WHERE id = ?').get(info.lastInsertRowid));
-}
-
-// Order metadata we stash on the PaymentIntent so the webhook / confirmation
-// can rebuild and record the order after the buyer returns from Stripe.
-function orderMetadata(v) {
-  const p = v.pricing;
+// Cart metadata we stash on the Checkout Session (and its PaymentIntent) — the
+// item/variant/qty and pickup info Stripe doesn't know. Buyer contact and
+// shipping address are collected by Stripe on its page, not stored here.
+function cartMetadata(p, deliveryMethod, studentEmail) {
   return {
     kind: 'merch',
     itemId: String(p.item.id),
@@ -1058,55 +897,129 @@ function orderMetadata(v) {
     variantId: p.variant ? String(p.variant.id) : '',
     variantLabel: p.variant ? p.variant.label.slice(0, 80) : '',
     quantity: String(p.qty),
-    buyerName: v.buyerName, buyerEmail: v.buyerEmail, buyerPhone: v.buyerPhone,
-    deliveryMethod: v.deliveryMethod, studentEmail: v.studentEmail,
-    promoCode: v.promoCode || '',
-    addr: v.address ? JSON.stringify(v.address) : '',
+    deliveryMethod,
+    studentEmail: studentEmail || '',
   };
 }
 
-// Online payment uses Stripe-hosted Checkout: we create a Checkout Session
-// priced from our own DB (never trusting the client) and hand back its URL for
-// the browser to redirect to. Inventory, promo, and pickup rules are all
-// enforced here before a session is ever created.
+// Reads a paid Checkout Session and records the order exactly once (keyed on the
+// session id via the unique index). Shared by the return-trip confirmation and
+// the webhook, so whichever arrives first creates the row and the other is a
+// no-op. Buyer name/email/phone and shipping address come from what Stripe
+// collected on its hosted page; item/variant/qty come from our metadata.
+function recordCheckoutSession(session) {
+  if (!session || (session.metadata || {}).kind !== 'merch') return null;
+  // 'paid' for card orders; 'no_payment_required' when a 100%-off promo zeroed it.
+  if (session.payment_status !== 'paid' && session.payment_status !== 'no_payment_required') return null;
+  const ref = session.id;
+  const existing = db.prepare('SELECT * FROM merch_orders WHERE stripePaymentIntentId = ?').get(ref);
+  if (existing) {
+    if (existing.paymentStatus !== 'paid' && existing.paymentStatus !== 'free') {
+      db.prepare("UPDATE merch_orders SET paymentStatus = 'paid' WHERE id = ?").run(existing.id);
+    }
+    return db.prepare('SELECT * FROM merch_orders WHERE id = ?').get(existing.id);
+  }
+
+  const md = session.metadata || {};
+  const cd = session.customer_details || {};
+  const shipInfo = (session.collected_information && session.collected_information.shipping_details)
+    || session.shipping_details || null;
+  const a = shipInfo && shipInfo.address ? shipInfo.address : null;
+  const address = a ? {
+    street: [a.line1, a.line2].filter(Boolean).join(', ').slice(0, 250),
+    city: (a.city || '').slice(0, 100),
+    state: (a.state || '').slice(0, 50),
+    zip: (a.postal_code || '').slice(0, 20),
+  } : null;
+  const deliveryMethod = md.deliveryMethod === 'pickup' ? 'pickup' : 'ship';
+  const amount = Number(session.amount_total) || 0;                 // charged after any promo
+  const discount = Number((session.total_details || {}).amount_discount) || 0;
+  const paymentStatus = amount === 0 ? 'free' : 'paid';
+  // Re-price from our catalog for item linkage + inventory. ignoreStock: the
+  // payment already happened, so a sold-out item is flagged, never rejected.
+  const priced = computeOrderPricing({ itemId: md.itemId, variantId: md.variantId || undefined, quantity: md.quantity, ignoreStock: true });
+
+  const tx = db.transaction(() => {
+    let fulfillmentStatus = 'pending';
+    let itemId = md.itemId ? Number(md.itemId) : null;
+    let variantId = null;
+    let itemName = md.itemName || 'Merch order';
+    let variantLabel = md.variantLabel || '';
+    let qty = Number(md.quantity) || 1;
+    if (!priced.error) {
+      itemId = priced.item.id; itemName = priced.item.name;
+      variantId = priced.variant ? priced.variant.id : null;
+      variantLabel = priced.variant ? priced.variant.label : '';
+      qty = priced.qty;
+      let upd;
+      if (priced.variant) upd = db.prepare('UPDATE merch_variants SET inventory = inventory - ? WHERE id = ? AND inventory >= ?').run(qty, priced.variant.id, qty);
+      else upd = db.prepare('UPDATE merch_items SET inventory = inventory - ? WHERE id = ? AND inventory >= ?').run(qty, priced.item.id, qty);
+      if (upd.changes === 0) fulfillmentStatus = 'needs_review'; // sold out after payment
+    } else {
+      fulfillmentStatus = 'needs_review'; // item changed/removed since checkout
+    }
+    return db.prepare(`INSERT INTO merch_orders (
+      itemId, variantId, itemName, variantLabel, quantity,
+      buyerName, buyerEmail, buyerPhone, deliveryMethod, shippingAddress, studentEmail,
+      discountAmount, subtotal, total, paymentMethod, paymentStatus, fulfillmentStatus, stripePaymentIntentId
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'stripe', ?, ?, ?)`).run(
+      itemId, variantId, itemName, variantLabel, qty,
+      (cd.name || '').slice(0, 120), (cd.email || '').slice(0, 200), (cd.phone || '').slice(0, 30),
+      deliveryMethod, address ? JSON.stringify(address) : '', (md.studentEmail || '').slice(0, 200),
+      discount, amount + discount, amount, paymentStatus, fulfillmentStatus, ref,
+    );
+  });
+
+  let info;
+  try { info = tx(); }
+  catch (e) {
+    if (/UNIQUE|constraint/i.test(e.message)) {
+      const row = db.prepare('SELECT * FROM merch_orders WHERE stripePaymentIntentId = ?').get(ref);
+      if (row) return row;
+    }
+    throw e;
+  }
+  const order = db.prepare('SELECT * FROM merch_orders WHERE id = ?').get(info.lastInsertRowid);
+  notifyManagersOfOrder(order);
+  return order;
+}
+
+// Online payment hands off to Stripe-hosted Checkout. We price the cart from our
+// own DB (never trusting the client) and let Stripe collect the buyer's email,
+// phone, shipping address (for shipped orders), and any promotion code on its
+// own page. We only pass the cart + pickup info along as metadata.
 app.post('/api/shop/create-checkout-session', rateLimit({ windowMs: 60 * 60 * 1000, max: 30, name: 'shop-checkout' }), async (req, res) => {
   if (!stripe) return res.status(503).json({ error: 'Online payment is not configured yet — please choose to pay in person.' });
-  const v = validateOrderPayload(req.body);
-  if (v.error) return res.status(400).json({ error: v.error });
-  const p = v.pricing;
-  if (p.total <= 0) return res.status(400).json({ error: 'This order has no balance due — place it directly.' });
+  let { itemId, variantId, quantity, deliveryMethod, studentEmail } = req.body || {};
+  deliveryMethod = deliveryMethod === 'pickup' ? 'pickup' : 'ship';
+  studentEmail = String(studentEmail || '').trim().slice(0, 200);
+  if (deliveryMethod === 'pickup' && !STUDENT_EMAIL_RE.test(studentEmail)) {
+    return res.status(400).json({ error: 'Student pickup requires a valid @pcstudents.us email.' });
+  }
+  const p = computeOrderPricing({ itemId, variantId, quantity });
+  if (p.error) return res.status(400).json({ error: p.error });
   // Stripe rejects card charges under 50¢. Say so plainly.
   if (p.total < 50) return res.status(400).json({ error: 'Online payments must be at least $0.50 — for smaller amounts, choose student pickup and pay in person.' });
 
   const base = (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
   const lineName = `${p.item.name}${p.variant ? ' — ' + p.variant.label : ''}${p.qty > 1 ? ' × ' + p.qty : ''}`;
   const idemKey = String((req.body || {}).idempotencyKey || '').trim().slice(0, 200);
+  const meta = cartMetadata(p, deliveryMethod, studentEmail);
   try {
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
-      // A single line item priced at the server-computed total (after any promo)
-      // so the amount charged always equals what we recorded.
       line_items: [{
         quantity: 1,
-        price_data: {
-          currency: 'usd',
-          unit_amount: p.total,
-          product_data: {
-            name: lineName,
-            ...(p.promo ? { description: `Promo ${p.promo.code} applied` } : {}),
-          },
-        },
+        price_data: { currency: 'usd', unit_amount: p.total, product_data: { name: lineName } },
       }],
-      customer_email: v.buyerEmail || undefined,
+      allow_promotion_codes: true,                    // Stripe shows + validates promo codes
+      phone_number_collection: { enabled: true },     // Stripe collects the phone
+      // Stripe collects + validates the shipping address for shipped orders.
+      ...(deliveryMethod === 'ship' ? { shipping_address_collection: { allowed_countries: ['US'] } } : {}),
       success_url: `${base}/shop?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${base}/shop?checkout=cancel`,
-      // Metadata rides on the PaymentIntent so the webhook and the return-trip
-      // confirmation can both rebuild the order from it.
-      payment_intent_data: {
-        description: `Club America merch — ${p.item.name}${p.variant ? ' (' + p.variant.label + ')' : ''}`,
-        metadata: orderMetadata(v),
-      },
-      metadata: { kind: 'merch' },
+      metadata: meta,
+      payment_intent_data: { description: `Club America merch — ${lineName}`, metadata: meta },
     }, idemKey ? { idempotencyKey: idemKey } : undefined);
     res.json({ url: session.url });
   } catch (e) {
@@ -1115,57 +1028,51 @@ app.post('/api/shop/create-checkout-session', rateLimit({ windowMs: 60 * 60 * 10
   }
 });
 
-// Called when the buyer returns from Stripe-hosted Checkout. Verifies the
-// session was actually paid, then records the order idempotently (the same
+// Called when the buyer returns from Stripe-hosted Checkout. Retrieves the
+// session, verifies it was paid, and records the order idempotently (the same
 // path the webhook uses) so fulfillment never depends on the webhook alone.
 app.post('/api/shop/confirm-checkout', rateLimit({ windowMs: 60 * 60 * 1000, max: 40, name: 'shop-confirm' }), async (req, res) => {
   if (!stripe) return res.status(503).json({ error: 'Online payment is not configured.' });
   const sessionId = String((req.body || {}).sessionId || '').trim().slice(0, 200);
   if (!sessionId) return res.status(400).json({ error: 'Missing checkout session.' });
   let session;
-  try { session = await stripe.checkout.sessions.retrieve(sessionId, { expand: ['payment_intent'] }); }
+  try { session = await stripe.checkout.sessions.retrieve(sessionId); }
   catch (e) { return res.status(400).json({ error: 'Could not verify checkout.' }); }
-  const intent = session && (typeof session.payment_intent === 'object' ? session.payment_intent : null);
-  // Only trust a fully-paid session whose PaymentIntent our shop created.
-  if (!session || session.payment_status !== 'paid' || !intent ||
-      intent.status !== 'succeeded' || intent.currency !== 'usd' ||
-      (intent.metadata || {}).kind !== 'merch') {
+  if (!session || (session.metadata || {}).kind !== 'merch' ||
+      (session.payment_status !== 'paid' && session.payment_status !== 'no_payment_required')) {
     return res.status(400).json({ error: 'Payment was not completed.' });
   }
-  handlePaymentIntentSucceeded(intent); // idempotent record/mark-paid, shared with the webhook
-  const order = db.prepare('SELECT * FROM merch_orders WHERE stripePaymentIntentId = ?').get(intent.id);
+  let order;
+  try { order = recordCheckoutSession(session); }
+  catch (e) {
+    console.error('[shop] confirm-checkout record failed:', e.message);
+    return res.status(500).json({ error: 'Your payment went through, but we hit a snag recording the order — please contact us.' });
+  }
   res.json({
     ok: true,
     orderId: order ? order.id : null,
-    total: intent.amount,
-    paymentStatus: 'paid',
-    deliveryMethod: (intent.metadata || {}).deliveryMethod === 'pickup' ? 'pickup' : 'ship',
+    total: Number(session.amount_total) || 0,
+    paymentStatus: order ? order.paymentStatus : 'paid',
+    deliveryMethod: (session.metadata || {}).deliveryMethod === 'pickup' ? 'pickup' : 'ship',
   });
 });
 
-// Orders that don't go through Stripe: promo-covered (free) and in-person
-// pickup (pay the secretary later). Both enforce stock up front.
+// In-person pickup orders never touch Stripe (paid cash/Venmo later), so we
+// collect the buyer's name + school email ourselves and record them as pending.
 app.post('/api/shop/order', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name: 'shop-order' }), (req, res) => {
-  const v = validateOrderPayload(req.body);
-  if (v.error) return res.status(400).json({ error: v.error });
-  const p = v.pricing;
+  const body = req.body || {};
+  const buyerName = String(body.buyerName || '').trim().slice(0, 120);
+  const buyerEmail = String(body.buyerEmail || '').trim().slice(0, 200);
+  const buyerPhone = String(body.buyerPhone || '').trim().slice(0, 30);
+  const studentEmail = String(body.studentEmail || '').trim().slice(0, 200);
+  if (!buyerName) return res.status(400).json({ error: 'Name is required.' });
+  if (!STUDENT_EMAIL_RE.test(studentEmail)) return res.status(400).json({ error: 'Pickup requires a valid @pcstudents.us email.' });
+  if (buyerEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(buyerEmail)) return res.status(400).json({ error: 'Please enter a valid email.' });
 
-  if (p.total === 0) {
-    // Fully covered by a promo — no payment needed.
-    let info;
-    try { info = insertOrder(v, { paymentMethod: 'free', paymentStatus: 'free' }); }
-    catch (e) { return orderInsertError(res, e); }
-    const order = db.prepare('SELECT * FROM merch_orders WHERE id = ?').get(info.lastInsertRowid);
-    notifyManagersOfOrder(order);
-    return res.status(201).json({ ok: true, orderId: order.id, total: 0, paymentStatus: 'free' });
-  }
+  const p = computeOrderPricing({ itemId: body.itemId, variantId: body.variantId, quantity: body.quantity });
+  if (p.error) return res.status(400).json({ error: p.error });
 
-  // A paid order must go through Stripe Checkout, not this route.
-  if (v.deliveryMethod !== 'pickup' || (req.body || {}).paymentMethod !== 'inperson') {
-    return res.status(400).json({ error: 'This order requires online payment — use checkout.' });
-  }
-
-  // In-person pickup — pay the secretary later (cash/Venmo), tracked as pending.
+  const v = { pricing: p, buyerName, buyerEmail, buyerPhone, studentEmail, deliveryMethod: 'pickup', address: null };
   let info;
   try { info = insertOrder(v, { paymentMethod: 'inperson', paymentStatus: 'pending' }); }
   catch (e) { return orderInsertError(res, e); }
@@ -4496,9 +4403,6 @@ app.patch('/api/shop/admin/orders/:id', (req, res) => {
         } else if (order.itemId) {
           db.prepare('UPDATE merch_items SET inventory = inventory + ? WHERE id = ?').run(order.quantity, order.itemId);
         }
-        if (order.promoCodeId) {
-          db.prepare('UPDATE merch_promo_codes SET usedCount = MAX(0, usedCount - 1) WHERE id = ?').run(order.promoCodeId);
-        }
         db.prepare("UPDATE merch_orders SET fulfillmentStatus = 'cancelled' WHERE id = ?").run(id);
       });
       tx();
@@ -4513,55 +4417,9 @@ app.patch('/api/shop/admin/orders/:id', (req, res) => {
   res.json({ order: { ...updated, shippingAddress: updated.shippingAddress ? JSON.parse(updated.shippingAddress) : null } });
 });
 
-app.get('/api/shop/admin/promo-codes', (req, res) => {
-  if (!canManageShop(req.user)) return res.status(403).json({ error: 'Not allowed' });
-  const codes = db.prepare('SELECT * FROM merch_promo_codes ORDER BY createdAt DESC').all().map((c) => ({
-    ...c, studentOnly: !!c.studentOnly, active: !!c.active,
-  }));
-  res.json({ codes });
-});
-
-app.post('/api/shop/admin/promo-codes', (req, res) => {
-  if (!canManageShop(req.user)) return res.status(403).json({ error: 'Not allowed' });
-  let { code, type, value, itemId, studentOnly, usageLimit } = req.body || {};
-  code = String(code || '').trim().toUpperCase().slice(0, 40).replace(/\s+/g, '');
-  type = ['free', 'percent', 'dollar'].includes(type) ? type : 'percent';
-  value = type === 'free' ? 0 : Math.max(0, Math.round(Number(value) || 0));
-  itemId = itemId ? Number(itemId) : null;
-  studentOnly = !!studentOnly;
-  usageLimit = usageLimit !== undefined && usageLimit !== null && usageLimit !== '' ? Math.max(1, Math.round(Number(usageLimit))) : null;
-  if (!code) return res.status(400).json({ error: 'A promo code is required.' });
-  if (type === 'percent' && value > 100) return res.status(400).json({ error: 'Percent discount cannot exceed 100.' });
-  const dup = db.prepare('SELECT id FROM merch_promo_codes WHERE code = ?').get(code);
-  if (dup) return res.status(409).json({ error: 'That code already exists.' });
-  const info = db.prepare(`INSERT INTO merch_promo_codes (code, type, value, itemId, studentOnly, usageLimit, createdById)
-    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(code, type, value, itemId, studentOnly ? 1 : 0, usageLimit, req.user.id);
-  res.status(201).json({ code: db.prepare('SELECT * FROM merch_promo_codes WHERE id = ?').get(info.lastInsertRowid) });
-});
-
-app.patch('/api/shop/admin/promo-codes/:id', (req, res) => {
-  if (!canManageShop(req.user)) return res.status(403).json({ error: 'Not allowed' });
-  const id = Number(req.params.id);
-  const existing = db.prepare('SELECT * FROM merch_promo_codes WHERE id = ?').get(id);
-  if (!existing) return res.status(404).json({ error: 'Not found' });
-  const { active, usageLimit } = req.body || {};
-  db.prepare(`UPDATE merch_promo_codes SET
-    active = COALESCE(?, active),
-    usageLimit = CASE WHEN ? THEN ? ELSE usageLimit END
-    WHERE id = ?`).run(
-    active !== undefined ? (active ? 1 : 0) : null,
-    usageLimit !== undefined ? 1 : 0,
-    usageLimit !== undefined && usageLimit !== null && usageLimit !== '' ? Math.max(1, Math.round(Number(usageLimit))) : null,
-    id
-  );
-  res.json({ code: db.prepare('SELECT * FROM merch_promo_codes WHERE id = ?').get(id) });
-});
-
-app.delete('/api/shop/admin/promo-codes/:id', (req, res) => {
-  if (!canManageShop(req.user)) return res.status(403).json({ error: 'Not allowed' });
-  db.prepare('DELETE FROM merch_promo_codes WHERE id = ?').run(Number(req.params.id));
-  res.json({ ok: true });
-});
+// Promo codes are managed in the Stripe Dashboard and applied on Stripe's
+// hosted checkout page (allow_promotion_codes), so there are no promo-code
+// endpoints here anymore.
 
 // ---- Static frontend --------------------------------------------------------
 app.use(express.static(path.join(__dirname, '..', 'public')));

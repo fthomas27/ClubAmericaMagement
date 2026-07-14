@@ -96,18 +96,25 @@ does the right thing without the warning.
 
 ### Stripe merch-shop setup
 
-The shop uses **Stripe Elements + Payment Intents** (buyers enter card details
-inline; the server always recomputes the price and never trusts the client).
+The shop uses **Stripe-hosted Checkout**. Buyers pick an item + delivery on our
+page, then Stripe's own checkout page collects their **email, phone, shipping
+address, card, and any promo code** — we never handle card details, and the
+server always prices the cart from our catalog (never trusts the client).
 
 1. In the [Stripe Dashboard](https://dashboard.stripe.com/apikeys), copy your
    **Secret** and **Publishable** keys into `STRIPE_SECRET_KEY` /
    `STRIPE_PUBLISHABLE_KEY`.
 2. Create a webhook: **Developers → Webhooks → Add endpoint**, URL
-   `https://<your-domain>/api/shop/webhook`, event `payment_intent.succeeded`.
+   `https://<your-domain>/api/shop/webhook`, event **`checkout.session.completed`**.
    Copy the **Signing secret** into `STRIPE_WEBHOOK_SECRET`.
-3. Redeploy. Shipped orders require prepayment; pickup orders can pay online or
-   in person. Orders flagged **Needs Review** in Shop Manager mean a payment
-   succeeded but stock/promo ran out — reconcile (refund or restock) manually.
+3. **Promo codes** are created and managed in the Stripe Dashboard
+   (**Product catalog → Coupons → Promotion codes**) — turn on
+   *"Allow promotion codes"* is already handled in code, so buyers just enter
+   the code on Stripe's checkout page. There is no promo tab in Shop Manager.
+4. Redeploy. Shipped orders and online pickup orders pay on Stripe's page;
+   pickup orders can also **pay in person** (recorded as pending, no Stripe).
+   Orders flagged **Needs Review** in Shop Manager mean a payment succeeded but
+   the item sold out or changed — reconcile (refund or restock) manually.
 
 ### Notifications
 Every board member has an **in-app notification bell** (top-right) that works
