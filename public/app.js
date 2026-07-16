@@ -1064,17 +1064,29 @@ function Toggle({ enabled, onChange, disabled }) {
   );
 }
 
-function BannerSection({ title, url }) {
+function BannerLink({ title, url }) {
   const safeUrl = ensureHttps(url);
   return (
     <a
       href={safeUrl || '#'}
       target={safeUrl && safeUrl !== '#' ? '_blank' : undefined}
       rel="noopener noreferrer"
-      className="block w-full bg-gold/15 border border-gold/40 rounded-xl px-6 py-5 text-center font-display text-2xl text-gold hover:bg-gold/25 hover:border-gold/70 hover:shadow-md hover:shadow-gold/10 transition-all duration-200 active:scale-[0.99] mb-6"
+      className="block w-full bg-gold/15 border border-gold/40 rounded-xl px-6 py-5 text-center font-display text-2xl text-gold hover:bg-gold/25 hover:border-gold/70 hover:shadow-md hover:shadow-gold/10 transition-all duration-200 active:scale-[0.99]"
     >
       {title || 'Click Here →'}
     </a>
+  );
+}
+
+function BannerSection({ links }) {
+  const list = (Array.isArray(links) ? links : []).filter((l) => l && (l.title || l.url));
+  if (list.length === 0) return null;
+  return (
+    <div className="space-y-3 mb-6">
+      {list.map((link, i) => (
+        <BannerLink key={i} title={link.title} url={link.url} />
+      ))}
+    </div>
   );
 }
 
@@ -1175,6 +1187,23 @@ function PageAdminControls({ targetUser, onUpdated }) {
     await save({ [key]: !settings[key] });
   }
 
+  const bannerLinks = (settings && settings.bannerLinks) || [];
+
+  // Update a single banner link locally (so typing feels responsive) without
+  // persisting on every keystroke; persistence happens on blur via save().
+  function changeBannerLink(i, patch) {
+    setSettings((s) => ({
+      ...s,
+      bannerLinks: (s.bannerLinks || []).map((l, idx) => (idx === i ? { ...l, ...patch } : l)),
+    }));
+  }
+  function addBannerLink() {
+    save({ bannerLinks: [...bannerLinks, { title: '', url: '' }] });
+  }
+  function removeBannerLink(i) {
+    save({ bannerLinks: bannerLinks.filter((_, idx) => idx !== i) });
+  }
+
   if (!open) return (
     <div className="mb-4">
       <button
@@ -1201,23 +1230,51 @@ function PageAdminControls({ targetUser, onUpdated }) {
           <div className="py-4 first:pt-0">
             <div className="flex items-start justify-between gap-4 mb-2">
               <div>
-                <div className="text-cream font-medium">Full-Width Banner Link</div>
-                <div className="text-cream/50 text-sm">A prominent full-screen-wide button linking to any URL.</div>
+                <div className="text-cream font-medium">Full-Width Banner Links</div>
+                <div className="text-cream/50 text-sm">One or more prominent full-screen-wide buttons, each linking to any URL.</div>
               </div>
               <Toggle enabled={settings.bannerEnabled} onChange={() => toggle('bannerEnabled')} disabled={busy} />
             </div>
             {settings.bannerEnabled && (
-              <div className="grid sm:grid-cols-2 gap-3 mt-3">
-                <Field label="Button Text / Title">
-                  <input className={inputCls} defaultValue={settings.bannerTitle}
-                    onBlur={(e) => e.target.value !== settings.bannerTitle && save({ bannerTitle: e.target.value })}
-                    placeholder="e.g. View Chapter Resources" />
-                </Field>
-                <Field label="Link URL">
-                  <input className={inputCls} defaultValue={settings.bannerUrl}
-                    onBlur={(e) => e.target.value !== settings.bannerUrl && save({ bannerUrl: e.target.value })}
-                    placeholder="https://…" />
-                </Field>
+              <div className="mt-3 space-y-3">
+                {bannerLinks.length === 0 && (
+                  <div className="text-cream/40 text-sm">No links yet — add one below.</div>
+                )}
+                {bannerLinks.map((link, i) => (
+                  <div key={i} className="bg-navy border border-cream/10 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-cream/50 text-xs uppercase tracking-wide">Link {i + 1}</div>
+                      <button
+                        onClick={() => removeBannerLink(i)}
+                        disabled={busy}
+                        className="text-red/70 hover:text-red text-sm px-2 py-0.5 rounded border border-red/20 hover:border-red/50 transition-all disabled:opacity-40"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <Field label="Button Text / Title">
+                        <input className={inputCls} value={link.title || ''}
+                          onChange={(e) => changeBannerLink(i, { title: e.target.value })}
+                          onBlur={() => save({ bannerLinks })}
+                          placeholder="e.g. View Chapter Resources" />
+                      </Field>
+                      <Field label="Link URL">
+                        <input className={inputCls} value={link.url || ''}
+                          onChange={(e) => changeBannerLink(i, { url: e.target.value })}
+                          onBlur={() => save({ bannerLinks })}
+                          placeholder="https://…" />
+                      </Field>
+                    </div>
+                  </div>
+                ))}
+                <button
+                  onClick={addBannerLink}
+                  disabled={busy}
+                  className="text-sm text-gold/70 hover:text-gold px-3 py-1.5 rounded-md border border-gold/20 hover:border-gold/50 transition-all disabled:opacity-40"
+                >
+                  + Add banner link
+                </button>
               </div>
             )}
           </div>
@@ -1490,7 +1547,7 @@ function TaskPage({ me, userId, users, refreshSignal, onNavigate }) {
 
       {canManagePage && <PageAdminControls targetUser={user} onUpdated={reloadSettings} />}
 
-      {ps.bannerEnabled && <BannerSection title={ps.bannerTitle} url={ps.bannerUrl} />}
+      {ps.bannerEnabled && <BannerSection links={ps.bannerLinks} />}
       {ps.announcementEnabled && <AnnouncementSection text={ps.announcementText} />}
       {ps.bioEnabled && <BioSection text={ps.bioText} />}
       {ps.formEnabled && <CopyableFormSection title={ps.formTitle} fields={ps.formFields} />}

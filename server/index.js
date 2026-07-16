@@ -293,13 +293,24 @@ function getPageSettings(userId) {
   const row = db.prepare('SELECT * FROM user_page_settings WHERE userId = ?').get(userId);
   if (!row) return {
     userId,
-    bannerEnabled: false, bannerTitle: '', bannerUrl: '',
+    bannerEnabled: false, bannerTitle: '', bannerUrl: '', bannerLinks: [],
     formEnabled: false, formTitle: '', formFields: [],
     announcementEnabled: false, announcementText: '',
     bioEnabled: false, bioText: '',
   };
   let formFields = [];
   try { formFields = JSON.parse(row.formFields || '[]'); } catch (_) {}
+  let bannerLinks = [];
+  try { bannerLinks = JSON.parse(row.bannerLinks || '[]'); } catch (_) {}
+  if (!Array.isArray(bannerLinks)) bannerLinks = [];
+  bannerLinks = bannerLinks
+    .filter((l) => l && typeof l === 'object')
+    .map((l) => ({ title: String(l.title || ''), url: String(l.url || '') }));
+  // Backward compatibility: promote a legacy single banner (bannerTitle/bannerUrl)
+  // into the multi-link array when no links have been configured yet.
+  if (bannerLinks.length === 0 && (row.bannerTitle || row.bannerUrl)) {
+    bannerLinks = [{ title: row.bannerTitle || '', url: row.bannerUrl || '' }];
+  }
   return {
     ...row,
     bannerEnabled: !!row.bannerEnabled,
@@ -307,6 +318,7 @@ function getPageSettings(userId) {
     announcementEnabled: !!row.announcementEnabled,
     bioEnabled: !!row.bioEnabled,
     formFields,
+    bannerLinks,
   };
 }
 
@@ -1554,17 +1566,35 @@ app.put('/api/users/:id/page-settings', (req, res) => {
   if (req.user.role !== 'admin' && !isManagerOf(req.user, targetId)) {
     return res.status(403).json({ error: 'Only admins or the direct manager can edit page settings' });
   }
-  const { bannerEnabled, bannerTitle, bannerUrl,
+  const { bannerEnabled, bannerTitle, bannerUrl, bannerLinks,
           formEnabled, formTitle, formFields, announcementEnabled, announcementText,
           bioEnabled, bioText } = req.body || {};
   if (bannerUrl !== undefined && bannerUrl && !/^https?:\/\//i.test(bannerUrl.trim())) {
     return res.status(400).json({ error: 'Banner URL must start with http:// or https://' });
+  }
+  let normalizedBannerLinks = null;
+  if (bannerLinks !== undefined) {
+    if (!Array.isArray(bannerLinks)) {
+      return res.status(400).json({ error: 'bannerLinks must be an array' });
+    }
+    normalizedBannerLinks = [];
+    for (const link of bannerLinks) {
+      const title = String((link && link.title) || '').trim();
+      const url = String((link && link.url) || '').trim();
+      if (url && !/^https?:\/\//i.test(url)) {
+        return res.status(400).json({ error: 'Each banner URL must start with http:// or https://' });
+      }
+      // Keep empty rows as-is so an admin can add a blank link and fill it in
+      // afterward; blank links are filtered out when the page is rendered.
+      normalizedBannerLinks.push({ title, url });
+    }
   }
   db.prepare('INSERT OR IGNORE INTO user_page_settings (userId) VALUES (?)').run(targetId);
   db.prepare(`UPDATE user_page_settings SET
     bannerEnabled       = COALESCE(?, bannerEnabled),
     bannerTitle         = COALESCE(?, bannerTitle),
     bannerUrl           = COALESCE(?, bannerUrl),
+    bannerLinks         = COALESCE(?, bannerLinks),
     formEnabled         = COALESCE(?, formEnabled),
     formTitle           = COALESCE(?, formTitle),
     formFields          = COALESCE(?, formFields),
@@ -1577,6 +1607,7 @@ app.put('/api/users/:id/page-settings', (req, res) => {
     bannerEnabled !== undefined ? (bannerEnabled ? 1 : 0) : null,
     bannerTitle ?? null,
     bannerUrl ?? null,
+    normalizedBannerLinks !== null ? JSON.stringify(normalizedBannerLinks) : null,
     formEnabled !== undefined ? (formEnabled ? 1 : 0) : null,
     formTitle ?? null,
     formFields !== undefined ? JSON.stringify(Array.isArray(formFields) ? formFields : []) : null,

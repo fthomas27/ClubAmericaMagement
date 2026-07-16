@@ -86,6 +86,7 @@ function init() {
       bannerEnabled       INTEGER NOT NULL DEFAULT 0,
       bannerTitle         TEXT NOT NULL DEFAULT '',
       bannerUrl           TEXT NOT NULL DEFAULT '',
+      bannerLinks         TEXT NOT NULL DEFAULT '[]',
       calendarEnabled     INTEGER NOT NULL DEFAULT 0,
       calendarUrl         TEXT NOT NULL DEFAULT '',
       formEnabled         INTEGER NOT NULL DEFAULT 0,
@@ -785,6 +786,7 @@ function init() {
   const upsCols = db.prepare("PRAGMA table_info(user_page_settings)").all().map((c) => c.name);
   if (!upsCols.includes('bioEnabled'))  db.exec("ALTER TABLE user_page_settings ADD COLUMN bioEnabled INTEGER NOT NULL DEFAULT 0");
   if (!upsCols.includes('bioText'))     db.exec("ALTER TABLE user_page_settings ADD COLUMN bioText TEXT NOT NULL DEFAULT ''");
+  if (!upsCols.includes('bannerLinks')) db.exec("ALTER TABLE user_page_settings ADD COLUMN bannerLinks TEXT NOT NULL DEFAULT '[]'");
 
   // merch_orders: replace the earlier non-unique Stripe index with a partial
   // UNIQUE one so a PaymentIntent can be finalized exactly once. Safe to run
