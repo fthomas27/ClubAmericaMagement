@@ -120,6 +120,18 @@ function init() {
       roleDescription TEXT NOT NULL DEFAULT '',
       status          TEXT NOT NULL DEFAULT 'Prospect',
       claimedByUserId INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      -- Referral competition: who referred this member and whether that referral
+      -- has been approved by the Secretary. referralStatus is '' (not a referral),
+      -- 'pending', 'approved' (counts on the leaderboard), or 'removed' (credit
+      -- pulled after two absences, restorable if they come back).
+      referredByUserId INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      referralStatus   TEXT NOT NULL DEFAULT '',
+      -- Absence follow-up: set when the Secretary deactivates a member (30-day
+      -- grace before auto-delete), when she marks them contacted, and the club
+      -- event id of the most recent absence we've already alerted on.
+      inactivatedAt      TEXT,
+      absenceContactedAt TEXT,
+      absenceAlertEventId INTEGER,
       notes           TEXT NOT NULL DEFAULT '',
       convertedAt     TEXT,
       createdAt       TEXT NOT NULL DEFAULT (datetime('now')),
@@ -706,6 +718,12 @@ function init() {
       SELECT u.id FROM users u WHERE u.email != '' AND lower(u.email) = lower(roster_members.email) LIMIT 1
     ) WHERE linkedUserId IS NULL AND email != ''`);
   }
+  // Referral competition + absence follow-up columns.
+  if (!rosterCols.includes('referredByUserId'))    db.exec("ALTER TABLE roster_members ADD COLUMN referredByUserId INTEGER REFERENCES users(id) ON DELETE SET NULL");
+  if (!rosterCols.includes('referralStatus'))      db.exec("ALTER TABLE roster_members ADD COLUMN referralStatus TEXT NOT NULL DEFAULT ''");
+  if (!rosterCols.includes('inactivatedAt'))       db.exec("ALTER TABLE roster_members ADD COLUMN inactivatedAt TEXT");
+  if (!rosterCols.includes('absenceContactedAt'))  db.exec("ALTER TABLE roster_members ADD COLUMN absenceContactedAt TEXT");
+  if (!rosterCols.includes('absenceAlertEventId')) db.exec("ALTER TABLE roster_members ADD COLUMN absenceAlertEventId INTEGER");
 
   // volunteer_signups column migrations.
   const vsCols = db.prepare("PRAGMA table_info(volunteer_signups)").all().map((c) => c.name);

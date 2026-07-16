@@ -4996,8 +4996,14 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
   }
 
   const statusColors = {
-    Pending: 'gold', Prospect: 'slate', Contacted: 'blue', Onboarded: 'green', Declined: 'red',
+    Pending: 'gold', Prospect: 'slate', Contacted: 'blue', Onboarded: 'green', Declined: 'red', Inactive: 'red',
   };
+  const canManageRoster = me.role === 'admin' || me.role === 'manager' || !!me.canManageRoster;
+  const flaggedForAbsence = member.status === 'Onboarded' && member.absenceAlertEventId && !member.absenceContactedAt;
+  // Days until an Inactive member is auto-purged (30 days after deactivation).
+  const inactiveDaysLeft = member.inactivatedAt
+    ? Math.max(0, 30 - Math.floor((Date.now() - new Date(member.inactivatedAt.replace(' ', 'T') + 'Z').getTime()) / 86400000))
+    : null;
 
   return (
     <div className="bg-navy2 border border-cream/10 rounded-lg p-4 hover:border-cream/20 transition-all duration-200">
@@ -5015,9 +5021,43 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
           {member.claimedByName && (
             <div className="text-xs text-cream/40 mt-1">Managed by {member.claimedByName}</div>
           )}
+          {member.referredByName && (
+            <div className="text-xs text-cream/40 mt-1">
+              Referred by <span className="text-cream/60">{member.referredByName}</span>
+              {member.referralStatus === 'pending'  && <span className="text-gold/70"> · pending approval</span>}
+              {member.referralStatus === 'approved' && <span className="text-emerald-400/70"> · approved ✓</span>}
+              {member.referralStatus === 'removed'  && <span className="text-red/60"> · point removed</span>}
+            </div>
+          )}
+          {member.status === 'Inactive' && (
+            <div className="text-xs text-amber-400/80 mt-1">
+              Inactive{inactiveDaysLeft != null ? ` — auto-deletes in ${inactiveDaysLeft} day${inactiveDaysLeft !== 1 ? 's' : ''}` : ''}. Marking them present at a meeting reactivates them.
+            </div>
+          )}
         </div>
         <Badge tone={statusColors[member.status] || 'slate'}>{member.status}</Badge>
       </div>
+
+      {flaggedForAbsence && canManageRoster && (
+        <div className="mt-3 bg-red/10 border border-red/30 rounded-lg p-3 space-y-2">
+          <div className="text-sm text-red/90 font-medium flex items-center gap-1.5">
+            <AppIcon name="pin" size={14} /> Absent 2 meetings in a row
+          </div>
+          <div className="text-xs text-cream/60">
+            <strong>Remove</strong> marks them Inactive (they stay on the attendance roster for 30 days,
+            then auto-delete) and pulls the referrer's point — it comes back if they return.
+            <strong> Mark as contacted</strong> silences this until their next absence.
+          </div>
+          <div className="flex gap-2">
+            <Button variant="danger" className="text-xs px-3 py-1" onClick={() => act('deactivate')} disabled={busy}>
+              {busyAction === 'deactivate' ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Removing…</span> : 'Remove'}
+            </Button>
+            <Button variant="ghost" className="text-xs px-3 py-1" onClick={() => act('absence-contacted')} disabled={busy}>
+              {busyAction === 'absence-contacted' ? <span className="flex items-center gap-1.5"><Spinner className="w-3 h-3" /> Saving…</span> : 'Mark as contacted'}
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center gap-2 mt-3 flex-wrap">
         {member.status === 'Pending' && (member.claimedByUserId === me.id || me.role === 'admin' || me.role === 'manager' || me.canManageRoster) && (
@@ -5176,6 +5216,7 @@ function AddRosterMemberForm({ me, onCreated }) {
   async function submit(e) {
     e.preventDefault();
     if (!form.firstName.trim()) { setError('First name is required.'); return; }
+    if (!form.phone.trim()) { setError('Phone number is required.'); return; }
     if (form.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) { setError('Please enter a valid email.'); return; }
     try {
       await run(() => api('/roster', { method: 'POST', body: { ...form, firstName: form.firstName.trim(), grade: form.grade ? Number(form.grade) : null } }));
@@ -5191,7 +5232,7 @@ function AddRosterMemberForm({ me, onCreated }) {
       <div className="grid sm:grid-cols-2 gap-3">
         <Field label="First Name *"><input className={inputCls} value={form.firstName} onChange={set('firstName')} required autoFocus /></Field>
         <Field label="Last Name"><input className={inputCls} value={form.lastName} onChange={set('lastName')} /></Field>
-        <Field label="Phone"><input className={inputCls} value={form.phone} onChange={set('phone')} /></Field>
+        <Field label="Phone *"><input className={inputCls} value={form.phone} onChange={set('phone')} required /></Field>
         <Field label="Email"><input className={inputCls} type="email" value={form.email} onChange={set('email')} /></Field>
         <Field label="Grade">
           <select className={inputCls} value={form.grade} onChange={set('grade')}>
@@ -5293,23 +5334,23 @@ function EditRosterMemberModal({ member, onSaved, onClose }) {
 }
 
 // ---------------------------------------------------------------------------
-// Grade Rep Recruitment Leaderboard
+// Referral Competition Leaderboard (everyone competes)
 // ---------------------------------------------------------------------------
-function GradeRepLeaderboard({ me }) {
+function ReferralLeaderboard({ me, refreshSignal }) {
   const [board, setBoard] = useState([]);
+  const [myPending, setMyPending] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api('/roster/leaderboard')
-      .then((d) => { setBoard(d.leaderboard || []); setLoading(false); })
+      .then((d) => { setBoard(d.leaderboard || []); setMyPending(d.myPending || 0); setLoading(false); })
       .catch(() => setLoading(false));
-  }, []);
+  }, [refreshSignal]);
 
-  if (loading || board.length === 0) return null;
+  if (loading) return null;
 
   const leader = board[0];
   const myEntry = board.find((r) => r.id === me.id);
-
 
   return (
     <div className="bg-navy2 border-2 border-gold/60 rounded-2xl p-5 mb-8">
@@ -5317,61 +5358,142 @@ function GradeRepLeaderboard({ me }) {
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <div className="text-gold"><AppIcon name="trophy" size={30} /></div>
         <div className="flex-1 min-w-0">
-          <div className="font-display text-2xl text-gold leading-tight">Grade Rep Recruitment Challenge</div>
+          <div className="font-display text-2xl text-gold leading-tight">Referral Competition</div>
           <div className="text-cream/70 text-sm mt-0.5">
-            The rep who brings in the most new members by year-end wins a{' '}
-            <span className="text-gold font-semibold">$50 Amazon gift card</span>. Keep recruiting!
+            Whoever refers the most new members by year-end wins a{' '}
+            <span className="text-gold font-semibold">$50 Amazon gift card</span>. Refer a friend below —
+            it counts once the Secretary approves it.
           </div>
         </div>
-        {leader.count > 0 && (
+        {leader && leader.count > 0 && (
           <div className="bg-gold/15 border border-gold/40 rounded-xl px-4 py-2 text-center shrink-0">
             <div className="text-xs text-gold/70 uppercase tracking-wider">Current Leader</div>
             <div className="font-display text-xl text-gold leading-tight">{leader.displayName}</div>
-            <div className="text-xs text-cream/60">{leader.count} onboarded</div>
+            <div className="text-xs text-cream/60">{leader.count} referral{leader.count !== 1 ? 's' : ''}</div>
           </div>
         )}
       </div>
 
-      {/* Ranked list */}
-      <div className="space-y-2">
-        {board.map((rep, i) => {
-          const isMe = rep.id === me.id;
-          const isLeader = i === 0 && rep.count > 0;
-          return (
-            <div key={rep.id}
-              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 ${
-                isLeader ? 'bg-gold/15 border border-gold/40 hover:border-gold/60' :
-                isMe ? 'bg-navy border border-cream/20 hover:border-cream/30' : 'bg-navy/40 hover:bg-navy/60'
-              }`}>
-              <div className={`font-display text-xl w-8 text-center shrink-0 ${isLeader ? 'text-gold' : 'text-cream/40'}`}>
-                {i + 1}
+      {board.length === 0 ? (
+        <div className="text-cream/50 text-sm bg-navy/40 rounded-xl px-4 py-3 text-center">
+          No approved referrals yet — be the first on the board!
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {board.map((rep, i) => {
+            const isMe = rep.id === me.id;
+            const isLeader = i === 0 && rep.count > 0;
+            return (
+              <div key={rep.id}
+                className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 ${
+                  isLeader ? 'bg-gold/15 border border-gold/40 hover:border-gold/60' :
+                  isMe ? 'bg-navy border border-cream/20 hover:border-cream/30' : 'bg-navy/40 hover:bg-navy/60'
+                }`}>
+                <div className={`font-display text-xl w-8 text-center shrink-0 ${isLeader ? 'text-gold' : 'text-cream/40'}`}>
+                  {i + 1}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <span className={`font-medium ${isMe ? 'text-gold' : 'text-cream'}`}>
+                    {rep.displayName}
+                    {isMe && <span className="text-xs text-cream/50 ml-1">(you)</span>}
+                  </span>
+                  {rep.title && <span className="text-xs text-cream/40 ml-2">{rep.title}</span>}
+                </div>
+                <div className={`font-display text-2xl shrink-0 ${isLeader ? 'text-gold' : 'text-cream/60'}`}>
+                  {rep.count}
+                </div>
+                <div className="text-xs text-cream/40 shrink-0">referral{rep.count !== 1 ? 's' : ''}</div>
               </div>
-              <div className="flex-1 min-w-0">
-                <span className={`font-medium ${isMe ? 'text-gold' : 'text-cream'}`}>
-                  {rep.displayName}
-                  {isMe && <span className="text-xs text-cream/50 ml-1">(you)</span>}
-                </span>
-                {rep.managedGrade && (
-                  <span className="text-xs text-cream/40 ml-2">Grade {rep.managedGrade}</span>
-                )}
-              </div>
-              <div className={`font-display text-2xl shrink-0 ${isLeader ? 'text-gold' : 'text-cream/60'}`}>
-                {rep.count}
-              </div>
-              <div className="text-xs text-cream/40 shrink-0">onboarded</div>
-            </div>
-          );
-        })}
-      </div>
-
-      {myEntry && (
-        <div className="mt-3 text-xs text-cream/40 text-center">
-          You've onboarded {myEntry.count} member{myEntry.count !== 1 ? 's' : ''} this year.
-          {myEntry.count < leader.count && leader.id !== me.id && (
-            <> You're {leader.count - myEntry.count} behind the leader — keep going!</>
-          )}
+            );
+          })}
         </div>
       )}
+
+      <div className="mt-3 text-xs text-cream/40 text-center">
+        {myEntry
+          ? <>You have {myEntry.count} approved referral{myEntry.count !== 1 ? 's' : ''}.{' '}</>
+          : <>You have no approved referrals yet.{' '}</>}
+        {myPending > 0 && <span className="text-gold/80">{myPending} pending the Secretary's approval.</span>}
+      </div>
+    </div>
+  );
+}
+
+// Refer-a-member form, available to every logged-in member. Reuses the roster
+// add fields but always submits as a pending referral (referral: true).
+function ReferMemberForm({ onReferred }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', email: '', grade: '' });
+  const [done, setDone] = useState('');
+  const { loading, error, setError, run } = useAction();
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function submit(e) {
+    e.preventDefault();
+    setDone('');
+    if (!form.firstName.trim()) { setError('First name is required.'); return; }
+    if (!form.phone.trim()) { setError('Phone number is required.'); return; }
+    if (form.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) { setError('Please enter a valid email.'); return; }
+    try {
+      await run(() => api('/roster', { method: 'POST', body: {
+        firstName: form.firstName.trim(), lastName: form.lastName.trim(),
+        phone: form.phone.trim(), email: form.email.trim(),
+        grade: form.grade ? Number(form.grade) : null, referral: true,
+      } }));
+      const name = `${form.firstName.trim()} ${form.lastName.trim()}`.trim();
+      setForm({ firstName: '', lastName: '', phone: '', email: '', grade: '' });
+      setDone(`Thanks! Your referral of ${name} was submitted and is pending the Secretary's approval.`);
+      onReferred && onReferred();
+    } catch (_) {}
+  }
+
+  return (
+    <div className="bg-navy2 border border-gold/30 rounded-2xl p-5 mb-8">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-gold"><AppIcon name="person" size={18} /></span>
+        <div className="font-display text-xl text-gold">Refer a Member</div>
+      </div>
+      <p className="text-cream/60 text-sm mb-3">
+        Brought someone new to the club? Add them here to get credit in the competition.
+        Phone number is required — we use it to check they're not already in the club.
+      </p>
+      {done && <div className="text-emerald-300 text-sm bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2 mb-3">{done}</div>}
+      {!open ? (
+        <Button variant="gold" onClick={() => { setOpen(true); setDone(''); }}>+ Refer someone</Button>
+      ) : (
+        <form onSubmit={submit} className="space-y-3 ca-slide-up">
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="First Name *"><input className={inputCls} value={form.firstName} onChange={set('firstName')} required autoFocus /></Field>
+            <Field label="Last Name"><input className={inputCls} value={form.lastName} onChange={set('lastName')} /></Field>
+            <Field label="Phone *"><input className={inputCls} value={form.phone} onChange={set('phone')} required placeholder="(555) 123-4567" /></Field>
+            <Field label="Email"><input className={inputCls} type="email" value={form.email} onChange={set('email')} /></Field>
+            <Field label="Grade">
+              <select className={inputCls} value={form.grade} onChange={set('grade')}>
+                <option value="">—</option>
+                {[9,10,11,12].map((g) => <option key={g} value={g}>{g}th</option>)}
+              </select>
+            </Field>
+          </div>
+          {error && <div className="text-red text-sm">{error}</div>}
+          <div className="flex gap-2">
+            <Button type="submit" variant="gold" disabled={loading}>{loading ? <span className="flex items-center gap-2"><Spinner /> Submitting…</span> : 'Submit Referral'}</Button>
+            <Button variant="ghost" onClick={() => setOpen(false)} disabled={loading}>Cancel</Button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+// Full-page referral competition view — visible to every member.
+function ReferralsPage({ me }) {
+  const [refresh, setRefresh] = useState(0);
+  return (
+    <div className="max-w-3xl">
+      <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Referral Competition</h1>
+      <p className="text-cream/50 mb-6">Refer new members and climb the leaderboard.</p>
+      <ReferMemberForm onReferred={() => setRefresh((n) => n + 1)} />
+      <ReferralLeaderboard me={me} refreshSignal={refresh} />
     </div>
   );
 }
@@ -5470,7 +5592,10 @@ function RosterPage({ me }) {
     })));
   }
 
+  const isFlagged = (m) => m.status === 'Onboarded' && m.absenceAlertEventId && !m.absenceContactedAt;
+
   const tabFilteredMembers = useMemo(() => {
+    if (tab === 'attention') return members.filter(isFlagged);
     if (tab === 'pending') return members.filter((m) => m.status === 'Pending');
     if (tab === 'pipeline') return members.filter((m) => m.status === 'Prospect' || m.status === 'Contacted');
     if (tab === 'members') return members.filter((m) => m.status === 'Onboarded');
@@ -5485,6 +5610,7 @@ function RosterPage({ me }) {
 
   const counts = useMemo(() => ({
     all: members.filter((m) => m.status !== 'Pending').length,
+    attention: members.filter(isFlagged).length,
     pending: members.filter((m) => m.status === 'Pending').length,
     pipeline: members.filter((m) => m.status === 'Prospect' || m.status === 'Contacted').length,
     members: members.filter((m) => m.status === 'Onboarded').length,
@@ -5494,6 +5620,8 @@ function RosterPage({ me }) {
   const canManage = isPrivileged || !!me.canManageRoster;
   const tabs = [
     { key: 'all', label: 'All' },
+    // Absence follow-ups jump to the front so they're impossible to miss.
+    ...(canManage && counts.attention > 0 ? [{ key: 'attention', label: '⚠ Needs Attention' }] : []),
     // Only roster managers see (and act on) the self-service approval queue.
     ...(canManage ? [{ key: 'pending', label: 'Pending Approval' }] : []),
     { key: 'pipeline', label: 'Leads Pipeline' },
@@ -5512,7 +5640,7 @@ function RosterPage({ me }) {
       </div>
       <p className="text-cream/50 mb-6">Club America recruitment pipeline and member directory.</p>
 
-      <GradeRepLeaderboard me={me} />
+      <ReferralLeaderboard me={me} />
 
       {canManage && <RosterInviteLink pendingCount={counts.pending} />}
 
@@ -8931,6 +9059,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
         ...(isManager && visible('approvals')   ? [{ type: 'approvals',   label: 'Approvals',       icon: 'check',     badge: approvalsCount   }] : []),
         ...(canSeeSubmissions && visible('submissions') ? [{ type: 'submissions', label: 'Get Involved', icon: 'inbox', badge: submissionsCount }] : []),
         ...(canRoster && visible('roster')      ? [{ type: 'roster',      label: 'Roster',          icon: 'roster'     }] : []),
+        ...(visible('referrals')                ? [{ type: 'referrals',   label: 'Referrals',       icon: 'trophy'     }] : []),
         ...((me.role === 'admin' || !!me.canManageRoster) && visible('shop') ? [{ type: 'shop', label: 'Shop Manager', icon: 'shop' }] : []),
         ...(isManager && visible('dashboard')   ? [{ type: 'dashboard',   label: 'Dashboard',       icon: 'dashboard'  }] : []),
         ...(isManager && visible('volunteers')  ? [{ type: 'volunteers',  label: 'Volunteers',      icon: 'volunteer'  }] : []),
@@ -9050,6 +9179,8 @@ const NOTIF_LINK_VIEWS = {
   reimbursements: { type: 'reimbursements' },
   checkin: { type: 'checkin' },
   social: { type: 'social' },
+  roster: { type: 'roster' },
+  referrals: { type: 'referrals' },
 };
 function NotificationBell({ onNavigate, refreshSignal }) {
   const [open, setOpen] = useState(false);
@@ -9446,6 +9577,7 @@ function App() {
     ...(isMgrOrAdmin                          ? [{ type: 'approvals',   label: 'Approvals' }] : []),
     ...(me.role === 'admin' || !!me.grade     ? [{ type: 'submissions', label: 'Get Involved' }] : []),
     ...(isMgrOrAdmin || !!me.canManageRoster  ? [{ type: 'roster',      label: 'Roster' }] : []),
+    { type: 'referrals',      label: 'Referral Competition' },
     ...(me.role === 'admin' || !!me.canManageRoster ? [{ type: 'shop',  label: 'Shop Manager' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'dashboard',   label: 'Dashboard' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'volunteers',  label: 'Volunteers' }] : []),
@@ -9498,7 +9630,7 @@ function App() {
     funding: 'Funding Requests', apply: 'Apply for Position', dashboard: 'Dashboard',
     attendance: 'Attendance', polls: 'Polls & Voting', budget: 'Budget Overview',
     meetings: 'Meetings', speaker: 'Speaker Events', grants: 'Grant Tracker', social: 'Social Media',
-    grades: 'Grade Pipeline', reimbursements: 'Reimbursements', directory: 'Board Directory',
+    grades: 'Grade Pipeline', reimbursements: 'Reimbursements', directory: 'Board Directory', referrals: 'Referral Competition',
     resources: 'Resource Hub', volunteers: 'Volunteer Manager',
     photos: 'Photo Approvals',
     org: 'Org Chart', admin: 'Admin Panel', logistics: 'Login Activity', siteactivity: 'Site Activity',
@@ -9517,6 +9649,7 @@ function App() {
   else if (view.type === 'approvals') content = <Approvals onChanged={bump} refreshSignal={refreshSignal} />;
   else if (view.type === 'submissions') content = <SubmissionsInbox onChanged={bump} refreshSignal={refreshSignal} />;
   else if (view.type === 'roster') content = <RosterPage me={me} />;
+  else if (view.type === 'referrals') content = <ReferralsPage me={me} />;
   else if (view.type === 'shop') content = (me.role === 'admin' || !!me.canManageRoster) ? <ShopManagerPage me={me} /> : null;
   else if (view.type === 'checkin') content = <WeeklyCheckinPage me={me} />;
   else if (view.type === 'funding') content = <FundingRequestPage me={me} />;
