@@ -154,8 +154,11 @@ const ROSTER_TRANSITIONS = {
   Pending:   ['Onboarded', 'Prospect', 'Declined'],
   Prospect:  ['Contacted', 'Declined'],
   Contacted: ['Onboarded', 'Declined', 'Prospect'],
-  Onboarded: ['Contacted', 'Declined'],
+  Onboarded: ['Contacted', 'Declined', 'Inactive'],
   Declined:  ['Prospect', 'Contacted'],
+  // Inactive members sit in a 30-day grace window; they can be reactivated
+  // (back to Onboarded, e.g. when marked present again) or auto-purged.
+  Inactive:  ['Onboarded', 'Declined'],
 };
 function isValidRosterTransition(from, to) {
   if (from === to) return true;
@@ -1669,10 +1672,35 @@ function canWriteRoster(user) {
   return user.role === 'admin' || user.role === 'manager' || !!user.canManageRoster;
 }
 
+// Phone numbers are the identity key for de-duping the roster: strip everything
+// but digits so "(555) 123-4567" and "555-123-4567" collide.
+function normalizePhone(p) {
+  return String(p || '').replace(/\D/g, '');
+}
+// Returns a short human label if this phone already belongs to the club (an
+// existing roster member or a portal account), otherwise null.
+function findClubMemberByPhone(phone) {
+  const digits = normalizePhone(phone);
+  if (!digits) return null;
+  const rosterRows = db.prepare("SELECT firstName, lastName, phone FROM roster_members").all();
+  for (const r of rosterRows) {
+    if (normalizePhone(r.phone) === digits) return `${r.firstName} ${r.lastName}`.trim() || 'a roster member';
+  }
+  const userRows = db.prepare("SELECT displayName, phone FROM users WHERE phone != ''").all();
+  for (const u of userRows) {
+    if (normalizePhone(u.phone) === digits) return u.displayName || 'a club member';
+  }
+  return null;
+}
+
 app.get('/api/roster', (req, res) => {
   if (!canViewRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
   const { grade, status } = req.query;
-  let sql = 'SELECT r.*, u.displayName as claimedByName FROM roster_members r LEFT JOIN users u ON u.id = r.claimedByUserId WHERE 1=1';
+  let sql = `SELECT r.*, u.displayName as claimedByName, ref.displayName as referredByName
+    FROM roster_members r
+    LEFT JOIN users u ON u.id = r.claimedByUserId
+    LEFT JOIN users ref ON ref.id = r.referredByUserId
+    WHERE 1=1`;
   const params = [];
   if (grade) { sql += ' AND r.grade = ?'; params.push(Number(grade)); }
   if (status) { sql += ' AND r.status = ?'; params.push(status); }
@@ -1714,24 +1742,49 @@ app.post('/api/roster/import-board', (req, res) => {
   res.json({ imported, skipped });
 });
 
+// Add-to-roster form. Open to EVERY authenticated member: roster managers add
+// directly, while regular members' submissions become pending referrals that
+// credit them once the Secretary approves. Phone is required and is the de-dupe
+// key so the same person can't be referred twice / added if already in the club.
 app.post('/api/roster', (req, res) => {
-  if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
   const { firstName, lastName, phone, email, grade, gender, roleDescription, status, notes } = req.body || {};
   if (!firstName || !String(firstName).trim()) return res.status(400).json({ error: 'First name required' });
+  if (!phone || !normalizePhone(phone)) return res.status(400).json({ error: 'Phone number is required' });
   if (grade != null && grade !== '' && !GRADES.includes(String(grade))) {
     return res.status(400).json({ error: 'Grade must be 9, 10, 11, or 12' });
   }
   if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email).trim())) {
     return res.status(400).json({ error: 'Please enter a valid email' });
   }
-  const info = db.prepare(`INSERT INTO roster_members (firstName,lastName,phone,email,grade,gender,roleDescription,status,notes)
-    VALUES (?,?,?,?,?,?,?,?,?)`).run(
+  const existing = findClubMemberByPhone(phone);
+  if (existing) {
+    return res.status(409).json({ error: `${existing} is already in the club — that phone number is already on the roster.` });
+  }
+
+  const privileged = canWriteRoster(req.user);
+  // A "referral" credits the submitter and needs the Secretary's approval before
+  // it counts. Everyone competes this way (the referral form sends referral:true).
+  // Regular members can ONLY refer; roster managers can also add members straight
+  // into the pipeline (no referral flag) for their own recruiting.
+  const asReferral = !privileged || req.body.referral === true;
+  const rosterStatus  = asReferral ? 'Pending' : (status || 'Prospect');
+  const referredBy    = asReferral ? req.user.id : null;
+  const referralState = asReferral ? 'pending' : '';
+
+  const info = db.prepare(`INSERT INTO roster_members
+    (firstName,lastName,phone,email,grade,gender,roleDescription,status,notes,referredByUserId,referralStatus)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
     String(firstName).trim().slice(0, 100), String(lastName||'').trim().slice(0, 100),
     String(phone||'').trim().slice(0, 30), String(email||'').trim().slice(0, 200),
     grade||null, String(gender||'').trim().slice(0, 30),
-    String(roleDescription||'').trim().slice(0, 500), status||'Prospect',
-    String(notes||'').trim().slice(0, 2000)
+    String(roleDescription||'').trim().slice(0, 500), rosterStatus,
+    String(notes||'').trim().slice(0, 2000),
+    referredBy || null, referralState,
   );
+  if (asReferral) {
+    const name = `${String(firstName).trim()} ${String(lastName||'').trim()}`.trim();
+    notifyRosterManagers(`${req.user.displayName} referred ${name} — approve it in the roster to award the referral.`, 'roster', 'submission');
+  }
   res.status(201).json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(info.lastInsertRowid) });
 });
 
@@ -1813,25 +1866,66 @@ app.post('/api/roster/:id/approve', (req, res) => {
   if (grade != null && grade !== '' && !GRADES.includes(String(grade))) {
     return res.status(400).json({ error: 'Grade must be 9, 10, 11, or 12' });
   }
+  // Awarding the referral: a pending referral becomes 'approved' (counts on the
+  // leaderboard) and the referrer is notified they earned a point.
+  const awardsReferral = m.referredByUserId && m.referralStatus === 'pending';
   db.prepare(`UPDATE roster_members SET status='Onboarded', convertedAt=datetime('now'),
-    grade=COALESCE(?,grade), roleDescription=COALESCE(?,roleDescription), updatedAt=datetime('now')
-    WHERE id=?`).run(grade || null, roleDescription || null, m.id);
+    grade=COALESCE(?,grade), roleDescription=COALESCE(?,roleDescription),
+    referralStatus=CASE WHEN ? THEN 'approved' ELSE referralStatus END, updatedAt=datetime('now')
+    WHERE id=?`).run(grade || null, roleDescription || null, awardsReferral ? 1 : 0, m.id);
+  if (awardsReferral) {
+    const name = `${m.firstName} ${m.lastName}`.trim();
+    pushNotification(m.referredByUserId, `Your referral of ${name} was approved — you earned a referral point!`, 'referrals', 'info');
+  }
   res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id) });
 });
 
-// Grade rep recruitment leaderboard — ranked by Onboarded members they claimed.
+// Absence follow-up — "Remove": mark the member Inactive (they stay on the
+// attendance roster for a 30-day grace window, then auto-purge) and immediately
+// pull the referrer's point. Coming back (a present mark) restores both.
+app.post('/api/roster/:id/deactivate', (req, res) => {
+  if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const m = db.prepare('SELECT * FROM roster_members WHERE id=?').get(Number(req.params.id));
+  if (!m) return res.status(404).json({ error: 'Not found' });
+  const losesCredit = m.referralStatus === 'approved';
+  db.prepare(`UPDATE roster_members SET status='Inactive', inactivatedAt=datetime('now'),
+    referralStatus = CASE WHEN ? THEN 'removed' ELSE referralStatus END, updatedAt=datetime('now')
+    WHERE id=?`).run(losesCredit ? 1 : 0, m.id);
+  if (losesCredit && m.referredByUserId) {
+    const name = `${m.firstName} ${m.lastName}`.trim();
+    pushNotification(m.referredByUserId, `${name} was removed for missing meetings — the referral point was deducted (it returns if they come back).`, 'referrals', 'info');
+  }
+  res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id) });
+});
+
+// Absence follow-up — "Mark as contacted": silence the alert until their next
+// absence. The alert event id already suppresses re-notifying for this streak;
+// this just records the acknowledgement for the detail view.
+app.post('/api/roster/:id/absence-contacted', (req, res) => {
+  if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const m = db.prepare('SELECT * FROM roster_members WHERE id=?').get(Number(req.params.id));
+  if (!m) return res.status(404).json({ error: 'Not found' });
+  db.prepare("UPDATE roster_members SET absenceContactedAt=datetime('now'), updatedAt=datetime('now') WHERE id=?").run(m.id);
+  res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id) });
+});
+
+// Referral competition leaderboard — open to everyone, ranked by the number of
+// approved referrals each member has (a referral counts once the Secretary
+// approves it, and drops back off if the referred member is later removed).
 app.get('/api/roster/leaderboard', (req, res) => {
-  if (!canViewRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
   const rows = db.prepare(`
-    SELECT u.id, u.displayName, u.managedGrade,
+    SELECT u.id, u.displayName, u.title,
            COUNT(r.id) AS count
     FROM users u
-    LEFT JOIN roster_members r ON r.claimedByUserId = u.id AND r.status = 'Onboarded'
-    WHERE u.title LIKE '%Grade Rep%' OR u.managedGrade IS NOT NULL
+    JOIN roster_members r ON r.referredByUserId = u.id AND r.referralStatus = 'approved'
     GROUP BY u.id
     ORDER BY count DESC, u.displayName ASC
   `).all();
-  res.json({ leaderboard: rows });
+  // Pending referrals the current user is waiting on (not yet counted).
+  const myPending = db.prepare(
+    "SELECT COUNT(*) AS n FROM roster_members WHERE referredByUserId = ? AND referralStatus = 'pending'"
+  ).get(req.user.id).n;
+  res.json({ leaderboard: rows, myPending });
 });
 
 // ---- Weekly Check-Ins -------------------------------------------------------
@@ -2440,12 +2534,15 @@ function attendanceRoster(eventType) {
   const users = db.prepare("SELECT id, displayName, title FROM users WHERE username != 'logistics' ORDER BY displayName").all()
     .map((u) => ({ kind: 'user', id: u.id, displayName: u.displayName, title: u.title || '' }));
   if (eventType !== 'club') return users;
-  const contacts = db.prepare("SELECT id, firstName, lastName, grade, roleDescription FROM roster_members WHERE status = 'Onboarded' ORDER BY firstName, lastName").all()
+  // Onboarded members, plus Inactive ones still in their 30-day grace window so
+  // they can be marked present and reactivated if they show back up.
+  const contacts = db.prepare("SELECT id, firstName, lastName, grade, roleDescription, status FROM roster_members WHERE status IN ('Onboarded', 'Inactive') ORDER BY firstName, lastName").all()
     .map((r) => ({
       kind: 'roster',
       id: r.id,
       displayName: `${r.firstName || ''} ${r.lastName || ''}`.trim() || 'Club Member',
       title: r.roleDescription || (r.grade ? `Grade ${r.grade}` : 'Club Member'),
+      inactive: r.status === 'Inactive',
     }));
   return [...users, ...contacts];
 }
@@ -2462,7 +2559,77 @@ function markAttendanceRecord(eventId, { userId, rosterId, status, markedById })
     db.prepare(`INSERT INTO attendance_records (eventId, ${col}, status, markedById) VALUES (?, ?, ?, ?)`)
       .run(eventId, refId, status, markedById);
   }
+  if (rosterId != null && userId == null) {
+    try { handleRosterAttendanceSideEffects(Number(rosterId), status); } catch (e) {
+      console.error('[absence] side-effect failed:', e.message);
+    }
+  }
 }
+
+// Restore a referral point to the member's referrer (used when an Inactive
+// member comes back). Sets referralStatus back to 'approved' and notifies them.
+function restoreReferralCredit(member) {
+  if (member.referredByUserId && member.referralStatus === 'removed') {
+    db.prepare("UPDATE roster_members SET referralStatus = 'approved', updatedAt = datetime('now') WHERE id = ?").run(member.id);
+    const name = `${member.firstName} ${member.lastName}`.trim();
+    pushNotification(member.referredByUserId, `${name} returned — your referral point has been restored.`, 'referrals', 'info');
+  }
+}
+
+// After a roster member is marked at a club meeting, (1) reactivate them if they
+// were Inactive and just showed up, and (2) alert roster managers when they hit
+// two absences in a row. Only 'club' events count; a Present or Excused breaks
+// the streak.
+function handleRosterAttendanceSideEffects(rosterId, status) {
+  const member = db.prepare('SELECT * FROM roster_members WHERE id = ?').get(rosterId);
+  if (!member) return;
+
+  // Comeback: a present mark reactivates an Inactive member and restores credit.
+  if (status === 'present' && member.status === 'Inactive') {
+    db.prepare(`UPDATE roster_members SET status = 'Onboarded', inactivatedAt = NULL,
+      absenceAlertEventId = NULL, absenceContactedAt = NULL, updatedAt = datetime('now') WHERE id = ?`).run(rosterId);
+    restoreReferralCredit(member);
+    return;
+  }
+
+  // The two most recent club-meeting marks, newest first.
+  const recent = db.prepare(`
+    SELECT ar.status AS status, ae.id AS eventId
+    FROM attendance_records ar
+    JOIN attendance_events ae ON ae.id = ar.eventId
+    WHERE ar.rosterId = ? AND ae.eventType = 'club'
+    ORDER BY ae.eventDate DESC, ae.id DESC
+    LIMIT 2
+  `).all(rosterId);
+
+  const twoInARow = recent.length === 2 && recent[0].status === 'absent' && recent[1].status === 'absent';
+  if (!twoInARow) return;
+
+  const latestAbsentEventId = recent[0].eventId;
+  // Only alert once per new absence. A new absent event clears any prior
+  // "contacted" acknowledgement, so the alert resurfaces (silence lasts only
+  // until the next absence).
+  if (member.absenceAlertEventId === latestAbsentEventId) return;
+
+  db.prepare('UPDATE roster_members SET absenceAlertEventId = ?, absenceContactedAt = NULL WHERE id = ?').run(latestAbsentEventId, rosterId);
+  const name = `${member.firstName} ${member.lastName}`.trim();
+  notifyRosterManagers(`${name} has been absent 2 meetings in a row — review and follow up.`, 'roster', 'absence');
+}
+
+// Purge roster members who have sat Inactive for more than 30 days. Runs on
+// startup and daily; deleting cascades their attendance records away too.
+function purgeInactiveRosterMembers() {
+  try {
+    const info = db.prepare(
+      "DELETE FROM roster_members WHERE status = 'Inactive' AND inactivatedAt IS NOT NULL AND inactivatedAt <= datetime('now', '-30 days')"
+    ).run();
+    if (info.changes) console.log(`[roster] purged ${info.changes} inactive member(s) past the 30-day window`);
+  } catch (e) {
+    console.error('[roster] purge failed:', e.message);
+  }
+}
+purgeInactiveRosterMembers();
+setInterval(purgeInactiveRosterMembers, 24 * 60 * 60 * 1000);
 
 app.get('/api/attendance', async (req, res) => {
   if (!canManageAttendance(req.user)) return res.status(403).json({ error: 'Not allowed' });
