@@ -1245,7 +1245,10 @@ function PageAdminControls({ targetUser, onUpdated }) {
                     <div className="flex items-center justify-between mb-2">
                       <div className="text-cream/50 text-xs uppercase tracking-wide">Link {i + 1}</div>
                       <button
-                        onClick={() => removeBannerLink(i)}
+                        type="button"
+                        // Use onMouseDown + preventDefault so the click lands before the
+                        // focused input's onBlur can fire a save and disable this button.
+                        onMouseDown={(e) => { e.preventDefault(); removeBannerLink(i); }}
                         disabled={busy}
                         className="text-red/70 hover:text-red text-sm px-2 py-0.5 rounded border border-red/20 hover:border-red/50 transition-all disabled:opacity-40"
                       >
@@ -1269,7 +1272,10 @@ function PageAdminControls({ targetUser, onUpdated }) {
                   </div>
                 ))}
                 <button
-                  onClick={addBannerLink}
+                  type="button"
+                  // Same guard as Remove: land the click before a pending input blur
+                  // flips `busy` and disables this button.
+                  onMouseDown={(e) => { e.preventDefault(); addBannerLink(); }}
                   disabled={busy}
                   className="text-sm text-gold/70 hover:text-gold px-3 py-1.5 rounded-md border border-gold/20 hover:border-gold/50 transition-all disabled:opacity-40"
                 >
