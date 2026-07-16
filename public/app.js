@@ -4846,10 +4846,18 @@ function InterestSurvey({ onBack }) {
 // secretary approves before it joins the live roster.
 // ---------------------------------------------------------------------------
 function MemberSignUpPage() {
-  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', notes: '' });
+  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', notes: '', referredByUserId: '' });
+  const [members, setMembers] = useState([]);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // Public board list powers the "who referred you?" dropdown.
+  useEffect(() => {
+    fetch('/api/board').then((r) => r.json())
+      .then((d) => setMembers((d.members || []).filter((m) => m.displayName)))
+      .catch(() => {});
+  }, []);
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
@@ -4930,6 +4938,14 @@ function MemberSignUpPage() {
               </select>
             </Field>
           </div>
+          <Field label="Who referred you? (optional)">
+            <select className={inputCls} value={form.referredByUserId} onChange={set('referredByUserId')}>
+              <option value="">— No one / found it myself —</option>
+              {members.map((m) => (
+                <option key={m.id} value={m.id}>{m.displayName}{m.title ? ` (${m.title})` : ''}</option>
+              ))}
+            </select>
+          </Field>
           <Field label="Anything else? (optional)">
             <textarea className={inputCls} rows="2" value={form.notes} onChange={set('notes')}
               placeholder="Role you're interested in, questions, etc." />
@@ -4953,8 +4969,9 @@ const ROSTER_TRANSITIONS = {
   Pending:   ['Onboarded', 'Prospect', 'Declined'],
   Prospect:  ['Contacted', 'Declined'],
   Contacted: ['Onboarded', 'Declined', 'Prospect'],
-  Onboarded: ['Contacted', 'Declined'],
+  Onboarded: ['Contacted', 'Declined', 'Inactive'],
   Declined:  ['Prospect', 'Contacted'],
+  Inactive:  ['Onboarded', 'Declined'],
 };
 // The current status plus any status it may legally move to.
 function validNextStatuses(current) {
