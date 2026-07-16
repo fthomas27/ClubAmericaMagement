@@ -2917,13 +2917,6 @@ function CharlieKirkTribute() {
 function formatCents(c) {
   return '$' + (Number(c || 0) / 100).toFixed(2);
 }
-function computeDiscountClient(promo, subtotal) {
-  if (!promo) return 0;
-  if (promo.type === 'free') return subtotal;
-  if (promo.type === 'percent') return Math.round(subtotal * (Number(promo.value) / 100));
-  if (promo.type === 'dollar') return Math.min(subtotal, Math.round(Number(promo.value)));
-  return 0;
-}
 
 // ============================================================================
 // TEMP: SHOP PAGE PASSWORD PROTECTION
@@ -3085,132 +3078,87 @@ function ShopItemCard({ item, onOrder }) {
   );
 }
 
-// Multi-step order flow: pick option/qty → delivery + buyer info (+ promo) →
-// payment. Card payments hand off to Stripe-hosted Checkout and return to the
-// shop page; free and in-person orders are placed directly here. A student-only
-// promo code forces pickup and hides the "Ship to Me" choice, per club policy.
+// Order flow. For card payment we hand off to Stripe-hosted Checkout, which
+// collects the buyer's email, phone, shipping address, and any promo code on its
+// own page — so we only pick the item + delivery here. In-person pickup never
+// touches Stripe, so we collect a name + school email and record it as pending.
 function OrderModal({ item, config, onClose }) {
   const hasVariants = item.hasVariants;
   const firstInStock = hasVariants ? (item.variants.find((v) => v.inventory > 0) || item.variants[0]) : null;
   const [variantId, setVariantId] = useState(firstInStock ? firstInStock.id : '');
   const [quantity, setQuantity] = useState(1);
   const [deliveryMethod, setDeliveryMethod] = useState('ship');
+  const [payChoice, setPayChoice] = useState('stripe'); // pickup: stripe | inperson
   const [buyerName, setBuyerName] = useState('');
   const [buyerEmail, setBuyerEmail] = useState('');
   const [buyerPhone, setBuyerPhone] = useState('');
-  const [address, setAddress] = useState({ street: '', city: '', state: '', zip: '' });
   const [studentEmail, setStudentEmail] = useState('');
-  const [promoInput, setPromoInput] = useState('');
-  const [promo, setPromo] = useState(null);
-  const [promoBusy, setPromoBusy] = useState(false);
-  const [promoError, setPromoError] = useState('');
-  const [step, setStep] = useState('details'); // details -> payment -> done
-  const [payChoice, setPayChoice] = useState('stripe'); // pickup only: stripe | inperson
+  const [step, setStep] = useState('details'); // details -> done (in-person only)
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [orderResult, setOrderResult] = useState(null);
   // Stable per-modal token; combined with the cart it forms the Stripe
-  // idempotency key so a retried request can't create a duplicate Checkout Session.
+  // idempotency key so a retry can't create a duplicate Checkout Session.
   const idemSessionRef = useRef(Math.random().toString(36).slice(2) + Date.now().toString(36));
 
   const variant = hasVariants ? item.variants.find((v) => v.id === Number(variantId)) : null;
   const unitPrice = variant && variant.priceOverride != null ? variant.priceOverride : item.price;
   const availableStock = variant ? variant.inventory : item.inventory;
-  const subtotal = unitPrice * Math.max(1, quantity);
-  const discount = computeDiscountClient(promo, subtotal);
-  const total = Math.max(0, subtotal - discount);
-  const studentOnlyPromoActive = !!(promo && promo.studentOnly);
-  const effectiveDelivery = studentOnlyPromoActive ? 'pickup' : deliveryMethod;
-  // Stripe won't charge a card less than 50¢, so tiny totals are in-person only.
-  const belowCardMinimum = total > 0 && total < 50;
-  const effectivePayChoice = belowCardMinimum ? 'inperson' : payChoice;
-  const requiresPrepay = effectiveDelivery === 'ship' || effectivePayChoice === 'stripe';
-
-  async function applyPromo() {
-    if (!promoInput.trim()) return;
-    setPromoBusy(true); setPromoError('');
-    try {
-      const d = await api('/shop/validate-promo', {
-        method: 'POST',
-        body: { code: promoInput.trim(), itemId: item.id, studentEmail },
-      });
-      setPromo(d.promo);
-      if (d.promo.studentOnly) setDeliveryMethod('pickup');
-    } catch (err) { setPromoError(err.message); setPromo(null); }
-    finally { setPromoBusy(false); }
-  }
-  function removePromo() { setPromo(null); setPromoInput(''); setPromoError(''); }
+  const total = unitPrice * Math.max(1, quantity);
+  // Stripe won't charge a card under 50¢, so tiny totals are pickup + in-person only.
+  const belowCardMinimum = total < 50;
+  const effectivePayChoice = deliveryMethod === 'pickup' && belowCardMinimum ? 'inperson' : payChoice;
+  const isInPerson = deliveryMethod === 'pickup' && effectivePayChoice === 'inperson';
+  const isOnline = !isInPerson; // shipped, or pickup paid online
 
   function validateDetails() {
     if (hasVariants && !variantId) return 'Please choose an option.';
     if (!quantity || quantity < 1) return 'Quantity must be at least 1.';
     if (quantity > availableStock) return `Only ${availableStock} left in stock.`;
-    if (!buyerName.trim()) return 'Name is required.';
-    if (!buyerEmail.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(buyerEmail)) return 'A valid email is required.';
-    if (effectiveDelivery === 'ship') {
-      if (!buyerPhone.trim()) return 'A phone number is required for shipping.';
-      if (!address.street.trim() || !address.city.trim() || !address.state.trim() || !address.zip.trim()) {
-        return 'A full shipping address is required.';
-      }
-    } else if (!/^[^@\s]+@pcstudents\.us$/i.test(studentEmail.trim())) {
+    if (deliveryMethod === 'pickup' && !/^[^@\s]+@pcstudents\.us$/i.test(studentEmail.trim())) {
       return 'A valid @pcstudents.us student email is required for pickup.';
     }
+    if (isInPerson && !buyerName.trim()) return 'Your name is required.';
+    if (isInPerson && buyerEmail.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(buyerEmail)) return 'Please enter a valid email.';
+    if (isOnline && total < 50) return 'Online orders must total at least $0.50 — pick student pickup to pay in person.';
     return '';
   }
 
-  function goToPayment() {
-    const v = validateDetails();
-    if (v) { setError(v); return; }
-    setError('');
-    setStep('payment');
+  // In-person pickup — recorded directly as pending (paid at school).
+  async function placeInPerson() {
+    const err = validateDetails(); if (err) { setError(err); return; }
+    setBusy(true); setError('');
+    try {
+      const d = await api('/shop/order', { method: 'POST', body: {
+        itemId: item.id, variantId: variant ? variant.id : null, quantity,
+        buyerName, buyerEmail, buyerPhone, studentEmail, deliveryMethod: 'pickup',
+      }});
+      setOrderResult(d); setStep('done');
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
   }
 
-  // Reset scroll when a free/in-person order completes, so the confirmation
-  // is in view on mobile.
+  // Card payment — hand off to Stripe-hosted Checkout; the browser returns to
+  // /shop?checkout=success where ShopPage confirms and records the order.
+  async function startCheckout() {
+    const err = validateDetails(); if (err) { setError(err); return; }
+    setBusy(true); setError('');
+    try {
+      const d = await api('/shop/create-checkout-session', { method: 'POST', body: {
+        itemId: item.id, variantId: variant ? variant.id : null, quantity,
+        deliveryMethod, studentEmail: deliveryMethod === 'pickup' ? studentEmail : '',
+        // Key on the full cart so a retry reuses the same session; a changed cart gets a fresh one.
+        idempotencyKey: `${idemSessionRef.current}-${item.id}-${variant ? variant.id : 'x'}-${quantity}-${deliveryMethod}-${total}`,
+      }});
+      window.location.href = d.url; // leaving the page; keep busy=true through nav
+    } catch (err) { setError(err.message); setBusy(false); }
+  }
+
+  // Reset scroll when an in-person order completes so the confirmation is in view.
   useEffect(() => {
     if (step !== 'done') return;
     try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (_) {}
     window.scrollTo(0, 0);
   }, [step]);
-
-  function orderPayload() {
-    return {
-      itemId: item.id, variantId: variant ? variant.id : null, quantity,
-      buyerName, buyerEmail, buyerPhone,
-      deliveryMethod: effectiveDelivery,
-      shippingAddress: effectiveDelivery === 'ship' ? address : undefined,
-      studentEmail, promoCode: promo ? promo.code : '',
-    };
-  }
-
-  // Free (promo-covered) and in-person pickup orders are placed directly.
-  async function submitOrder(paymentMethod) {
-    setBusy(true); setError('');
-    try {
-      const d = await api('/shop/order', { method: 'POST', body: { ...orderPayload(), paymentMethod } });
-      setOrderResult(d);
-      setStep('done');
-    } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
-  }
-
-  // Card payments hand off to Stripe-hosted Checkout; the browser returns to
-  // /shop?checkout=success where ShopPage confirms and records the order.
-  async function startCheckout() {
-    setBusy(true); setError('');
-    try {
-      const d = await api('/shop/create-checkout-session', {
-        method: 'POST',
-        body: {
-          ...orderPayload(),
-          // Key on the full cart so a retry reuses the same session instead of
-          // creating a second one, but a changed cart gets a fresh session.
-          idempotencyKey: `${idemSessionRef.current}-${item.id}-${variant ? variant.id : 'x'}-${quantity}-${promo ? promo.code : 'x'}-${total}`,
-        },
-      });
-      window.location.href = d.url; // leaving the page; keep busy=true through nav
-    } catch (err) { setError(err.message); setBusy(false); }
-  }
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
@@ -3246,87 +3194,25 @@ function OrderModal({ item, config, onClose }) {
 
             <div className="pt-2 border-t border-cream/10">
               <span className="block text-xs uppercase tracking-wider text-cream/60 mb-1.5">Delivery</span>
-              {studentOnlyPromoActive ? (
-                <div className="text-sm text-cream/70 bg-navy border border-gold/30 rounded-md px-3 py-2">
-                  This promo code is student pickup only.
-                </div>
-              ) : (
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => setDeliveryMethod('ship')}
-                    className={`flex-1 px-3 py-2 rounded-md text-sm border transition-colors ${deliveryMethod === 'ship' ? 'border-gold text-gold bg-gold/10' : 'border-cream/20 text-cream/70 hover:border-cream/40'}`}>
-                    Ship to Me
-                  </button>
-                  <button type="button" onClick={() => setDeliveryMethod('pickup')}
-                    className={`flex-1 px-3 py-2 rounded-md text-sm border transition-colors ${deliveryMethod === 'pickup' ? 'border-gold text-gold bg-gold/10' : 'border-cream/20 text-cream/70 hover:border-cream/40'}`}>
-                    Student Pick Up
-                  </button>
-                </div>
-              )}
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setDeliveryMethod('ship')}
+                  className={`flex-1 px-3 py-2 rounded-md text-sm border transition-colors ${deliveryMethod === 'ship' ? 'border-gold text-gold bg-gold/10' : 'border-cream/20 text-cream/70 hover:border-cream/40'}`}>
+                  Ship to Me
+                </button>
+                <button type="button" onClick={() => setDeliveryMethod('pickup')}
+                  className={`flex-1 px-3 py-2 rounded-md text-sm border transition-colors ${deliveryMethod === 'pickup' ? 'border-gold text-gold bg-gold/10' : 'border-cream/20 text-cream/70 hover:border-cream/40'}`}>
+                  Student Pick Up
+                </button>
+              </div>
             </div>
 
-            <Field label="Your Name"><input className={inputCls} value={buyerName} onChange={(e) => setBuyerName(e.target.value)} /></Field>
-            <Field label="Email"><input type="email" className={inputCls} value={buyerEmail} onChange={(e) => setBuyerEmail(e.target.value)} /></Field>
-
-            {effectiveDelivery === 'ship' ? (
-              <>
-                <Field label="Phone"><input className={inputCls} value={buyerPhone} onChange={(e) => setBuyerPhone(e.target.value)} /></Field>
-                <Field label="Street Address"><input className={inputCls} value={address.street} onChange={(e) => setAddress((a) => ({ ...a, street: e.target.value }))} /></Field>
-                <div className="grid grid-cols-3 gap-2">
-                  <Field label="City"><input className={inputCls} value={address.city} onChange={(e) => setAddress((a) => ({ ...a, city: e.target.value }))} /></Field>
-                  <Field label="State"><input className={inputCls} value={address.state} onChange={(e) => setAddress((a) => ({ ...a, state: e.target.value }))} /></Field>
-                  <Field label="Zip"><input className={inputCls} value={address.zip} onChange={(e) => setAddress((a) => ({ ...a, zip: e.target.value }))} /></Field>
-                </div>
-              </>
-            ) : (
+            {deliveryMethod === 'pickup' && (
               <Field label="School Email (@pcstudents.us)">
                 <input type="email" className={inputCls} value={studentEmail} onChange={(e) => setStudentEmail(e.target.value)} placeholder="you@pcstudents.us" />
               </Field>
             )}
 
-            <div className="pt-2 border-t border-cream/10">
-              <span className="block text-xs uppercase tracking-wider text-cream/60 mb-1.5">Promo Code</span>
-              {promo ? (
-                <div className="flex items-center justify-between bg-navy border border-emerald-500/40 rounded-md px-3 py-2 text-sm">
-                  <span className="text-emerald-300">"{promo.code}" applied — {promo.type === 'free' ? 'free item' : promo.type === 'percent' ? `${promo.value}% off` : `${formatCents(promo.value)} off`}</span>
-                  <button onClick={removePromo} className="text-cream/50 hover:text-cream text-xs">Remove</button>
-                </div>
-              ) : (
-                <div className="flex gap-2">
-                  <input className={inputCls} value={promoInput} onChange={(e) => setPromoInput(e.target.value.toUpperCase())} placeholder="Optional" />
-                  <Button variant="ghost" onClick={applyPromo} disabled={promoBusy || !promoInput.trim()}>{promoBusy ? <Spinner className="w-4 h-4" /> : 'Apply'}</Button>
-                </div>
-              )}
-              {promoError && <div className="text-red text-xs mt-1">{promoError}</div>}
-            </div>
-
-            <div className="pt-3 border-t border-cream/10 flex items-center justify-between text-sm">
-              <span className="text-cream/60">Subtotal</span><span className="text-cream">{formatCents(subtotal)}</span>
-            </div>
-            {discount > 0 && (
-              <div className="flex items-center justify-between text-sm"><span className="text-cream/60">Discount</span><span className="text-emerald-300">-{formatCents(discount)}</span></div>
-            )}
-            <div className="flex items-center justify-between font-semibold"><span className="text-cream">Total</span><span className="text-gold">{formatCents(total)}</span></div>
-
-            <Button variant="gold" className="w-full mt-2" onClick={goToPayment}>Continue</Button>
-          </div>
-        )}
-
-        {step === 'payment' && (
-          <div className="space-y-4">
-            <div className="text-sm text-cream/60">
-              {item.name}{variant ? ` — ${variant.label}` : ''} × {quantity} · <span className="text-gold font-semibold">{formatCents(total)}</span>
-            </div>
-
-            {total === 0 ? (
-              <div className="text-sm text-cream/70 bg-navy border border-emerald-500/30 rounded-md px-3 py-2">
-                This order is free — no payment needed.
-              </div>
-            ) : effectiveDelivery === 'pickup' ? (
-              belowCardMinimum ? (
-                <div className="text-sm text-cream/70 bg-navy border border-cream/20 rounded-md px-3 py-2">
-                  Orders under $0.50 are paid in person at pickup.
-                </div>
-              ) : (
+            {deliveryMethod === 'pickup' && !belowCardMinimum && (
               <div>
                 <span className="block text-xs uppercase tracking-wider text-cream/60 mb-1.5">How will you pay?</span>
                 <div className="flex gap-2">
@@ -3340,38 +3226,42 @@ function OrderModal({ item, config, onClose }) {
                   </button>
                 </div>
               </div>
-              )
-            ) : (
-              <div className="text-sm text-cream/60">Shipped orders are paid online to guarantee your order.</div>
             )}
-
-            {total > 0 && requiresPrepay && config.stripeEnabled && (
-              <div className="text-sm text-cream/60 bg-navy border border-cream/15 rounded-md px-3 py-2">
-                You'll be taken to Stripe's secure checkout to enter your card, then brought right back.
-              </div>
-            )}
-            {total > 0 && requiresPrepay && !config.stripeEnabled && (
-              <div className="text-red text-sm">
-                Online payment isn't available right now — choose student pickup and pay in person, or contact the secretary.
+            {deliveryMethod === 'pickup' && belowCardMinimum && (
+              <div className="text-sm text-cream/70 bg-navy border border-cream/20 rounded-md px-3 py-2">
+                Orders under $0.50 are paid in person at pickup.
               </div>
             )}
 
-            <div className="flex gap-2">
-              <Button variant="ghost" onClick={() => setStep('details')} disabled={busy}>Back</Button>
-              {total === 0 ? (
-                <Button variant="gold" className="flex-1" onClick={() => submitOrder('free')} disabled={busy}>
-                  {busy ? <span className="flex items-center justify-center gap-2"><Spinner /> Placing…</span> : 'Place Free Order'}
-                </Button>
-              ) : requiresPrepay ? (
-                <Button variant="gold" className="flex-1" onClick={startCheckout} disabled={busy || !config.stripeEnabled}>
-                  {busy ? <span className="flex items-center justify-center gap-2"><Spinner /> Redirecting…</span> : `Continue to Checkout · ${formatCents(total)}`}
-                </Button>
-              ) : (
-                <Button variant="gold" className="flex-1" onClick={() => submitOrder('inperson')} disabled={busy}>
-                  {busy ? <span className="flex items-center justify-center gap-2"><Spinner /> Placing…</span> : 'Place Order'}
-                </Button>
-              )}
+            {isInPerson && (
+              <>
+                <Field label="Your Name"><input className={inputCls} value={buyerName} onChange={(e) => setBuyerName(e.target.value)} /></Field>
+                <Field label="Email (optional)"><input type="email" className={inputCls} value={buyerEmail} onChange={(e) => setBuyerEmail(e.target.value)} /></Field>
+                <Field label="Phone (optional)"><input className={inputCls} value={buyerPhone} onChange={(e) => setBuyerPhone(e.target.value)} /></Field>
+              </>
+            )}
+
+            {isOnline && (
+              <div className={`text-sm rounded-md px-3 py-2 ${config.stripeEnabled ? 'text-cream/60 bg-navy border border-cream/15' : 'text-red'}`}>
+                {config.stripeEnabled
+                  ? `You'll enter your contact info${deliveryMethod === 'ship' ? ', shipping address' : ''}, card, and any promo code on Stripe's secure checkout page.`
+                  : "Online payment isn't available right now — choose student pickup and pay in person, or contact the secretary."}
+              </div>
+            )}
+
+            <div className="pt-3 border-t border-cream/10 flex items-center justify-between font-semibold">
+              <span className="text-cream">Total</span><span className="text-gold">{formatCents(total)}</span>
             </div>
+
+            {isInPerson ? (
+              <Button variant="gold" className="w-full mt-1" onClick={placeInPerson} disabled={busy}>
+                {busy ? <span className="flex items-center justify-center gap-2"><Spinner /> Placing…</span> : 'Place Order (pay at pickup)'}
+              </Button>
+            ) : (
+              <Button variant="gold" className="w-full mt-1" onClick={startCheckout} disabled={busy || !config.stripeEnabled}>
+                {busy ? <span className="flex items-center justify-center gap-2"><Spinner /> Redirecting…</span> : `Continue to Checkout · ${formatCents(total)}`}
+              </Button>
+            )}
           </div>
         )}
 
@@ -3379,11 +3269,7 @@ function OrderModal({ item, config, onClose }) {
           <div className="text-center py-4 space-y-3">
             <div className="text-4xl">🎉</div>
             <div className="font-display text-xl text-gold">Order placed!</div>
-            <p className="text-sm text-cream/60">
-              {effectiveDelivery === 'pickup'
-                ? "We'll email you when your order is ready for pickup at school."
-                : "We'll ship your order and reach out if we need anything else."}
-            </p>
+            <p className="text-sm text-cream/60">We'll email you when your order is ready for pickup at school. Please pay at pickup.</p>
             <p className="text-xs text-cream/40">Thanks for supporting the Club America fundraiser!</p>
             <Button variant="gold" onClick={onClose}>Done</Button>
           </div>
@@ -7933,23 +7819,17 @@ function VolunteerSignUpPage({ eventId }) {
 // ---------------------------------------------------------------------------
 function ShopManagerPage({ me }) {
   const [tab, setTab] = useState('products');
-  const [items, setItems] = useState([]);
-
-  const loadItems = useCallback(async () => {
-    try { const d = await api('/shop/admin/items'); setItems(d.items || []); } catch (_) {}
-  }, []);
-  useEffect(() => { loadItems(); }, [loadItems]);
 
   return (
     <div className="max-w-5xl space-y-6">
       <div>
         <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Shop Manager</h1>
-        <p className="text-cream/50 mt-1">Manage products, inventory, orders, and promo codes for the merch shop.</p>
+        <p className="text-cream/50 mt-1">Manage products, inventory, and orders for the merch shop.</p>
       </div>
 
       <div className="flex gap-1 bg-navy2 border border-cream/10 rounded-lg p-1 w-fit">
-        {[['products', 'Products'], ['orders', 'Orders'], ['promos', 'Promo Codes']].map(([t, label]) => (
-          <button key={t} onClick={() => { setTab(t); if (t === 'promos') loadItems(); }}
+        {[['products', 'Products'], ['orders', 'Orders']].map(([t, label]) => (
+          <button key={t} onClick={() => setTab(t)}
             className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-150 ${tab === t ? 'bg-gold text-navy' : 'text-cream/60 hover:text-cream'}`}>
             {label}
           </button>
@@ -7958,7 +7838,11 @@ function ShopManagerPage({ me }) {
 
       {tab === 'products' && <ShopProductsTab />}
       {tab === 'orders' && <ShopOrdersTab />}
-      {tab === 'promos' && <ShopPromoCodesTab items={items} />}
+
+      <p className="text-xs text-cream/40 border-t border-cream/10 pt-3">
+        Promo codes are managed in your <span className="text-cream/60">Stripe Dashboard</span> (Product catalog → Coupons) and
+        entered by buyers on Stripe's checkout page.
+      </p>
     </div>
   );
 }
@@ -8291,7 +8175,7 @@ function OrderRow({ order, busy, onAction, statusColors }) {
           <div className="text-xs text-cream/40 mt-1">
             {order.deliveryMethod === 'ship' ? 'Ship to buyer' : 'Student pickup'}
             {order.deliveryMethod === 'pickup' && order.studentEmail ? ` (${order.studentEmail})` : ''}
-            {order.promoCode ? ` · Promo: ${order.promoCode}` : ''} · {timeAgo(order.createdAt)}
+            {order.discountAmount > 0 ? ` · promo −${formatCents(order.discountAmount)}` : ''} · {timeAgo(order.createdAt)}
           </div>
           {order.deliveryMethod === 'ship' && order.shippingAddress && (
             <div className="text-xs text-cream/40 mt-1">
@@ -8325,135 +8209,6 @@ function OrderRow({ order, busy, onAction, statusColors }) {
         <Button variant="ghost" className="text-xs px-3 py-1" onClick={() => onAction('notes', { notes })} disabled={busy}>Save Note</Button>
       </div>
     </div>
-  );
-}
-
-function ShopPromoCodesTab({ items }) {
-  const [codes, setCodes] = useState(null);
-  const [error, setError] = useState('');
-  const [showNew, setShowNew] = useState(false);
-  const [busyId, setBusyId] = useState(null);
-
-  const load = useCallback(async () => {
-    try { const d = await api('/shop/admin/promo-codes'); setCodes(d.codes || []); }
-    catch (err) { setError(err.message); }
-  }, []);
-  useEffect(() => { load(); }, [load]);
-
-  async function toggleActive(c) {
-    setBusyId(c.id);
-    try { await api(`/shop/admin/promo-codes/${c.id}`, { method: 'PATCH', body: { active: !c.active } }); load(); }
-    catch (err) { setError(err.message); }
-    finally { setBusyId(null); }
-  }
-  async function remove(id) {
-    setBusyId(id);
-    try { await api(`/shop/admin/promo-codes/${id}`, { method: 'DELETE' }); load(); }
-    catch (err) { setError(err.message); }
-    finally { setBusyId(null); }
-  }
-
-  return (
-    <div className="space-y-4">
-      {error && <div className="text-red text-sm">{error}</div>}
-      {!showNew ? (
-        <Button variant="gold" onClick={() => setShowNew(true)}>+ New Promo Code</Button>
-      ) : (
-        <NewPromoForm items={items} onDone={() => { setShowNew(false); load(); }} onCancel={() => setShowNew(false)} />
-      )}
-
-      {codes === null && <Loading label="Loading promo codes…" />}
-      {codes !== null && codes.length === 0 && <EmptyState icon="🏷️" title="No promo codes yet" />}
-
-      <div className="space-y-2">
-        {(codes || []).map((c) => (
-          <div key={c.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 flex items-center justify-between gap-3 flex-wrap">
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-mono font-semibold text-gold">{c.code}</span>
-                <Badge tone={c.active ? 'green' : 'slate'}>{c.active ? 'Active' : 'Disabled'}</Badge>
-                {c.studentOnly && <Badge tone="blue">Student Only</Badge>}
-              </div>
-              <div className="text-sm text-cream/50 mt-1">
-                {c.type === 'free' ? 'Free item' : c.type === 'percent' ? `${c.value}% off` : `${formatCents(c.value)} off`}
-                {c.itemId ? ' · specific item' : ' · any item'}
-                {' · '}{c.usedCount}{c.usageLimit != null ? ` / ${c.usageLimit} used` : ' used'}
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="ghost" className="text-xs px-3 py-1" onClick={() => toggleActive(c)} disabled={busyId === c.id}>{c.active ? 'Disable' : 'Enable'}</Button>
-              <Button variant="danger" className="text-xs px-3 py-1" onClick={() => remove(c.id)} disabled={busyId === c.id}>Delete</Button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function NewPromoForm({ items, onDone, onCancel }) {
-  const [code, setCode] = useState('');
-  const [type, setType] = useState('percent');
-  const [value, setValue] = useState('');
-  const [itemId, setItemId] = useState('');
-  const [studentOnly, setStudentOnly] = useState(false);
-  const [usageLimit, setUsageLimit] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-
-  async function submit(e) {
-    e.preventDefault();
-    if (!code.trim()) { setError('A code is required.'); return; }
-    setBusy(true); setError('');
-    try {
-      await api('/shop/admin/promo-codes', {
-        method: 'POST',
-        body: {
-          code: code.trim(), type,
-          value: type === 'percent' ? Number(value) || 0 : type === 'dollar' ? Math.round(Number(value || 0) * 100) : 0,
-          itemId: itemId || null, studentOnly, usageLimit: usageLimit !== '' ? Number(usageLimit) : null,
-        },
-      });
-      onDone();
-    } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
-  }
-
-  return (
-    <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3 ca-slide-up">
-      <div className="font-display text-xl text-gold">New Promo Code</div>
-      <Field label="Code *"><input className={inputCls} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} autoFocus placeholder="e.g. WELCOME25" /></Field>
-      <Field label="Type">
-        <select className={inputCls} value={type} onChange={(e) => setType(e.target.value)}>
-          <option value="percent">Percent off</option>
-          <option value="dollar">Dollar amount off</option>
-          <option value="free">Free item</option>
-        </select>
-      </Field>
-      {type !== 'free' && (
-        <Field label={type === 'percent' ? 'Percent Off (%)' : 'Amount Off ($)'}>
-          <input type="number" min="0" step={type === 'percent' ? '1' : '0.01'} className={inputCls} value={value} onChange={(e) => setValue(e.target.value)} />
-        </Field>
-      )}
-      <Field label="Applies To">
-        <select className={inputCls} value={itemId} onChange={(e) => setItemId(e.target.value)}>
-          <option value="">All items</option>
-          {items.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
-        </select>
-      </Field>
-      <Field label="Usage Limit (optional)">
-        <input type="number" min="1" className={inputCls} value={usageLimit} onChange={(e) => setUsageLimit(e.target.value)} placeholder="Unlimited" />
-      </Field>
-      <label className="flex items-center gap-2 text-sm text-cream/80">
-        <input type="checkbox" checked={studentOnly} onChange={(e) => setStudentOnly(e.target.checked)} />
-        Student only — requires a @pcstudents.us email and forces pickup only
-      </label>
-      {error && <div className="text-red text-sm">{error}</div>}
-      <div className="flex gap-2">
-        <Button type="submit" variant="gold" disabled={busy}>{busy ? <span className="flex items-center gap-2"><Spinner /> Saving…</span> : 'Create Code'}</Button>
-        <Button variant="ghost" type="button" onClick={onCancel} disabled={busy}>Cancel</Button>
-      </div>
-    </form>
   );
 }
 
