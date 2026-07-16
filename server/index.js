@@ -502,7 +502,7 @@ app.post('/api/roster/survey', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, na
 // secretary shares one link and members fill in their own details; the entry
 // lands as 'Pending' so nothing reaches the live roster until it's approved.
 app.post('/api/roster/self-submit', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name: 'self-submit' }), (req, res) => {
-  const { firstName, lastName, phone, email, grade, gender, notes } = req.body || {};
+  const { firstName, lastName, phone, email, grade, gender, notes, referredByUserId } = req.body || {};
   if (!firstName || !String(firstName).trim()) return res.status(400).json({ error: 'First name required' });
   if (grade != null && grade !== '' && !GRADES.includes(String(grade))) {
     return res.status(400).json({ error: 'Grade must be 9, 10, 11, or 12' });
@@ -510,15 +510,23 @@ app.post('/api/roster/self-submit', rateLimit({ windowMs: 60 * 60 * 1000, max: 2
   if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email).trim())) {
     return res.status(400).json({ error: 'Please enter a valid email' });
   }
-  const info = db.prepare(`INSERT INTO roster_members (firstName, lastName, phone, email, grade, gender, notes, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending')`).run(
+  // Optional "who referred you?" — only credited if it names a real member.
+  // Approving the submission later awards the referral point to that member.
+  let referrer = null;
+  if (referredByUserId) {
+    referrer = db.prepare("SELECT id, displayName FROM users WHERE id = ? AND username != 'logistics'").get(Number(referredByUserId));
+  }
+  const info = db.prepare(`INSERT INTO roster_members (firstName, lastName, phone, email, grade, gender, notes, status, referredByUserId, referralStatus)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', ?, ?)`).run(
     String(firstName).trim().slice(0, 100), String(lastName || '').trim().slice(0, 100),
     String(phone || '').trim().slice(0, 30), String(email || '').trim().slice(0, 200),
     grade ? Number(grade) : null, String(gender || '').trim().slice(0, 30),
-    String(notes || '').trim().slice(0, 2000)
+    String(notes || '').trim().slice(0, 2000),
+    referrer ? referrer.id : null, referrer ? 'pending' : '',
   );
   const name = `${String(firstName).trim()} ${String(lastName || '').trim()}`.trim();
-  notifyRosterManagers(`${name} submitted their info — review it in the roster.`, '', 'info');
+  const suffix = referrer ? ` (referred by ${referrer.displayName})` : '';
+  notifyRosterManagers(`${name} submitted their info${suffix} — review it in the roster.`, 'roster', 'submission');
   res.status(201).json({ ok: true, id: info.lastInsertRowid });
 });
 
