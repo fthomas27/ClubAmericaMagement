@@ -10294,13 +10294,138 @@ function SpeakerFormEditor() {
 const SOCIAL_PLATFORMS = ['Instagram','Twitter/X','TikTok','Facebook','Other'];
 const PLATFORM_COLORS = { Instagram: 'text-pink-300', 'Twitter/X': 'text-sky-300', TikTok: 'text-red', Facebook: 'text-blue-400', Other: 'text-cream/70' };
 
+// Which engagement metrics to surface, in display order, with labels/icons.
+const METRIC_FIELDS = [
+  { key: 'views',    label: 'Views',    icon: 'activity' },
+  { key: 'likes',    label: 'Likes',    icon: 'volunteer' },
+  { key: 'comments', label: 'Comments', icon: 'testimonial' },
+  { key: 'shares',   label: 'Shares',   icon: 'social' },
+  { key: 'reposts',  label: 'Reposts',  icon: 'social' },
+  { key: 'saves',    label: 'Saves',    icon: 'star' },
+];
+
+function fmtMetric(n) {
+  if (n === null || n === undefined) return '—';
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(n % 1_000 === 0 ? 0 : 1) + 'K';
+  return String(n);
+}
+
+// Compact inline SVG line chart of one metric over time. Pure, no deps.
+function Sparkline({ points, className = 'text-gold', width = 220, height = 44 }) {
+  const vals = points.filter((v) => v !== null && v !== undefined);
+  if (vals.length < 2) return <div className="text-cream/30 text-xs italic">Not enough history yet — check back after the next refresh.</div>;
+  const max = Math.max(...vals), min = Math.min(...vals);
+  const span = max - min || 1;
+  const stepX = width / (points.length - 1);
+  const coords = points.map((v, i) => {
+    const y = v === null || v === undefined ? null : height - 4 - ((v - min) / span) * (height - 8);
+    return y === null ? null : `${(i * stepX).toFixed(1)},${y.toFixed(1)}`;
+  }).filter(Boolean);
+  const last = points[points.length - 1];
+  const lastX = (points.length - 1) * stepX;
+  const lastY = height - 4 - ((last - min) / span) * (height - 8);
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className={className} preserveAspectRatio="none">
+      <polyline points={coords.join(' ')} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      {Number.isFinite(lastY) && <circle cx={lastX} cy={lastY} r="2.5" fill="currentColor" />}
+    </svg>
+  );
+}
+
+// Expandable performance panel: latest numbers + a per-metric trend chart.
+function PostPerformance({ post, canManage, onRefreshed }) {
+  const [open, setOpen] = useState(false);
+  const [history, setHistory] = useState(null);
+  const [metric, setMetric] = useState('views');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const m = post.metrics;
+
+  const loadHistory = useCallback(async () => {
+    try { const d = await api(`/social-posts/${post.id}/metrics`); setHistory(d.history || []); }
+    catch (_) { setHistory([]); }
+  }, [post.id]);
+
+  useEffect(() => { if (open && history === null) loadHistory(); }, [open, history, loadHistory]);
+
+  async function refresh() {
+    setBusy(true); setErr('');
+    try {
+      await api(`/social-posts/${post.id}/refresh`, { method: 'POST' });
+      setHistory(null); if (open) loadHistory();
+      onRefreshed && onRefreshed();
+    } catch (e) { setErr(e.message || 'Refresh failed'); }
+    finally { setBusy(false); }
+  }
+
+  // Available metric tabs = those the platform actually returned.
+  const available = METRIC_FIELDS.filter((f) => m && m[f.key] !== null && m[f.key] !== undefined);
+  const series = (history || []).map((h) => h[metric]);
+
+  return (
+    <div className="mt-2 border-t border-cream/10 pt-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          {available.length > 0 ? available.map((f) => (
+            <span key={f.key} className="inline-flex items-baseline gap-1">
+              <span className="text-cream font-semibold text-sm tabular-nums">{fmtMetric(m[f.key])}</span>
+              <span className="text-cream/40 text-[11px] uppercase tracking-wide">{f.label}</span>
+            </span>
+          )) : (
+            <span className="text-cream/40 text-xs italic">
+              {post.metricsError ? `Couldn’t fetch: ${post.metricsError}` : 'No metrics yet.'}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {available.length > 0 && (
+            <button onClick={() => setOpen((o) => !o)} className="text-xs text-gold/80 hover:text-gold inline-flex items-center gap-1">
+              <AppIcon name="activity" size={13} className="text-gold/70" /> Trend {open ? '▲' : '▼'}
+            </button>
+          )}
+          {canManage && post.postUrl && (
+            <button onClick={refresh} disabled={busy} className="text-xs text-cream/50 hover:text-cream disabled:opacity-50 inline-flex items-center gap-1">
+              {busy ? <Spinner /> : '↻'} Refresh
+            </button>
+          )}
+        </div>
+      </div>
+      {err && <div className="text-red text-xs mt-1">{err}</div>}
+      {post.lastFetchedAt && <div className="text-cream/30 text-[10px] mt-1">Updated {timeAgo(post.lastFetchedAt)}</div>}
+      {open && (
+        <div className="mt-2 bg-navy rounded-lg p-3">
+          <div className="flex gap-1.5 flex-wrap mb-2">
+            {available.map((f) => (
+              <button key={f.key} onClick={() => setMetric(f.key)}
+                className={`px-2 py-0.5 rounded text-[11px] font-medium ${metric === f.key ? 'bg-gold text-navy' : 'bg-navy2 text-cream/50 hover:text-cream'}`}>
+                {f.label}
+              </button>
+            ))}
+          </div>
+          {history === null ? <div className="text-cream/40 text-xs">Loading history…</div>
+            : <Sparkline points={series} />}
+          {history && history.length >= 2 && (
+            <div className="text-cream/40 text-[10px] mt-1">
+              {history.length} snapshots · {fmtMetric(series[0])} → {fmtMetric(series[series.length - 1])}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SocialTrackerPage({ me }) {
   const [posts, setPosts] = useState([]);
   const [daysSince, setDaysSince] = useState(null);
+  const [integrations, setIntegrations] = useState({ x: false, instagram: false });
+  const [refreshingAll, setRefreshingAll] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [users, setUsers] = useState([]);
   const [platform, setPlatform] = useState('Instagram');
+  const [postUrl, setPostUrl] = useState('');
   const [captionDraft, setCaptionDraft] = useState('');
   const [imageDescription, setImageDescription] = useState('');
   const [scheduledDate, setScheduledDate] = useState('');
@@ -10313,6 +10438,7 @@ function SocialTrackerPage({ me }) {
       const [d, u] = await Promise.all([api('/social-posts'), api('/users')]);
       setPosts(d.posts || []);
       setDaysSince(d.daysSinceLastPost);
+      if (d.integrations) setIntegrations(d.integrations);
       setUsers(u.users || []);
     } catch (e) { setError(e.message); }
     finally { setLoaded(true); }
@@ -10325,11 +10451,25 @@ function SocialTrackerPage({ me }) {
     try {
       await run(() => api('/social-posts', { method: 'POST', body: {
         platform, captionDraft, imageDescription, scheduledDate: scheduledDate||null,
-        assignedToId: assignedToId ? Number(assignedToId) : null,
+        assignedToId: assignedToId ? Number(assignedToId) : null, postUrl: postUrl || null,
       }}));
-      setPlatform('Instagram'); setCaptionDraft(''); setImageDescription(''); setScheduledDate(''); setAssignedToId('');
+      setPlatform('Instagram'); setPostUrl(''); setCaptionDraft(''); setImageDescription(''); setScheduledDate(''); setAssignedToId('');
       setShowForm(false); load();
     } catch (_) {}
+  }
+
+  async function refreshAll() {
+    setRefreshingAll(true);
+    try { await api('/social-posts/refresh-all', { method: 'POST' }); await load(); }
+    catch (_) {}
+    finally { setRefreshingAll(false); }
+  }
+
+  // Attach or change the live link on an already-tracked post.
+  async function linkPost(post) {
+    const url = window.prompt('Paste the public link to this post (X/Twitter or Instagram):', post.postUrl || '');
+    if (url === null) return;
+    try { await api(`/social-posts/${post.id}`, { method: 'PATCH', body: { postUrl: url.trim() } }); load(); } catch (_) {}
   }
 
   async function markPosted(post) {
@@ -10354,7 +10494,34 @@ function SocialTrackerPage({ me }) {
         <h1 className="font-display text-4xl sm:text-5xl text-cream">Social Media</h1>
         {canPost && !showForm && <Button variant="gold" onClick={() => setShowForm(true)}>+ Add Post</Button>}
       </div>
-      <p className="text-cream/50 text-sm mb-4">Plan and track the chapter's social media content.</p>
+      <p className="text-cream/50 text-sm mb-4">Plan the chapter's content and auto-track how each post performs over time.</p>
+
+      {(() => {
+        const linkedCount = posts.filter((p) => p.postUrl).length;
+        const anyIntegration = integrations.x || integrations.instagram;
+        return (
+          <div className="mb-4 bg-navy2 border border-cream/10 rounded-xl px-4 py-3">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2 text-xs">
+                <AppIcon name="activity" size={16} className="text-gold/70" />
+                <span className="text-cream/70">Engagement auto-tracking</span>
+                <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${integrations.x ? 'bg-sky-400/15 text-sky-300' : 'bg-cream/5 text-cream/40'}`}>X {integrations.x ? 'connected' : 'off'}</span>
+                <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${integrations.instagram ? 'bg-pink-400/15 text-pink-300' : 'bg-cream/5 text-cream/40'}`}>Instagram {integrations.instagram ? 'connected' : 'off'}</span>
+              </div>
+              {canPost && linkedCount > 0 && (
+                <Button variant="ghost" className="text-xs px-3 py-1" onClick={refreshAll} disabled={refreshingAll}>
+                  {refreshingAll ? <span className="flex items-center gap-2"><Spinner />Refreshing…</span> : `↻ Refresh metrics (${linkedCount})`}
+                </Button>
+              )}
+            </div>
+            {!anyIntegration && (
+              <div className="text-cream/40 text-xs mt-2">
+                Metrics import automatically once an admin adds API credentials (X_BEARER_TOKEN, and INSTAGRAM_ACCESS_TOKEN + INSTAGRAM_USER_ID) to the server environment. You can still link posts now — they'll backfill once connected.
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {daysSince !== null && daysSince >= 3 && (
         <div className="mb-4 bg-red/10 border border-red/30 rounded-xl px-4 py-3 flex items-start gap-3">
@@ -10381,6 +10548,10 @@ function SocialTrackerPage({ me }) {
           </Field>
           <Field label="Caption Draft"><textarea className={inputCls} rows="3" value={captionDraft} placeholder="Write the caption here…" onChange={(e) => setCaptionDraft(e.target.value)} /></Field>
           <Field label="Image / Video Description"><input className={inputCls} value={imageDescription} placeholder="e.g. Photo of the tabling table with sign" onChange={(e) => setImageDescription(e.target.value)} /></Field>
+          <Field label="Live Post Link (optional)">
+            <input className={inputCls} value={postUrl} placeholder="https://x.com/…/status/…  or  https://instagram.com/p/…" onChange={(e) => setPostUrl(e.target.value)} />
+            <div className="text-cream/40 text-xs mt-1">Paste the public URL once it's posted and we'll auto-track likes, comments, shares, reposts &amp; views over time.</div>
+          </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Scheduled Date (optional)"><input type="date" className={inputCls} value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} /></Field>
             <Field label="Assign To">
@@ -10436,15 +10607,24 @@ function SocialTrackerPage({ me }) {
       {posted.length > 0 && (
         <div>
           <div className="font-display text-xl text-emerald-300 mb-3">Posted ({posted.length})</div>
-          <div className="space-y-2">
-            {posted.slice(0, 10).map((p) => (
-              <div key={p.id} className="bg-navy2/60 border border-cream/5 rounded-xl p-3 flex items-center gap-3 opacity-75">
-                <div className={`text-xs font-bold uppercase tracking-wider shrink-0 ${PLATFORM_COLORS[p.platform] || 'text-cream/60'}`}>{p.platform}</div>
-                <div className="flex-1 min-w-0">
-                  {p.captionDraft && <div className="text-xs text-cream/50 truncate">{p.captionDraft}</div>}
+          <div className="space-y-3">
+            {posted.slice(0, 25).map((p) => (
+              <div key={p.id} className="bg-navy2/60 border border-cream/10 rounded-xl p-4">
+                <div className="flex items-start gap-3">
+                  <div className={`text-xs font-bold uppercase tracking-wider shrink-0 ${PLATFORM_COLORS[p.platform] || 'text-cream/60'}`}>{p.platform}</div>
+                  <div className="flex-1 min-w-0">
+                    {p.captionDraft && <div className="text-sm text-cream/70 line-clamp-2">{p.captionDraft}</div>}
+                    <div className="flex items-center gap-3 flex-wrap mt-1">
+                      {p.postedDate && <span className="text-xs text-cream/30">{fmtShortDate(p.postedDate)}</span>}
+                      {p.postUrl
+                        ? <a href={p.postUrl} target="_blank" rel="noreferrer" className="text-xs text-gold/70 hover:text-gold inline-flex items-center gap-1"><AppIcon name="globe" size={12} className="text-gold/60" />View post</a>
+                        : canPost && <button onClick={() => linkPost(p)} className="text-xs text-gold/70 hover:text-gold">+ Link live post</button>}
+                      {p.postUrl && canPost && <button onClick={() => linkPost(p)} className="text-xs text-cream/30 hover:text-cream/60">edit link</button>}
+                    </div>
+                  </div>
+                  {me.role === 'admin' && <button onClick={() => deletePost(p)} className="text-xs text-red/40 hover:text-red shrink-0">✕</button>}
                 </div>
-                {p.postedDate && <div className="text-xs text-cream/30 shrink-0">{fmtShortDate(p.postedDate)}</div>}
-                {me.role === 'admin' && <button onClick={() => deletePost(p)} className="text-xs text-red/40 hover:text-red shrink-0">✕</button>}
+                {p.postUrl && <PostPerformance post={p} canManage={canPost} onRefreshed={load} />}
               </div>
             ))}
           </div>

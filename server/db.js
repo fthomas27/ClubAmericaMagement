@@ -401,8 +401,31 @@ function init() {
       status           TEXT NOT NULL DEFAULT 'Planned',
       assignedToId     INTEGER REFERENCES users(id) ON DELETE SET NULL,
       createdById      INTEGER REFERENCES users(id) ON DELETE SET NULL,
-      createdAt        TEXT NOT NULL DEFAULT (datetime('now'))
+      createdAt        TEXT NOT NULL DEFAULT (datetime('now')),
+      -- Live post linkage for auto engagement tracking.
+      postUrl          TEXT NOT NULL DEFAULT '',   -- canonical link to the published post
+      externalId       TEXT NOT NULL DEFAULT '',   -- resolved platform id (tweet id / IG media id)
+      metricsError     TEXT NOT NULL DEFAULT '',   -- last fetch error, if any
+      lastFetchedAt    TEXT                          -- when metrics were last pulled
     );
+
+    -- Time-series engagement snapshots for a linked social post. One row per
+    -- fetch so we can chart performance over time. Metrics are nullable because
+    -- not every platform exposes every field.
+    CREATE TABLE IF NOT EXISTS social_post_metrics (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      postId      INTEGER NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+      capturedAt  TEXT NOT NULL DEFAULT (datetime('now')),
+      likes       INTEGER,
+      comments    INTEGER,
+      shares      INTEGER,
+      reposts     INTEGER,
+      views       INTEGER,
+      saves       INTEGER,
+      raw         TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE INDEX IF NOT EXISTS idx_social_metrics_post
+      ON social_post_metrics(postId, capturedAt DESC);
 
     -- Per-grade recruitment goals set by admins.
     CREATE TABLE IF NOT EXISTS grade_goals (
@@ -747,6 +770,13 @@ function init() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_records_roster
       ON attendance_records(eventId, rosterId) WHERE rosterId IS NOT NULL;
   `);
+
+  // social_posts column migrations for engagement tracking.
+  const spCols = db.prepare("PRAGMA table_info(social_posts)").all().map((c) => c.name);
+  if (!spCols.includes('postUrl'))       db.exec("ALTER TABLE social_posts ADD COLUMN postUrl TEXT NOT NULL DEFAULT ''");
+  if (!spCols.includes('externalId'))    db.exec("ALTER TABLE social_posts ADD COLUMN externalId TEXT NOT NULL DEFAULT ''");
+  if (!spCols.includes('metricsError'))  db.exec("ALTER TABLE social_posts ADD COLUMN metricsError TEXT NOT NULL DEFAULT ''");
+  if (!spCols.includes('lastFetchedAt')) db.exec("ALTER TABLE social_posts ADD COLUMN lastFetchedAt TEXT");
 
   // Additional user column migrations.
   if (!cols.includes('canManageSocial')) db.exec("ALTER TABLE users ADD COLUMN canManageSocial INTEGER NOT NULL DEFAULT 0");

@@ -21,6 +21,7 @@ const { db, init, seed } = require('./db');
 const { fetchUpcoming, clearCache } = require('./calendar');
 const { notify, escHtml } = require('./email');
 const { analyzeTeamHealth, chatWithAI, chatWithHowTo, aiEnabled } = require('./ai');
+const socialMetrics = require('./socialMetrics');
 const {
   signToken,
   publicUser,
@@ -2977,12 +2978,23 @@ function canManageSocialPosts(user) {
   return user.role === 'admin' || user.role === 'manager' || !!user.canManageSocial;
 }
 
+// Attach the most recent metrics snapshot to a post row (or nulls if none).
+function withLatestMetrics(post) {
+  const latest = db.prepare(
+    `SELECT capturedAt, likes, comments, shares, reposts, views, saves
+       FROM social_post_metrics WHERE postId = ? ORDER BY capturedAt DESC LIMIT 1`
+  ).get(post.id) || null;
+  const count = db.prepare('SELECT COUNT(*) AS n FROM social_post_metrics WHERE postId = ?').get(post.id).n;
+  return { ...post, metrics: latest, metricsCount: count };
+}
+
 app.get('/api/social-posts', (req, res) => {
-  const posts = db.prepare(`SELECT sp.*, u.displayName AS assignedToName, c.displayName AS createdByName
+  const rows = db.prepare(`SELECT sp.*, u.displayName AS assignedToName, c.displayName AS createdByName
     FROM social_posts sp
     LEFT JOIN users u ON u.id = sp.assignedToId
     LEFT JOIN users c ON c.id = sp.createdById
     ORDER BY sp.createdAt DESC`).all();
+  const posts = rows.map(withLatestMetrics);
   // Calculate days since last posted post for nudge.
   const lastPosted = db.prepare(`SELECT postedDate FROM social_posts WHERE status='Posted' ORDER BY postedDate DESC LIMIT 1`).get();
   let daysSinceLastPost = null;
@@ -3002,38 +3014,118 @@ app.get('/api/social-posts', (req, res) => {
       }
     }
   }
-  res.json({ posts, daysSinceLastPost });
+  res.json({ posts, daysSinceLastPost, integrations: socialMetrics.integrationStatus() });
 });
 
 app.post('/api/social-posts', (req, res) => {
   if (!canManageSocialPosts(req.user)) return res.status(403).json({ error: 'Not allowed' });
-  const { platform, captionDraft, imageDescription, scheduledDate, assignedToId } = req.body || {};
+  const { platform, captionDraft, imageDescription, scheduledDate, assignedToId, postUrl } = req.body || {};
   if (!platform || !platform.trim()) return res.status(400).json({ error: 'Platform is required' });
   const validPlatforms = ['Instagram','Twitter/X','TikTok','Facebook','Other'];
   if (!validPlatforms.includes(platform)) return res.status(400).json({ error: 'Invalid platform' });
-  const info = db.prepare(`INSERT INTO social_posts (platform, captionDraft, imageDescription, scheduledDate, assignedToId, createdById)
-    VALUES (?, ?, ?, ?, ?, ?)`).run(platform, captionDraft||'', imageDescription||'', scheduledDate||null,
-    assignedToId ? Number(assignedToId) : null, req.user.id);
-  res.status(201).json({ post: db.prepare(`SELECT sp.*, u.displayName AS assignedToName FROM social_posts sp LEFT JOIN users u ON u.id=sp.assignedToId WHERE sp.id=?`).get(info.lastInsertRowid) });
+  const cleanUrl = String(postUrl || '').trim().slice(0, 500);
+  const info = db.prepare(`INSERT INTO social_posts (platform, captionDraft, imageDescription, scheduledDate, assignedToId, createdById, postUrl)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(platform, captionDraft||'', imageDescription||'', scheduledDate||null,
+    assignedToId ? Number(assignedToId) : null, req.user.id, cleanUrl);
+  const created = db.prepare('SELECT * FROM social_posts WHERE id=?').get(info.lastInsertRowid);
+  // If a live URL was provided, try an immediate first snapshot (best effort).
+  if (cleanUrl) { try { snapshotPost(created); } catch (_) {} }
+  res.status(201).json({ post: withLatestMetrics(db.prepare(`SELECT sp.*, u.displayName AS assignedToName FROM social_posts sp LEFT JOIN users u ON u.id=sp.assignedToId WHERE sp.id=?`).get(info.lastInsertRowid)) });
 });
 
 app.patch('/api/social-posts/:id', (req, res) => {
   if (!canManageSocialPosts(req.user)) return res.status(403).json({ error: 'Not allowed' });
   const post = db.prepare('SELECT * FROM social_posts WHERE id=?').get(Number(req.params.id));
   if (!post) return res.status(404).json({ error: 'Not found' });
-  const { platform, captionDraft, imageDescription, scheduledDate, postedDate, status, assignedToId } = req.body || {};
+  const { platform, captionDraft, imageDescription, scheduledDate, postedDate, status, assignedToId, postUrl } = req.body || {};
   const validStatuses = ['Planned','Posted','Cancelled'];
   if (status && !validStatuses.includes(status)) return res.status(400).json({ error: 'Invalid status' });
   const postedDateVal = status === 'Posted' && !postedDate ? new Date().toISOString().slice(0,10) : (postedDate != null ? postedDate : null);
+  // Changing the linked URL invalidates the resolved external id and any error.
+  let urlVal = null, resetLink = false;
+  if (postUrl !== undefined) {
+    urlVal = String(postUrl || '').trim().slice(0, 500);
+    resetLink = urlVal !== post.postUrl;
+  }
   db.prepare(`UPDATE social_posts SET
     platform=COALESCE(?,platform), captionDraft=COALESCE(?,captionDraft),
     imageDescription=COALESCE(?,imageDescription), scheduledDate=COALESCE(?,scheduledDate),
     postedDate=COALESCE(?,postedDate), status=COALESCE(?,status),
-    assignedToId=COALESCE(?,assignedToId) WHERE id=?`)
+    assignedToId=COALESCE(?,assignedToId), postUrl=COALESCE(?,postUrl) WHERE id=?`)
     .run(platform||null, captionDraft!=null?captionDraft:null, imageDescription!=null?imageDescription:null,
       scheduledDate!=null?scheduledDate:null, postedDateVal, status||null,
-      assignedToId!=null?Number(assignedToId):null, post.id);
-  res.json({ post: db.prepare(`SELECT sp.*, u.displayName AS assignedToName FROM social_posts sp LEFT JOIN users u ON u.id=sp.assignedToId WHERE sp.id=?`).get(post.id) });
+      assignedToId!=null?Number(assignedToId):null, urlVal, post.id);
+  if (resetLink) db.prepare("UPDATE social_posts SET externalId='', metricsError='' WHERE id=?").run(post.id);
+  const updated = db.prepare('SELECT * FROM social_posts WHERE id=?').get(post.id);
+  if (resetLink && urlVal) { try { snapshotPost(updated); } catch (_) {} }
+  res.json({ post: withLatestMetrics(db.prepare(`SELECT sp.*, u.displayName AS assignedToName FROM social_posts sp LEFT JOIN users u ON u.id=sp.assignedToId WHERE sp.id=?`).get(post.id)) });
+});
+
+// Take one engagement snapshot for a linked post. Resolves + caches the
+// external id on success, records a human-readable error on failure. Returns
+// the created metrics row, or null if the post has no live URL to track.
+function snapshotPost(post) {
+  if (!post || !post.postUrl) return null;
+  try {
+    const result = require('./socialMetrics').fetchMetrics(post);
+    return result && typeof result.then === 'function'
+      ? result.then((r) => persistSnapshot(post, r)).catch((e) => recordMetricsError(post, e))
+      : persistSnapshot(post, result);
+  } catch (e) {
+    return recordMetricsError(post, e);
+  }
+}
+
+function persistSnapshot(post, r) {
+  const m = r.metrics || {};
+  const info = db.prepare(`INSERT INTO social_post_metrics (postId, likes, comments, shares, reposts, views, saves, raw)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    post.id, m.likes ?? null, m.comments ?? null, m.shares ?? null,
+    m.reposts ?? null, m.views ?? null, m.saves ?? null, JSON.stringify(r.raw || {}));
+  db.prepare("UPDATE social_posts SET externalId=?, metricsError='', lastFetchedAt=datetime('now') WHERE id=?")
+    .run(r.externalId || post.externalId || '', post.id);
+  return db.prepare('SELECT * FROM social_post_metrics WHERE id=?').get(info.lastInsertRowid);
+}
+
+function recordMetricsError(post, err) {
+  const msg = String((err && err.message) || err || 'Unknown error').slice(0, 300);
+  db.prepare("UPDATE social_posts SET metricsError=?, lastFetchedAt=datetime('now') WHERE id=?").run(msg, post.id);
+  return null;
+}
+
+// Refresh a single post's metrics on demand.
+app.post('/api/social-posts/:id/refresh', async (req, res) => {
+  if (!canManageSocialPosts(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const post = db.prepare('SELECT * FROM social_posts WHERE id=?').get(Number(req.params.id));
+  if (!post) return res.status(404).json({ error: 'Not found' });
+  if (!post.postUrl) return res.status(400).json({ error: 'Link a live post URL first' });
+  try { await snapshotPost(post); } catch (_) {}
+  const fresh = db.prepare('SELECT * FROM social_posts WHERE id=?').get(post.id);
+  if (fresh.metricsError) return res.status(502).json({ error: fresh.metricsError, post: withLatestMetrics(fresh) });
+  res.json({ post: withLatestMetrics(fresh) });
+});
+
+// Refresh every linked post at once (also runs on a schedule server-side).
+app.post('/api/social-posts/refresh-all', async (req, res) => {
+  if (!canManageSocialPosts(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  const linked = db.prepare("SELECT * FROM social_posts WHERE postUrl != '' AND status != 'Cancelled'").all();
+  let ok = 0, failed = 0;
+  for (const p of linked) {
+    try { await snapshotPost(p); const f = db.prepare('SELECT metricsError FROM social_posts WHERE id=?').get(p.id); f.metricsError ? failed++ : ok++; }
+    catch (_) { failed++; }
+  }
+  res.json({ refreshed: ok, failed, total: linked.length });
+});
+
+// Full time-series history for one post, oldest first, for charting.
+app.get('/api/social-posts/:id/metrics', (req, res) => {
+  const post = db.prepare('SELECT * FROM social_posts WHERE id=?').get(Number(req.params.id));
+  if (!post) return res.status(404).json({ error: 'Not found' });
+  const history = db.prepare(
+    `SELECT id, capturedAt, likes, comments, shares, reposts, views, saves
+       FROM social_post_metrics WHERE postId=? ORDER BY capturedAt ASC`
+  ).all(post.id);
+  res.json({ post: withLatestMetrics(post), history });
 });
 
 app.delete('/api/social-posts/:id', (req, res) => {
@@ -4529,11 +4621,36 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Something went wrong' });
 });
 
+// Periodically snapshot engagement for every linked post so the app builds a
+// performance-over-time history without anyone clicking refresh. Runs only when
+// at least one platform integration is configured. Interval is configurable via
+// SOCIAL_METRICS_INTERVAL_HOURS (default 6h); set to 0 to disable.
+async function refreshAllSocialMetrics() {
+  const linked = db.prepare("SELECT * FROM social_posts WHERE postUrl != '' AND status != 'Cancelled'").all();
+  for (const p of linked) {
+    try { await snapshotPost(p); } catch (_) {}
+  }
+  if (linked.length) console.log(`[social] Refreshed metrics for ${linked.length} linked post(s).`);
+}
+
+function startSocialMetricsScheduler() {
+  const hours = process.env.SOCIAL_METRICS_INTERVAL_HOURS !== undefined
+    ? Number(process.env.SOCIAL_METRICS_INTERVAL_HOURS) : 6;
+  const integ = socialMetrics.integrationStatus();
+  if (!hours || hours <= 0 || (!integ.x && !integ.instagram)) return;
+  const ms = Math.max(1, hours) * 60 * 60 * 1000;
+  // First run shortly after boot, then on the configured cadence.
+  setTimeout(() => { refreshAllSocialMetrics().catch(() => {}); }, 60 * 1000);
+  setInterval(() => { refreshAllSocialMetrics().catch(() => {}); }, ms).unref?.();
+  console.log(`[social] Auto engagement tracking every ${hours}h (X: ${integ.x ? 'on' : 'off'}, Instagram: ${integ.instagram ? 'on' : 'off'}).`);
+}
+
 const PORT = process.env.PORT || 3000;
 if (require.main === module) {
   app.listen(PORT, () => {
     if (seeded) console.log('Seeded database with default Club America accounts.');
     console.log(`Club America Management running at http://localhost:${PORT}`);
+    startSocialMetricsScheduler();
   });
 }
 

@@ -93,6 +93,29 @@ does the right thing without the warning.
 | `STRIPE_SECRET_KEY` | Enables **online card payments** in the merch shop. From the Stripe Dashboard → Developers → API keys (`sk_live_…` / `sk_test_…`). Without it, only in-person (cash/Venmo) pickup orders can be placed. |
 | `STRIPE_PUBLISHABLE_KEY` | The matching publishable key (`pk_live_…` / `pk_test_…`), served to the shop's card form. |
 | `STRIPE_WEBHOOK_SECRET` | Signing secret (`whsec_…`) for the `/api/shop/webhook` endpoint. Required for online payments — it lets Stripe confirm a payment even if the buyer's browser closes right after paying, so no paid order is ever lost. |
+| `X_BEARER_TOKEN` | Enables **auto engagement tracking for X/Twitter** posts. An app Bearer token from the [X Developer Portal](https://developer.twitter.com). Without it, X posts can still be linked but metrics won't import. |
+| `INSTAGRAM_ACCESS_TOKEN` | Long-lived [Instagram Graph API](https://developers.facebook.com/docs/instagram-api) access token. Enables **auto engagement tracking for Instagram** (requires a Business/Creator account linked to a Facebook Page). |
+| `INSTAGRAM_USER_ID` | The IG Business account id the token belongs to. Needed alongside `INSTAGRAM_ACCESS_TOKEN` so we can resolve a post's link to its media id. |
+| `SOCIAL_METRICS_INTERVAL_HOURS` | How often (in hours) the server auto-refreshes engagement for every linked post. Defaults to `6`. Set to `0` to disable the scheduler (manual refresh still works). |
+
+### Social media engagement tracking
+
+The Social Media page plans posts **and** tracks how each one performs over
+time. When a board member pastes the public link to a published post (X/Twitter
+or Instagram), the server pulls **likes, comments, shares, reposts, views &
+saves** from that platform's **official API** and snapshots them on a schedule,
+so every post builds a performance-over-time history you can chart.
+
+We deliberately use the official APIs rather than scraping — Instagram and X
+both block automated scraping, it breaks constantly, and it risks getting the
+chapter's accounts suspended. The trade-off is that metrics only import for the
+club's **own** accounts, and only once the API credentials above are set. Until
+then, posts can still be linked and will backfill automatically once connected.
+
+| Platform | What's imported | Requires |
+| --- | --- | --- |
+| X / Twitter | likes, replies (comments), reposts, quote-tweets (shares), impressions (views), bookmarks (saves) | `X_BEARER_TOKEN` |
+| Instagram | likes, comments, plus reach/plays (views), saves & shares where the account's insights allow | `INSTAGRAM_ACCESS_TOKEN` + `INSTAGRAM_USER_ID` |
 
 ### Stripe merch-shop setup
 
