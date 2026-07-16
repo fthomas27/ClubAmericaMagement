@@ -1960,6 +1960,7 @@ const ALL_TABS_BY_SECTION = [
     { type: 'howto',       label: 'How-To' },
     { type: 'announce',    label: 'Announcement' },
     { type: 'myteam',      label: 'My Team' },
+    { type: 'teamtasksoverview', label: 'Team Tasks Overview' },
     { type: 'approvals',   label: 'Approvals' },
     { type: 'submissions', label: 'Get Involved' },
     { type: 'roster',      label: 'Roster' },
@@ -6334,6 +6335,92 @@ function AdminDashboardPage({ me }) {
 }
 
 // ---------------------------------------------------------------------------
+// Team Tasks Overview — everyone in a manager's full reporting chain, grouped
+// by person, with the ability to create tasks for them right on this page.
+// ---------------------------------------------------------------------------
+function TeamTasksOverviewPage({ me }) {
+  const [groups, setGroups] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    setError('');
+    try {
+      const d = await api('/team/tasks-overview');
+      setGroups(d.tasksByUser || []);
+    } catch (err) { setError(err.message); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function setStatus(taskId, status) {
+    try { await api(`/tasks/${taskId}`, { method: 'PATCH', body: { status } }); load(); }
+    catch (_) {}
+  }
+
+  if (error && !groups) return <div className="max-w-5xl"><ErrorState message={error} onRetry={load} /></div>;
+  if (!groups) return <Loading label="Loading team tasks…" />;
+
+  const today = new Date().toISOString().slice(0, 10);
+  function fmtDate(iso) {
+    if (!iso) return '';
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? new Date(iso + 'T12:00:00') : new Date(iso);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+
+  return (
+    <div className="max-w-5xl space-y-8">
+      <div>
+        <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Team Tasks Overview</h1>
+        <p className="text-cream/50 mt-1">Every task across your reporting chain, grouped by person.</p>
+      </div>
+
+      {error && <div className="text-red text-sm">{error}</div>}
+
+      {groups.length === 0 && (
+        <EmptyState icon="team" title="No reports yet" hint="Once people report to you, their tasks will show up here." />
+      )}
+
+      <div className="space-y-6">
+        {groups.map((group) => (
+          <div key={group.user.id} className="bg-navy2 border border-cream/10 rounded-xl p-4">
+            <div className="font-display text-xl text-gold mb-3">
+              {group.user.displayName}
+              {group.user.title && <span className="text-cream/50 text-sm font-sans ml-2">· {group.user.title}</span>}
+            </div>
+
+            {group.tasks.length === 0 && (
+              <div className="text-cream/40 text-sm mb-3">No tasks yet.</div>
+            )}
+
+            {group.tasks.length > 0 && (
+              <div className="space-y-2 mb-3">
+                {group.tasks.map((t) => {
+                  const overdue = t.status !== 'Complete' && t.dueDate && t.dueDate < today;
+                  return (
+                    <div key={t.id} className={`bg-navy border rounded-xl px-4 py-3 flex items-center justify-between gap-3 ${overdue ? 'border-red/40' : 'border-cream/10'}`}>
+                      <div className="min-w-0">
+                        <div className={`text-sm font-medium ${overdue ? 'text-red' : 'text-cream'}`}>{t.name}</div>
+                        {t.dueDate && <div className={`text-xs mt-0.5 ${overdue ? 'text-red/70' : 'text-cream/40'}`}>Due {fmtDate(t.dueDate)}{overdue ? ' · OVERDUE' : ''}</div>}
+                      </div>
+                      <select value={t.status} onChange={(e) => setStatus(t.id, e.target.value)}
+                        className="bg-navy2 border border-cream/20 rounded px-2 py-1 text-xs text-cream focus:outline-none focus:border-gold/60 shrink-0">
+                        {['Not Started', 'In Progress', 'Complete'].map((s) => <option key={s}>{s}</option>)}
+                      </select>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <NewTaskForm targetUserId={group.user.id} onCreated={load} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Sidebar + Layout
 // ---------------------------------------------------------------------------
 // Logistics login-tracking dashboard (logistics user only)
@@ -8811,6 +8898,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
         ...(isManager && visible('howto')       ? [{ type: 'howto',       label: 'How-To',          icon: 'ai'         }] : []),
         ...(isManager && visible('announce')    ? [{ type: 'announce',    label: 'Announcement',    icon: 'megaphone'  }] : []),
         ...(isManager && visible('myteam')      ? [{ type: 'myteam',      label: 'My Team',         icon: 'team'       }] : []),
+        ...(isManager && visible('teamtasksoverview') ? [{ type: 'teamtasksoverview', label: 'Team Tasks Overview', icon: 'check' }] : []),
         ...(isManager && visible('approvals')   ? [{ type: 'approvals',   label: 'Approvals',       icon: 'check',     badge: approvalsCount   }] : []),
         ...(canSeeSubmissions && visible('submissions') ? [{ type: 'submissions', label: 'Get Involved', icon: 'inbox', badge: submissionsCount }] : []),
         ...(canRoster && visible('roster')      ? [{ type: 'roster',      label: 'Roster',          icon: 'roster'     }] : []),
@@ -9025,6 +9113,7 @@ const TAB_DESCRIPTIONS = {
   ainotes:        { headline: 'AI-Generated Board Notes',       body: 'Your intelligent assistant surfaces highlights from board activity, meeting summaries, and club updates. Unread notes are flagged so you always know when something new is waiting.' },
   announce:       { headline: 'Team Announcements',             body: 'Send a broadcast to your direct reports or the wider team. Use announcements for time-sensitive updates, reminders, and news that can\'t wait until the next scheduled meeting.' },
   myteam:         { headline: 'Your Direct Reports',            body: 'See everyone who reports to you in one place. Click any team member to jump straight to their task board, review their progress, and stay connected with what your team is building.' },
+  teamtasksoverview: { headline: 'Team Tasks Overview',          body: 'Every task across your entire reporting chain — direct and indirect — grouped by person on one page. Check status at a glance and create new tasks for anyone below you without leaving this view.' },
   approvals:      { headline: 'Pending Task Approvals',         body: 'When team members complete tasks that need your sign-off, they queue up here. Review their work and approve or request changes — clearing your queue regularly keeps the whole team unblocked.' },
   submissions:    { headline: 'Public Interest Submissions',    body: 'People who filled out interest forms on the public site land here. Review club-join requests and board applications, respond to inquiries, and manage the full pipeline for new members.' },
   roster:         { headline: 'Membership Roster & Pipeline',   body: 'Track everyone in your recruitment pipeline from first contact to fully onboarded member. Move candidates through stages — Prospect, Contacted, Onboarded, or Declined — and keep things organized.' },
@@ -9044,7 +9133,7 @@ const TAB_DESCRIPTIONS = {
 
 const INTRO_SECTION_TYPES = {
   'My Club':      ['mytasks','home','checkin','attendance','polls','meetings','funding','apply','reimbursements','resources','directory','org','ainotes'],
-  'Leadership':   ['howto','announce','myteam','approvals','submissions','roster','dashboard','volunteers','speaker','grants','social','budget','grades'],
+  'Leadership':   ['howto','announce','myteam','teamtasksoverview','approvals','submissions','roster','dashboard','volunteers','speaker','grants','social','budget','grades'],
   'Site & Admin': ['website','admin','logistics','ai'],
 };
 
@@ -9329,6 +9418,7 @@ function App() {
     ...(isMgrOrAdmin                          ? [{ type: 'howto',       label: 'How-To' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'announce',    label: 'Announcement' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'myteam',      label: 'My Team' }] : []),
+    ...(isMgrOrAdmin                          ? [{ type: 'teamtasksoverview', label: 'Team Tasks Overview' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'approvals',   label: 'Approvals' }] : []),
     ...(me.role === 'admin' || !!me.grade     ? [{ type: 'submissions', label: 'Get Involved' }] : []),
     ...(isMgrOrAdmin || !!me.canManageRoster  ? [{ type: 'roster',      label: 'Roster' }] : []),
@@ -9380,7 +9470,7 @@ function App() {
   const PAGE_TITLES = {
     home: 'Club Home', website: 'Edit Website', mytasks: 'My Page',
     person: (reports.find(r => r.id === view.userId) || {}).displayName || 'Team Member',
-    myteam: 'My Team', announce: 'Team Announcement', approvals: 'Pending Approvals',
+    myteam: 'My Team', teamtasksoverview: 'Team Tasks Overview', announce: 'Team Announcement', approvals: 'Pending Approvals',
     submissions: 'Get Involved', roster: 'Roster', shop: 'Shop Manager', checkin: 'Weekly Check-In',
     funding: 'Funding Requests', apply: 'Apply for Position', dashboard: 'Dashboard',
     attendance: 'Attendance', polls: 'Polls & Voting', budget: 'Budget Overview',
@@ -9400,6 +9490,7 @@ function App() {
   else if (view.type === 'mytasks') content = <TaskPage me={me} userId={me.id} users={users} refreshSignal={refreshSignal} onNavigate={navigate} />;
   else if (view.type === 'person') content = <TaskPage me={me} userId={view.userId} users={users} refreshSignal={refreshSignal} onNavigate={navigate} />;
   else if (view.type === 'myteam') content = <MyTeamView reports={reports} onNavigate={navigate} />;
+  else if (view.type === 'teamtasksoverview') content = (me.role === 'admin' || me.role === 'manager') ? <TeamTasksOverviewPage me={me} /> : null;
   else if (view.type === 'announce') content = (me.role === 'admin' || me.role === 'manager') ? <TeamAnnouncementView me={me} reports={reports} /> : null;
   else if (view.type === 'approvals') content = <Approvals onChanged={bump} refreshSignal={refreshSignal} />;
   else if (view.type === 'submissions') content = <SubmissionsInbox onChanged={bump} refreshSignal={refreshSignal} />;

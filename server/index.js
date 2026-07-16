@@ -246,6 +246,17 @@ function getUser(id) {
 function directReports(managerId) {
   return db.prepare('SELECT * FROM users WHERE managerId = ? ORDER BY displayName').all(managerId);
 }
+// All reports at any depth below managerId (direct + indirect), via a recursive CTE.
+function allReports(managerId) {
+  return db.prepare(`
+    WITH RECURSIVE descendants(id) AS (
+      SELECT id FROM users WHERE managerId = ?
+      UNION
+      SELECT u.id FROM users u JOIN descendants d ON u.managerId = d.id
+    )
+    SELECT u.* FROM users u JOIN descendants d ON u.id = d.id ORDER BY u.displayName
+  `).all(managerId);
+}
 function isManagerOf(viewer, targetId) {
   const target = getUser(targetId);
   return target && target.managerId === viewer.id;
@@ -3907,6 +3918,22 @@ app.get('/api/team/tasks', (req, res) => {
       ORDER BY t.dueDate ASC NULLS LAST, t.createdAt DESC`).all(u.id);
     return { user: { id: u.id, displayName: u.displayName, title: u.title }, tasks };
   }).filter((g) => g.tasks.length > 0);
+  res.json({ tasksByUser });
+});
+
+// Whole-org-below-me view: every direct + indirect report (not just those with
+// tasks already), so managers can see and assign work across their full chain.
+app.get('/api/team/tasks-overview', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const reports = req.user.role === 'admin'
+    ? db.prepare('SELECT * FROM users WHERE id != ? ORDER BY displayName').all(req.user.id)
+    : allReports(req.user.id);
+  const tasksByUser = reports.map((u) => {
+    const tasks = db.prepare(`SELECT t.* FROM tasks t
+      WHERE t.userId = ? AND t.approvalStatus = 'approved'
+      ORDER BY t.dueDate ASC NULLS LAST, t.createdAt DESC`).all(u.id);
+    return { user: { id: u.id, displayName: u.displayName, title: u.title }, tasks };
+  });
   res.json({ tasksByUser });
 });
 
