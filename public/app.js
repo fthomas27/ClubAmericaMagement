@@ -6389,7 +6389,7 @@ function LogisticsPage() {
   if (error) return <div className="p-6 max-w-6xl"><ErrorState message={error} onRetry={load} /></div>;
   if (!data) return null;
 
-  const { stats, perUserDaily = [], teamDaily = [], recentLogins, demographics, engagementSummary = [], recentEvents = [] } = data;
+  const { stats, perUserDaily = [], teamDaily = [], recentLogins, ipSummary = [], demographics, engagementSummary = [], recentEvents = [] } = data;
 
   // Build a map: userId -> { 'YYYY-MM-DD': count }
   const dailyMap = {};
@@ -6465,6 +6465,7 @@ function LogisticsPage() {
       <div className="flex gap-0 border-b border-cream/10">
         <TabBtn id="members" label={`Members (${stats.length})`} />
         <TabBtn id="log" label={`Login Log (${recentLogins.length})`} />
+        <TabBtn id="ips" label="IP Addresses" />
         <TabBtn id="demographics" label="Club Breakdown" />
         <TabBtn id="engagement" label="Site Engagement" />
       </div>
@@ -6599,6 +6600,82 @@ function LogisticsPage() {
           )}
         </div>
       )}
+
+      {tab === 'ips' && (() => {
+        // Group per-IP rows by account, and count how many distinct accounts
+        // each IP appears under so shared addresses can be flagged.
+        const byUser = new Map();
+        const ipAccounts = new Map();
+        for (const r of ipSummary) {
+          if (!byUser.has(r.userId)) byUser.set(r.userId, { user: r, ips: [] });
+          byUser.get(r.userId).ips.push(r);
+          const key = r.ipAddress || '';
+          if (key) {
+            if (!ipAccounts.has(key)) ipAccounts.set(key, new Set());
+            ipAccounts.get(key).add(r.userId);
+          }
+        }
+        const accounts = [...byUser.values()];
+        return (
+          <div className="space-y-4">
+            <p className="text-cream/45 text-xs">
+              Every IP address each account has signed in from, with how many logins came from that address.
+              IPs used by more than one account are flagged as shared.
+            </p>
+            {accounts.length === 0 && (
+              <div className="py-8 text-center text-cream/25 text-sm">No logins recorded yet.</div>
+            )}
+            {accounts.map(({ user, ips }) => (
+              <div key={user.userId} className="bg-navy2 rounded-lg border border-cream/10 overflow-hidden">
+                <div className="px-4 py-3 flex items-center justify-between gap-3 border-b border-cream/10">
+                  <div>
+                    <div className="text-cream font-medium text-sm">{user.displayName}</div>
+                    <div className="text-cream/35 text-xs">@{user.username}{user.title ? ` · ${user.title}` : ''}</div>
+                  </div>
+                  <div className="text-cream/40 text-xs shrink-0">
+                    {ips.length} IP{ips.length !== 1 ? 's' : ''}
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-cream/40 text-xs text-left border-b border-cream/5">
+                        <th className="py-2 px-4 font-medium">IP Address</th>
+                        <th className="py-2 pr-4 font-medium text-center">Logins</th>
+                        <th className="py-2 pr-4 font-medium">First Seen</th>
+                        <th className="py-2 pr-4 font-medium">Last Seen</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ips.map(r => {
+                        const shared = r.ipAddress && (ipAccounts.get(r.ipAddress)?.size || 0) > 1;
+                        return (
+                          <tr key={`${r.userId}-${r.ipAddress}`} className="border-b border-cream/5 last:border-b-0 hover:bg-cream/3">
+                            <td className="py-2.5 px-4">
+                              <span className="text-cream/80 text-xs font-mono">{r.ipAddress || 'Unknown'}</span>
+                              {shared && (
+                                <span
+                                  className="ml-2 inline-block text-[10px] text-gold/80 bg-gold/10 border border-gold/25 rounded px-1.5 py-0.5 align-middle"
+                                  title={`This IP was also used by ${ipAccounts.get(r.ipAddress).size - 1} other account${ipAccounts.get(r.ipAddress).size - 1 !== 1 ? 's' : ''}`}
+                                >
+                                  Shared
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 pr-4 text-center text-cream/70 text-xs font-medium">{r.count}</td>
+                            <td className="py-2.5 pr-4 text-cream/50 text-xs whitespace-nowrap">{fmtDate(r.firstSeen)}</td>
+                            <td className="py-2.5 pr-4 text-cream/50 text-xs whitespace-nowrap">{fmtDate(r.lastSeen)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {tab === 'engagement' && (() => {
         const totalClicks = engagementSummary.reduce((s, r) => s + r.count, 0);

@@ -338,9 +338,10 @@ app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 40, name:
     return res.status(401).json({ error: 'Invalid username or password' });
   }
   try {
-    // req.ip is derived from the trusted proxy hop; the raw X-Forwarded-For
-    // header is client-controlled and easily spoofed, so don't log it directly.
-    const ip = String(req.ip || '').trim();
+    // Resolve the real external client address via clientIp() — behind
+    // Railway's Envoy edge, req.ip alone can surface an internal proxy hop
+    // instead of the visitor's public IP (same fix as site-visit tracking).
+    const ip = clientIp(req);
     db.prepare('INSERT INTO login_logs (userId, username, ipAddress) VALUES (?, ?, ?)').run(user.id, user.username, ip);
   } catch (_) {}
   res.json({ token: signToken(user), user: publicUser(user) });
@@ -3541,6 +3542,21 @@ app.get('/api/logistics/stats', (req, res) => {
     ORDER BY l.loginAt DESC
     LIMIT 200
   `).all();
+  // Every IP address each account has logged in from, with usage counts —
+  // grouped per (user, IP) so the dashboard can show accounts next to the
+  // exact addresses they signed in with.
+  const ipSummary = db.prepare(`
+    SELECT l.userId, l.ipAddress,
+           u.username, u.displayName, u.title, u.role,
+           COUNT(*) AS count,
+           MIN(l.loginAt) AS firstSeen,
+           MAX(l.loginAt) AS lastSeen
+    FROM login_logs l
+    JOIN users u ON u.id = l.userId
+    WHERE u.username != 'logistics'
+    GROUP BY l.userId, l.ipAddress
+    ORDER BY u.displayName ASC, lastSeen DESC
+  `).all();
   const engagementSummary = db.prepare(`
     SELECT event, label, COUNT(*) AS count,
            MAX(loggedAt) AS lastSeen,
@@ -3571,7 +3587,7 @@ app.get('/api/logistics/stats', (req, res) => {
     GROUP BY label
     ORDER BY CAST(label AS INTEGER) ASC, label ASC
   `).all();
-  res.json({ stats, perUserDaily, teamDaily, recentLogins, demographics: { totalMembers, genderBreakdown, gradeBreakdown }, engagementSummary, recentEvents });
+  res.json({ stats, perUserDaily, teamDaily, recentLogins, ipSummary, demographics: { totalMembers, genderBreakdown, gradeBreakdown }, engagementSummary, recentEvents });
 });
 
 // ---- Site Activity dashboard (public website traffic — admin or canViewLogistics) -
