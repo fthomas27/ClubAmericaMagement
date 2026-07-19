@@ -2988,7 +2988,12 @@ function formatCents(c) {
 // ============================================================================
 function PasswordProtectedShopPage() {
   const [password, setPassword] = useState('');
-  const [isUnlocked, setIsUnlocked] = useState(false);
+  // Remember the unlock for the browser session: paying by card round-trips
+  // through Stripe's site, and coming back to a locked page would hide the
+  // order confirmation (and re-ask a paying customer for the password).
+  const [isUnlocked, setIsUnlocked] = useState(() => {
+    try { return sessionStorage.getItem('ca-shop-unlocked') === '1'; } catch (_) { return false; }
+  });
   const [error, setError] = useState('');
 
   const handleSubmit = (e) => {
@@ -2996,6 +3001,7 @@ function PasswordProtectedShopPage() {
     if (password === 'USArules2026') {
       setIsUnlocked(true);
       setError('');
+      try { sessionStorage.setItem('ca-shop-unlocked', '1'); } catch (_) {}
     } else {
       setError('Incorrect password');
       setPassword('');
@@ -3097,16 +3103,23 @@ function ShopPage() {
 }
 
 // Shown after the buyer returns from Stripe-hosted Checkout with a paid order.
+// `processing` means a delayed payment method (e.g. bank debit) finished
+// checkout but the money hasn't cleared yet — the order is recorded when
+// Stripe confirms it, so don't claim payment was received.
 function CheckoutSuccessModal({ result, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
       <div className="bg-navy2 border border-cream/15 rounded-xl p-6 max-w-md w-full ca-scale-in text-center space-y-3" onClick={(e) => e.stopPropagation()}>
-        <div className="text-4xl">🎉</div>
-        <div className="font-display text-xl text-gold">Payment received — order placed!</div>
+        <div className="text-4xl">{result.processing ? '⏳' : '🎉'}</div>
+        <div className="font-display text-xl text-gold">
+          {result.processing ? 'Payment processing…' : 'Payment received — order placed!'}
+        </div>
         <p className="text-sm text-cream/60">
-          {result.deliveryMethod === 'pickup'
-            ? "We'll email you when your order is ready for pickup at school."
-            : "We'll ship your order and reach out if we need anything else."}
+          {result.processing
+            ? 'Your payment method takes a little while to clear. Your order will be recorded automatically once it does — no need to order again.'
+            : result.deliveryMethod === 'pickup'
+              ? "We'll email you when your order is ready for pickup at school."
+              : "We'll ship your order and reach out if we need anything else."}
         </p>
         <p className="text-xs text-cream/40">Thanks for supporting the Club America fundraiser!</p>
         <Button variant="gold" onClick={onClose}>Done</Button>
@@ -3167,6 +3180,10 @@ function OrderModal({ item, config, onClose }) {
   const variant = hasVariants ? item.variants.find((v) => v.id === Number(variantId)) : null;
   const unitPrice = variant && variant.priceOverride != null ? variant.priceOverride : item.price;
   const availableStock = variant ? variant.inventory : item.inventory;
+  // The server prices at most 20 per order; cap here too so the total shown
+  // always matches what Stripe will actually charge.
+  const MAX_PER_ORDER = 20;
+  const maxQuantity = Math.max(1, Math.min(MAX_PER_ORDER, availableStock));
   const total = unitPrice * Math.max(1, quantity);
   // Stripe won't charge a card under 50¢, so tiny totals are pickup + in-person only.
   const belowCardMinimum = total < 50;
@@ -3178,6 +3195,7 @@ function OrderModal({ item, config, onClose }) {
     if (hasVariants && !variantId) return 'Please choose an option.';
     if (!quantity || quantity < 1) return 'Quantity must be at least 1.';
     if (quantity > availableStock) return `Only ${availableStock} left in stock.`;
+    if (quantity > MAX_PER_ORDER) return `Orders are limited to ${MAX_PER_ORDER} per item — contact us for bulk orders.`;
     if (deliveryMethod === 'pickup' && !/^[^@\s]+@pcstudents\.us$/i.test(studentEmail.trim())) {
       return 'A valid @pcstudents.us student email is required for pickup.';
     }
@@ -3251,7 +3269,7 @@ function OrderModal({ item, config, onClose }) {
               </Field>
             )}
             <Field label="Quantity">
-              <input type="number" min="1" max={Math.max(1, availableStock)} className={inputCls} value={quantity}
+              <input type="number" min="1" max={maxQuantity} className={inputCls} value={quantity}
                 onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))} />
             </Field>
 

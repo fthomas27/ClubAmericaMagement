@@ -105,9 +105,14 @@ app.post('/api/shop/webhook', express.raw({ type: 'application/json' }), async (
     // sale: it carries the buyer contact + shipping Stripe collected. Re-retrieve
     // the session so contact/address fields are fully populated, then record the
     // order (idempotent — a no-op if the browser's confirm-checkout beat us).
-    if (event.type === 'checkout.session.completed') {
+    // async_payment_succeeded covers delayed-notification methods (e.g. bank
+    // debits): their 'completed' event arrives while payment_status is still
+    // 'unpaid', so the order is only recordable once this second event fires.
+    if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded') {
       const full = await stripe.checkout.sessions.retrieve(event.data.object.id);
       recordCheckoutSession(full);
+    } else if (event.type === 'checkout.session.async_payment_failed') {
+      console.warn('[stripe webhook] async payment failed for session', event.data.object.id, '— no order recorded.');
     }
   } catch (e) {
     console.error('[stripe webhook] handler error:', e.message);
@@ -1091,8 +1096,20 @@ app.post('/api/shop/confirm-checkout', rateLimit({ windowMs: 60 * 60 * 1000, max
   let session;
   try { session = await stripe.checkout.sessions.retrieve(sessionId); }
   catch (e) { return res.status(400).json({ error: 'Could not verify checkout.' }); }
-  if (!session || (session.metadata || {}).kind !== 'merch' ||
-      (session.payment_status !== 'paid' && session.payment_status !== 'no_payment_required')) {
+  if (!session || (session.metadata || {}).kind !== 'merch') {
+    return res.status(400).json({ error: 'Payment was not completed.' });
+  }
+  if (session.payment_status !== 'paid' && session.payment_status !== 'no_payment_required') {
+    // A delayed-notification payment (e.g. bank debit) finishes checkout before
+    // the money clears. Don't tell the buyer it failed — the webhook records
+    // the order when Stripe's async_payment_succeeded event arrives.
+    if (session.status === 'complete') {
+      return res.json({
+        ok: true, processing: true, orderId: null,
+        total: Number(session.amount_total) || 0, paymentStatus: 'processing',
+        deliveryMethod: (session.metadata || {}).deliveryMethod === 'pickup' ? 'pickup' : 'ship',
+      });
+    }
     return res.status(400).json({ error: 'Payment was not completed.' });
   }
   let order;
@@ -4661,10 +4678,15 @@ app.patch('/api/shop/admin/orders/:id', (req, res) => {
   } else if (action === 'cancel') {
     if (order.fulfillmentStatus !== 'cancelled') {
       const tx = db.transaction(() => {
-        if (order.variantId) {
-          db.prepare('UPDATE merch_variants SET inventory = inventory + ? WHERE id = ?').run(order.quantity, order.variantId);
-        } else if (order.itemId) {
-          db.prepare('UPDATE merch_items SET inventory = inventory + ? WHERE id = ?').run(order.quantity, order.itemId);
+        // needs_review orders never decremented inventory (the item was sold
+        // out or gone by the time the payment landed), so restoring stock for
+        // them would fabricate units that don't exist.
+        if (order.fulfillmentStatus !== 'needs_review') {
+          if (order.variantId) {
+            db.prepare('UPDATE merch_variants SET inventory = inventory + ? WHERE id = ?').run(order.quantity, order.variantId);
+          } else if (order.itemId) {
+            db.prepare('UPDATE merch_items SET inventory = inventory + ? WHERE id = ?').run(order.quantity, order.itemId);
+          }
         }
         db.prepare("UPDATE merch_orders SET fulfillmentStatus = 'cancelled' WHERE id = ?").run(id);
       });
