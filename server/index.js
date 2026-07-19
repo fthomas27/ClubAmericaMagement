@@ -859,7 +859,11 @@ function computeOrderPricing({ itemId, variantId, quantity, ignoreStock }) {
     variant = db.prepare('SELECT * FROM merch_variants WHERE id = ? AND itemId = ?').get(Number(variantId), item.id);
     if (!variant) return { error: 'Please choose an option.' };
   }
-  const qty = Math.max(1, Math.min(20, Number(quantity) || 1));
+  const requested = Math.max(1, Math.round(Number(quantity) || 1));
+  // Pre-payment, an over-limit request is told no; post-payment (ignoreStock,
+  // re-reading our own ≤20 metadata) stays lenient rather than reject a sale.
+  if (!ignoreStock && requested > 20) return { error: 'Orders are limited to 20 per item — contact us for bulk orders.' };
+  const qty = Math.min(20, requested);
   const unitPrice = variant && variant.priceOverride != null ? variant.priceOverride : item.price;
   const inventory = variant ? variant.inventory : item.inventory;
   if (!ignoreStock && inventory < qty) return { error: 'Not enough in stock.' };
@@ -4582,7 +4586,10 @@ app.patch('/api/shop/admin/items/:id', (req, res) => {
   const existing = db.prepare('SELECT * FROM merch_items WHERE id = ?').get(id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
   let { name, description, price, photo, active, inventory } = req.body || {};
-  if (name !== undefined) name = String(name).trim().slice(0, 120);
+  if (name !== undefined) {
+    name = String(name).trim().slice(0, 120);
+    if (!name) return res.status(400).json({ error: 'Name is required.' });
+  }
   if (description !== undefined) description = String(description).trim().slice(0, 2000);
   if (price !== undefined) price = Math.max(0, Math.round(Number(price) || 0));
   if (photo !== undefined) photo = cleanPhotoDataUrl(photo);
@@ -4643,7 +4650,14 @@ app.delete('/api/shop/admin/variants/:id', (req, res) => {
   if (!canManageShop(req.user)) return res.status(403).json({ error: 'Not allowed' });
   const variant = db.prepare('SELECT itemId FROM merch_variants WHERE id = ?').get(Number(req.params.id));
   if (!variant) return res.status(404).json({ error: 'Not found' });
-  db.prepare('DELETE FROM merch_variants WHERE id = ?').run(Number(req.params.id));
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM merch_variants WHERE id = ?').run(Number(req.params.id));
+    // A variant item with zero variants can never be ordered (pricing insists a
+    // variant be chosen), so fall back to plain per-item inventory.
+    const left = db.prepare('SELECT COUNT(*) AS n FROM merch_variants WHERE itemId = ?').get(variant.itemId).n;
+    if (left === 0) db.prepare('UPDATE merch_items SET hasVariants = 0 WHERE id = ?').run(variant.itemId);
+  });
+  tx();
   res.json({ item: adminItemWithVariants(db.prepare('SELECT * FROM merch_items WHERE id = ?').get(variant.itemId)) });
 });
 
