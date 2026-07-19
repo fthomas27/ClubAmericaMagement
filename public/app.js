@@ -1862,6 +1862,56 @@ function PodcastToggle() {
   );
 }
 
+function JoinReferralToggle() {
+  const [enabled, setEnabled] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setError('');
+    api('/join/referral-settings')
+      .then((d) => setEnabled(!!d.enabled))
+      .catch((err) => setError(err.message || 'Failed to load settings'));
+  }, []);
+
+  async function toggle() {
+    if (enabled === null || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const d = await api('/join/referral-settings', { method: 'PUT', body: { enabled: !enabled } });
+      setEnabled(!!d.enabled);
+    } catch (err) {
+      setError(err.message || 'Failed to save toggle');
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="bg-navy2 border border-cream/10 rounded-xl p-5 mb-8">
+      <div className="font-display text-2xl text-gold mb-1">Join Page</div>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <div className="text-cream">"Who referred you?" field</div>
+          <div className="text-cream/50 text-sm">
+            {enabled === null ? 'Loading…'
+              : enabled ? 'Shown on /join — new sign-ups can credit a referral.'
+              : 'Hidden on /join — referral crediting is paused.'}
+          </div>
+        </div>
+        <button
+          onClick={toggle}
+          disabled={enabled === null || busy}
+          aria-pressed={!!enabled}
+          className={`relative w-14 h-8 rounded-full transition-colors disabled:opacity-50 ${enabled ? 'bg-emerald-500' : 'bg-cream/20'}`}
+        >
+          <span className={`absolute top-1 left-1 w-6 h-6 rounded-full bg-white transition-transform ${enabled ? 'translate-x-6' : ''}`} />
+        </button>
+      </div>
+      {error && <div className="text-red text-sm mt-2">{error}</div>}
+    </div>
+  );
+}
+
 function EditMemberModal({ user, onSaved, onClose }) {
   const [firstName, setFirstName] = useState(user.firstName || user.displayName.split(' ')[0] || '');
   const [lastName, setLastName] = useState(user.lastName || user.displayName.split(' ').slice(1).join(' ') || '');
@@ -2081,6 +2131,7 @@ function AdminPanel({ users, reload }) {
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-6">Admin Panel</h1>
 
       <PodcastToggle />
+      <JoinReferralToggle />
 
       <form onSubmit={addUser} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-8 grid sm:grid-cols-2 gap-4">
         <div className="sm:col-span-2 font-display text-2xl text-gold">Add a Board Member</div>
@@ -4636,6 +4687,7 @@ function InterestSurvey({ onBack }) {
 function MemberSignUpPage() {
   const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', notes: '', referredByUserId: '' });
   const [members, setMembers] = useState([]);
+  const [referralEnabled, setReferralEnabled] = useState(true);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -4644,6 +4696,9 @@ function MemberSignUpPage() {
   useEffect(() => {
     fetch('/api/board').then((r) => r.json())
       .then((d) => setMembers((d.members || []).filter((m) => m.displayName)))
+      .catch(() => {});
+    fetch('/api/join/referral-settings').then((r) => r.json())
+      .then((d) => setReferralEnabled(d.enabled !== false))
       .catch(() => {});
   }, []);
 
@@ -4726,14 +4781,16 @@ function MemberSignUpPage() {
               </select>
             </Field>
           </div>
-          <Field label="Who referred you? (optional)">
-            <select className={inputCls} value={form.referredByUserId} onChange={set('referredByUserId')}>
-              <option value="">— No one / found it myself —</option>
-              {members.map((m) => (
-                <option key={m.id} value={m.id}>{m.displayName}{m.title ? ` (${m.title})` : ''}</option>
-              ))}
-            </select>
-          </Field>
+          {referralEnabled && (
+            <Field label="Who referred you? (optional)">
+              <select className={inputCls} value={form.referredByUserId} onChange={set('referredByUserId')}>
+                <option value="">— No one / found it myself —</option>
+                {members.map((m) => (
+                  <option key={m.id} value={m.id}>{m.displayName}{m.title ? ` (${m.title})` : ''}</option>
+                ))}
+              </select>
+            </Field>
+          )}
           <Field label="Anything else? (optional)">
             <textarea className={inputCls} rows="2" value={form.notes} onChange={set('notes')}
               placeholder="Role you're interested in, questions, etc." />

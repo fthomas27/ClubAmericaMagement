@@ -66,6 +66,7 @@ function init() {
       homeAnnouncement        TEXT NOT NULL DEFAULT '',
       homeAnnouncementEnabled INTEGER NOT NULL DEFAULT 0,
       weeklyCheckinEnabled    INTEGER NOT NULL DEFAULT 0,
+      joinReferralEnabled     INTEGER NOT NULL DEFAULT 1,
       updatedAt               TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -801,6 +802,7 @@ function init() {
   if (!siteCols.includes('weeklyCheckinEnabled'))     db.exec("ALTER TABLE site_settings ADD COLUMN weeklyCheckinEnabled INTEGER NOT NULL DEFAULT 0");
   if (!siteCols.includes('announcementPostedAt'))     db.exec("ALTER TABLE site_settings ADD COLUMN announcementPostedAt TEXT");
   if (!siteCols.includes('instagramPosts'))           db.exec("ALTER TABLE site_settings ADD COLUMN instagramPosts TEXT NOT NULL DEFAULT '[]'");
+  if (!siteCols.includes('joinReferralEnabled'))      db.exec("ALTER TABLE site_settings ADD COLUMN joinReferralEnabled INTEGER NOT NULL DEFAULT 1");
 
   // user_page_settings column migrations.
   const upsCols = db.prepare("PRAGMA table_info(user_page_settings)").all().map((c) => c.name);
