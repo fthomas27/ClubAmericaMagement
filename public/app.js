@@ -3025,6 +3025,13 @@ function ShopPage() {
 
   return (
     <PublicPageShell title="Club America Shop" subtitle="Grab some gear — ship it to you or pick it up at school.">
+      {config && config.stripeTestMode && (
+        <div className="max-w-md mx-auto text-center text-sm text-gold bg-gold/10 border border-gold/40 rounded-lg px-4 py-3">
+          <b>Stripe test mode</b> — real cards will be declined. Card payments only work
+          with Stripe's test numbers (e.g. 4242 4242 4242 4242) until the server is
+          switched to live keys.
+        </div>
+      )}
       {checkoutNotice && (
         <div className="max-w-md mx-auto text-center text-sm text-cream/70 bg-navy2 border border-cream/15 rounded-lg px-4 py-3">
           {checkoutNotice}

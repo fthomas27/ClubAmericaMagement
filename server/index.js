@@ -47,6 +47,13 @@ const seeded = seed();
 // shop still works for in-person-pay pickup orders.
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
+// Test-mode keys decline every real card ("Your card was declined") — only
+// Stripe's fake test numbers work. Surface that loudly so a test key never
+// masquerades as a broken shop in production.
+const STRIPE_TEST_MODE = /^(sk|rk)_test_/.test(STRIPE_SECRET_KEY);
+if (STRIPE_TEST_MODE) {
+  console.warn('[stripe] TEST-mode key configured — real cards will be DECLINED. Use live keys (sk_live_…) in production.');
+}
 const STUDENT_EMAIL_RE = /^[^@\s]+@pcstudents\.us$/i;
 
 const app = express();
@@ -880,7 +887,11 @@ function computeOrderPricing({ itemId, variantId, quantity, ignoreStock }) {
 }
 
 app.get('/api/shop/config', (req, res) => {
-  res.json({ publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '', stripeEnabled: !!stripe });
+  res.json({
+    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
+    stripeEnabled: !!stripe,
+    stripeTestMode: STRIPE_TEST_MODE,
+  });
 });
 
 app.get('/api/shop/items', (req, res) => {
