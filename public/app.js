@@ -214,6 +214,38 @@ function useSwipe(onLeft, onRight) {
   };
 }
 
+// Close on the browser/device Back button. While `open` is true the modal owns
+// one history entry, so Back dismisses the overlay and stays on the page the
+// user was on — instead of popping the whole page navigation underneath it.
+// Each open modal gets a monotonically-increasing token stored in history
+// state, so with stacked modals a single Back only closes the topmost one.
+// Closing through the UI consumes the entry with history.back() so the stack
+// never accumulates stale modal entries.
+let caModalSeq = 0;
+function useBackClose(open, onClose) {
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; });
+  useEffect(() => {
+    if (!open) return;
+    const token = ++caModalSeq;
+    let active = true;
+    try { window.history.pushState({ ...(window.history.state || {}), caModalDepth: token }, ''); } catch (_) {}
+    const onPop = () => {
+      const d = (window.history.state && window.history.state.caModalDepth) || 0;
+      if (active && d < token) { active = false; onCloseRef.current(); }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (active) {
+        active = false;
+        const d = (window.history.state && window.history.state.caModalDepth) || 0;
+        if (d >= token) { try { window.history.back(); } catch (_) {} }
+      }
+    };
+  }, [open]);
+}
+
 // Instant jump to the top. Used on page changes — the html element opts into
 // CSS smooth scrolling, so a plain scrollTo would visibly animate all the way
 // up from the bottom of a long page, which reads as lag rather than polish.
@@ -311,6 +343,8 @@ function SuccessMark({ className = '' }) {
 //   const [confirmEl, confirm] = useConfirm();
 //   if (await confirm({ message: '…', danger: true })) { … }
 function ConfirmDialog({ title = 'Are you sure?', message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false, onConfirm, onCancel }) {
+  useEscClose(true, onCancel);
+  useBackClose(true, onCancel);
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onCancel}>
       <div className="bg-navy2 border border-cream/15 rounded-xl p-5 max-w-sm w-full ca-scale-in" onClick={(e) => e.stopPropagation()}>
@@ -613,6 +647,7 @@ function resizeImage(file, max, cb) {
 // Interactive square-crop modal backed by a canvas.
 // `src` is the raw (full-size) image data URL; `onCrop` receives the cropped JPEG data URL.
 function CropModal({ src, onCrop, onCancel }) {
+  useBackClose(true, onCancel);
   const [crop, setCrop] = useState(null);
   const [drag, setDrag] = useState(null);
   const imgRef = useRef(null);
@@ -1927,6 +1962,8 @@ function PodcastToggle() {
 }
 
 function EditMemberModal({ user, onSaved, onClose }) {
+  useEscClose(true, onClose);
+  useBackClose(true, onClose);
   const [firstName, setFirstName] = useState(user.firstName || user.displayName.split(' ')[0] || '');
   const [lastName, setLastName] = useState(user.lastName || user.displayName.split(' ').slice(1).join(' ') || '');
   const [username, setUsername] = useState(user.username || '');
@@ -3142,6 +3179,7 @@ function ShopPage() {
 // Stripe confirms it, so don't claim payment was received.
 function CheckoutSuccessModal({ result, onClose }) {
   useEscClose(true, onClose);
+  useBackClose(true, onClose);
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
       <div className="bg-navy2 border border-cream/15 rounded-xl p-6 max-w-md w-full ca-scale-in text-center space-y-3" onClick={(e) => e.stopPropagation()}>
@@ -3206,6 +3244,7 @@ function OrderModal({ item, config, onClose }) {
   // idempotency key so a retry can't create a duplicate Checkout Session.
   const idemSessionRef = useRef(Math.random().toString(36).slice(2) + Date.now().toString(36));
   useEscClose(!busy, onClose);
+  useBackClose(true, onClose);
 
   const variant = hasVariants ? item.variants.find((v) => v.id === Number(variantId)) : null;
   const unitPrice = variant && variant.priceOverride != null ? variant.priceOverride : item.price;
@@ -3391,6 +3430,7 @@ function EventPhotos() {
   const lbPrev = () => setLightbox((i) => (i - 1 + list.length) % list.length);
   const lbNext = () => setLightbox((i) => (i + 1) % list.length);
   useEscClose(lbOpen, () => setLightbox(null));
+  useBackClose(lbOpen, () => setLightbox(null));
   useEffect(() => {
     if (!lbOpen || list.length <= 1) return;
     const fn = (e) => {
@@ -3855,11 +3895,8 @@ function buildBoardTree(members) {
 }
 
 function BoardModal({ member, onClose, me, onNavigate }) {
-  useEffect(() => {
-    const fn = (e) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', fn);
-    return () => document.removeEventListener('keydown', fn);
-  }, [onClose]);
+  useEscClose(true, onClose);
+  useBackClose(true, onClose);
   const isMe = !!(me && me.id === member.id);
   return (
     <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
@@ -4391,6 +4428,7 @@ function PublicNav({ current, onNavigate, onEnterPortal }) {
     return () => window.removeEventListener('click', close);
   }, [moreOpen, mobileOpen]);
   useEscClose(moreOpen || mobileOpen, () => { setMoreOpen(false); setMobileOpen(false); });
+  useBackClose(mobileOpen, () => setMobileOpen(false));
 
   // While the mobile menu is open the page behind it shouldn't scroll.
   useEffect(() => {
@@ -5228,6 +5266,8 @@ function AddRosterMemberForm({ me, onCreated }) {
 }
 
 function EditRosterMemberModal({ member, onSaved, onClose }) {
+  useEscClose(true, onClose);
+  useBackClose(true, onClose);
   const [form, setForm] = useState({
     firstName: member.firstName || '',
     lastName: member.lastName || '',
@@ -9253,9 +9293,11 @@ function App() {
   const [aiNotesOpen, setAiNotesOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [showWelcomeIntro, setShowWelcomeIntro] = useState(false);
-  // Tracks whether we've pushed a "back-trap" history entry so the device/browser
-  // Back button returns to the home grid instead of leaving the app entirely.
-  const portalHistRef = useRef(false);
+  // Number of portal view entries we've pushed onto the history stack. Every
+  // in-portal navigation records its view in history state, so the device/
+  // browser Back button retraces the user's actual path (Roster → member →
+  // Back lands on Roster) instead of always dumping them on the home grid.
+  const portalDepthRef = useRef(0);
   // True only when the in-app portal (with search) is actually on screen, so the
   // global keyboard shortcut never hijacks browser shortcuts on public/login pages.
   const portalActiveRef = useRef(false);
@@ -9321,20 +9363,28 @@ function App() {
       setMe(null);
       setView({ type: 'apphome' });
       setEnterPortal(false);
-      portalHistRef.current = false;
+      portalDepthRef.current = 0;
     };
     window.addEventListener('ca:session-expired', handler);
     return () => window.removeEventListener('ca:session-expired', handler);
   }, []);
 
-  // Device/browser Back button: when on a sub-page, return to the home grid
-  // (and close any open overlay) rather than dropping the user out of the app.
+  // Device/browser Back button: restore whatever view the revealed history
+  // entry recorded (see navigate below), falling back to the home grid on the
+  // base entry. Modal-owned entries (useBackClose) carry the same caView
+  // forward, so popping one re-renders the same page with the modal gone.
   useEffect(() => {
-    const onPop = () => {
-      portalHistRef.current = false;
+    const onPop = (e) => {
       setSearchOpen(false);
       setAiNotesOpen(false);
-      setView({ type: 'apphome' });
+      const st = e.state;
+      if (st && st.caView) {
+        portalDepthRef.current = st.caDepth || 0;
+        setView(st.caView);
+      } else {
+        portalDepthRef.current = 0;
+        setView({ type: 'apphome' });
+      }
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
@@ -9372,7 +9422,7 @@ function App() {
     setMe(null);
     setView({ type: 'apphome' });
     setEnterPortal(false);
-    portalHistRef.current = false;
+    portalDepthRef.current = 0;
   }
 
   if (!booted) return <div className="min-h-screen flex items-center justify-center gap-2 text-cream/40"><Spinner className="w-5 h-5" /> Loading…</div>;
@@ -9432,12 +9482,22 @@ function App() {
     if (!v) return;
     if (v.type === 'ainotes') { setAiNotesOpen(true); return; }
     if (v.type === 'apphome') {
-      // Returning home consumes the back-trap entry so the history stack stays
-      // clean (one device-Back press from a sub-page lands here, not earlier).
-      if (portalHistRef.current) { portalHistRef.current = false; window.history.back(); return; }
-    } else if (!portalHistRef.current) {
-      portalHistRef.current = true;
-      try { window.history.pushState({ caPortal: true }, ''); } catch (_) {}
+      // The header home arrow jumps straight home: unwind the whole in-portal
+      // trail so the history stack stays clean. The resulting popstate lands
+      // on the base entry, which renders the home grid.
+      if (portalDepthRef.current > 0) {
+        const depth = portalDepthRef.current;
+        portalDepthRef.current = 0;
+        try { window.history.go(-depth); return; } catch (_) {}
+      }
+      setView({ type: 'apphome' });
+      return;
+    }
+    // Each new view gets its own history entry so Back retraces the user's
+    // path. Re-selecting the current view doesn't stack a duplicate.
+    if (v.type !== view.type || v.userId !== view.userId) {
+      portalDepthRef.current += 1;
+      try { window.history.pushState({ caView: v, caDepth: portalDepthRef.current }, ''); } catch (_) {}
     }
     setView(v);
   };
@@ -11345,6 +11405,7 @@ const ATTENDANCE_LABELS = { present: 'Present', absent: 'Absent', excused: 'Excu
 const memberKey = (m) => `${m.kind}:${m.id}`;
 
 function RollCallModal({ eventId, onClose, onDone }) {
+  useBackClose(true, onClose);
   const [allUsers, setAllUsers] = useState([]);
   const [statuses, setStatuses] = useState({});
   const [busy, setBusy] = useState(false);
