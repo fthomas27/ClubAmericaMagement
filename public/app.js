@@ -8894,7 +8894,10 @@ function AppTile({ label, icon, badge, onClick, style }) {
   );
 }
 
-function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, aiNotesCount, pendingTestimonialsCount, onAiNotes, onNavigate, onLogout, onSearch }) {
+// The portal's page map, grouped into labeled sections and filtered to what
+// this user can see. One source of truth shared by the home grid, the desktop
+// sidebar, and the header page-jump menu, so they can never drift apart.
+function buildPortalSections(me, { checkinEnabled, approvalsCount, submissionsCount, aiNotesCount, pendingTestimonialsCount } = {}) {
   const isManager = me.role === 'manager' || me.role === 'admin';
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
   const canSeeSubmissions = me.role === 'admin' || !!me.grade;
@@ -8902,9 +8905,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
   const appHiddenTabs = parseHiddenTabs(me.hiddenTabs);
   const visible = (type) => !appHiddenTabs.has(type);
 
-  // Tiles grouped into labeled sections so the home screen reads as a few
-  // small clusters instead of one undifferentiated wall.
-  const sections = [
+  return [
     {
       title: 'My Club',
       tiles: [
@@ -8920,7 +8921,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
         ...(visible('resources')  ? [{ type: 'resources',  label: 'Resources',      icon: 'resources'  }] : []),
         ...(visible('directory')  ? [{ type: 'directory',  label: 'Directory',      icon: 'directory'  }] : []),
         ...(visible('org')        ? [{ type: 'org',        label: 'Org Chart',      icon: 'org'        }] : []),
-        ...(visible('ainotes')    ? [{ type: 'ainotes',    label: 'Agent Notes',    icon: 'bell', badge: aiNotesCount || undefined, onClick: onAiNotes }] : []),
+        ...(visible('ainotes')    ? [{ type: 'ainotes',    label: 'Agent Notes',    icon: 'bell', badge: aiNotesCount || undefined }] : []),
       ],
     },
     {
@@ -8956,6 +8957,12 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
       ],
     },
   ].filter((s) => s.tiles.length > 0);
+}
+
+function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, aiNotesCount, pendingTestimonialsCount, onAiNotes, onNavigate, onLogout, onSearch }) {
+  // Tiles grouped into labeled sections so the home screen reads as a few
+  // small clusters instead of one undifferentiated wall.
+  const sections = buildPortalSections(me, { checkinEnabled, approvalsCount, submissionsCount, aiNotesCount, pendingTestimonialsCount });
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -9003,7 +9010,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                 {section.tiles.map((t) => (
                   <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge}
-                    onClick={t.onClick || (() => onNavigate({ type: t.type }))}
+                    onClick={t.type === 'ainotes' ? onAiNotes : () => onNavigate({ type: t.type })}
                     style={{ animationDelay: `${tileIndex++ * 28}ms` }} />
                 ))}
               </div>
@@ -9011,6 +9018,109 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Persistent left-hand navigation for the portal's sub-pages (desktop only).
+// Lets board members jump directly between pages instead of bouncing back to
+// the home grid for every switch. Same sections/permissions as the home grid.
+function PortalSidebar({ me, currentType, sections, onNavigate, onAiNotes, onLogout }) {
+  return (
+    <aside className="hidden lg:flex flex-col w-60 shrink-0 border-r border-cream/10 bg-navy2/70 backdrop-blur sticky top-0 h-screen z-30">
+      <button onClick={() => onNavigate({ type: 'apphome' })} aria-label="Portal home"
+        className="flex items-center px-4 py-3 border-b border-cream/10 shrink-0 hover:bg-cream/5 transition-colors">
+        <Logo size="sidebar" />
+      </button>
+      <nav className="flex-1 overflow-y-auto py-3 px-2.5 space-y-4">
+        <button onClick={() => onNavigate({ type: 'apphome' })}
+          className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-[13px] text-cream/65 hover:text-cream hover:bg-cream/5 transition-colors">
+          <AppIcon name="dashboard" size={16} className="text-cream/40" />
+          <span className="flex-1 text-left">Home</span>
+        </button>
+        {sections.map((sec) => (
+          <div key={sec.title}>
+            <div className="px-2.5 mb-1 text-[10px] font-semibold uppercase tracking-widest text-cream/35">{sec.title}</div>
+            {sec.tiles.map((t) => {
+              const active = currentType === t.type;
+              const tone = TILE_TONES[t.icon] || { icon: 'text-cream/60' };
+              return (
+                <button key={t.type}
+                  onClick={t.type === 'ainotes' ? onAiNotes : () => onNavigate({ type: t.type })}
+                  aria-current={active ? 'page' : undefined}
+                  className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-[13px] transition-colors ${active ? 'bg-cream/10 text-cream font-medium' : 'text-cream/65 hover:text-cream hover:bg-cream/5'}`}>
+                  <AppIcon name={t.icon} size={16} className={active ? tone.icon : 'text-cream/40'} />
+                  <span className="flex-1 text-left truncate">{t.label}</span>
+                  {t.badge > 0 && (
+                    <span className="bg-red text-cream text-[10px] font-bold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">{t.badge}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
+      <div className="border-t border-cream/10 px-4 py-3 shrink-0 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-cream text-xs font-medium truncate">{me.displayName}</div>
+          <div className="text-cream/40 text-[11px] truncate">{me.title || roleLabel(me.role)}</div>
+        </div>
+        <button onClick={onLogout} className="text-[11px] text-red/60 hover:text-red transition-colors shrink-0">Log out</button>
+      </div>
+    </aside>
+  );
+}
+
+// The sub-page header title doubles as a page-jump menu: tap it to switch
+// directly to any other portal page. This is the mobile counterpart of the
+// desktop sidebar — no more going back to the home grid for every switch.
+function PortalPageMenu({ title, sections, currentType, onNavigate, onAiNotes }) {
+  const [open, setOpen] = useState(false);
+  useEscClose(open, () => setOpen(false));
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [open]);
+
+  const go = (t) => {
+    setOpen(false);
+    if (t.type === 'ainotes') onAiNotes();
+    else onNavigate({ type: t.type });
+  };
+
+  return (
+    <div className="relative flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
+      <button onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open}
+        className="flex items-center gap-1.5 max-w-full text-cream font-semibold text-base rounded-lg px-1.5 py-1 -ml-1.5 hover:bg-navy3 transition-colors">
+        <span className="truncate">{title}</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+          className={`shrink-0 text-cream/50 transition-transform ${open ? 'rotate-180' : ''}`}><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      {open && (
+        <div role="menu"
+          className="ca-slide-down absolute left-0 top-full mt-2 w-64 max-h-[70vh] overflow-y-auto bg-navy2 border border-cream/15 rounded-xl shadow-xl shadow-black/50 py-2 z-50">
+          {sections.map((sec) => (
+            <div key={sec.title} className="px-1.5 pb-1">
+              <div className="px-2.5 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-cream/35">{sec.title}</div>
+              {sec.tiles.map((t) => {
+                const active = currentType === t.type;
+                return (
+                  <button key={t.type} role="menuitem" onClick={() => go(t)}
+                    className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors ${active ? 'bg-cream/10 text-gold font-medium' : 'text-cream/75 hover:text-cream hover:bg-cream/5'}`}>
+                    <AppIcon name={t.icon} size={15} className={active ? 'text-gold' : 'text-cream/40'} />
+                    <span className="flex-1 text-left truncate">{t.label}</span>
+                    {t.badge > 0 && (
+                      <span className="bg-red text-cream text-[10px] font-bold rounded-full min-w-[16px] h-4 px-1 flex items-center justify-center">{t.badge}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -9571,42 +9681,49 @@ function App() {
   else if (view.type === 'testimonials') content = me.role === 'admin' ? <TestimonialsAdminPage me={me} /> : null;
   else if (view.type === 'newsletter') content = (me.role === 'admin' || me.canManageNewsletter) ? <NewsletterAdminPage me={me} /> : null;
 
+  const portalSections = buildPortalSections(me, { checkinEnabled, approvalsCount, submissionsCount, aiNotesCount, pendingTestimonialsCount });
+
   return (
     <>
       {showWelcomeIntro && <WelcomeIntroModal me={me} navTiles={navTiles} onDone={introDismiss} />}
       {aiNotesOpen && <AINotesPanel onClose={() => setAiNotesOpen(false)} onRead={bump} />}
       {searchOpen && <SearchModal me={me} reports={reports} tiles={navTiles} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
-      <div className="relative min-h-screen flex flex-col" style={{ background: '#0d1b2e' }}>
+      <div className="relative min-h-screen flex" style={{ background: '#0d1b2e' }}>
         {view.type !== 'home' && <PatriotBackdrop stars={10} />}
-        <header className="sticky top-0 z-20 bg-navy2/95 backdrop-blur border-b border-cream/10">
-          <TricolorBar />
-          <div className="flex items-center gap-3 px-4 py-3">
-          <button onClick={() => navigate({ type: 'apphome' })} aria-label="Back to home"
-            className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-cream hover:bg-navy3 transition-colors">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M19 12H5M12 5l-7 7 7 7"/>
-            </svg>
-          </button>
-          <span className="text-cream font-semibold text-base flex-1">{PAGE_TITLES[view.type] || ''}</span>
-          <button onClick={() => setSearchOpen(true)} aria-label="Search" title="Search (⌘K or /)"
-            className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-gold hover:bg-navy3 transition-colors">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>
-          </button>
-          <NotificationBell onNavigate={navigate} refreshSignal={refreshSignal} />
-          <button onClick={() => setAiNotesOpen(true)} className="relative flex items-center gap-1 text-cream/50 hover:text-gold transition-colors text-xs" aria-label="AI Notes">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-            {aiNotesCount > 0 && (
-              <span className="absolute -top-1 -right-1 bg-gold text-navy text-[9px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-0.5">{aiNotesCount}</span>
-            )}
-          </button>
-          </div>
-        </header>
-        <main className={`relative flex-1 overflow-x-hidden ${view.type === 'home' ? '' : 'p-4 sm:p-6 lg:p-8'}`}>
-          <div key={view.type + (view.userId || '')} className="ca-slide-up">
-            {view.type !== 'home' && <TabIntroBanner userId={me.id} tabType={view.type} />}
-            {content}
-          </div>
-        </main>
+        <PortalSidebar me={me} currentType={view.type} sections={portalSections}
+          onNavigate={navigate} onAiNotes={() => setAiNotesOpen(true)} onLogout={logout} />
+        <div className="relative flex-1 min-w-0 flex flex-col">
+          <header className="sticky top-0 z-20 bg-navy2/95 backdrop-blur border-b border-cream/10">
+            <TricolorBar />
+            <div className="flex items-center gap-3 px-4 py-3">
+            <button onClick={() => navigate({ type: 'apphome' })} aria-label="Back to home"
+              className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-cream hover:bg-navy3 transition-colors">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 12H5M12 5l-7 7 7 7"/>
+              </svg>
+            </button>
+            <PortalPageMenu title={PAGE_TITLES[view.type] || ''} sections={portalSections} currentType={view.type}
+              onNavigate={navigate} onAiNotes={() => setAiNotesOpen(true)} />
+            <button onClick={() => setSearchOpen(true)} aria-label="Search" title="Search (⌘K or /)"
+              className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-gold hover:bg-navy3 transition-colors">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg>
+            </button>
+            <NotificationBell onNavigate={navigate} refreshSignal={refreshSignal} />
+            <button onClick={() => setAiNotesOpen(true)} className="relative flex items-center gap-1 text-cream/50 hover:text-gold transition-colors text-xs" aria-label="AI Notes">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+              {aiNotesCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-gold text-navy text-[9px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-0.5">{aiNotesCount}</span>
+              )}
+            </button>
+            </div>
+          </header>
+          <main className={`relative flex-1 overflow-x-hidden ${view.type === 'home' ? '' : 'p-4 sm:p-6 lg:p-8'}`}>
+            <div key={view.type + (view.userId || '')} className="ca-slide-up">
+              {view.type !== 'home' && <TabIntroBanner userId={me.id} tabType={view.type} />}
+              {content}
+            </div>
+          </main>
+        </div>
       </div>
     </>
   );
