@@ -2552,6 +2552,7 @@ function HomeEditor({ onSaved }) {
         podcastUrl: form.podcastUrl,
         calendarUrl: form.calendarUrl,
         instagramUrl: form.instagramUrl,
+        donationUrl: form.donationUrl,
         aboutText: form.aboutText,
         podcastEnabled: form.podcastEnabled,
       }});
@@ -2597,6 +2598,7 @@ function HomeEditor({ onSaved }) {
           <div className="sm:col-span-2"><Field label="Meeting location (fallback)"><input className={inputCls} value={form.meetingLocation || ''} onChange={set('meetingLocation')} placeholder="e.g. Room 214" /></Field></div>
           <div className="sm:col-span-2"><Field label="Podcast link (YouTube video or page URL)"><input className={inputCls} value={form.podcastUrl || ''} onChange={set('podcastUrl')} placeholder="https://www.youtube.com/watch?v=…" /></Field></div>
           <div className="sm:col-span-2"><Field label="Instagram link"><input className={inputCls} value={form.instagramUrl || ''} onChange={set('instagramUrl')} placeholder="https://www.instagram.com/yourclub" /></Field></div>
+          <div className="sm:col-span-2"><Field label="Donation link (Stripe payment/donation link)"><input className={inputCls} value={form.donationUrl || ''} onChange={set('donationUrl')} placeholder="https://donate.stripe.com/…" /></Field></div>
           <div className="sm:col-span-2"><Field label="About / Mission (shown on the public homepage)"><textarea className={inputCls + ' min-h-[120px] resize-y'} value={form.aboutText || ''} onChange={set('aboutText')} placeholder="Tell visitors who Club America is and what you stand for…" /></Field></div>
           {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
           <div className="sm:col-span-2 flex gap-2">
@@ -4456,6 +4458,12 @@ function PublicHomePage({ home, cards, onNavigate }) {
                 className="px-8 py-3.5 border border-gold/50 text-gold hover:bg-gold/10 rounded-lg transition-all text-sm font-medium active:scale-95 hover:-translate-y-0.5">
                 Meet the Board
               </button>
+              {home.donationUrl && (
+                <a href={ensureHttps(home.donationUrl)} target="_blank" rel="noopener"
+                  className="px-8 py-3.5 bg-gold hover:bg-gold/90 text-navy font-semibold rounded-lg transition-all shadow-lg shadow-gold/25 text-sm active:scale-95 hover:shadow-xl hover:shadow-gold/35 hover:-translate-y-0.5 flex items-center gap-2">
+                  <span aria-hidden="true">♥</span> Donate
+                </a>
+              )}
               {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
             </div>
           </TiltScene>

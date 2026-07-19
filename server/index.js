@@ -386,7 +386,7 @@ app.get('/api/me', authenticate, (req, res) => {
 
 // ---- Public homepage content (no auth) --------------------------------------
 function getHome() {
-  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, instagramPosts, aboutText, homeAnnouncement, homeAnnouncementEnabled, announcementPostedAt, updatedAt FROM site_settings WHERE id = 1').get();
+  const row = db.prepare('SELECT meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, donationUrl, instagramPosts, aboutText, homeAnnouncement, homeAnnouncementEnabled, announcementPostedAt, updatedAt FROM site_settings WHERE id = 1').get();
   // Auto-expire the announcement after 7 days.
   let announcementEnabled = !!row.homeAnnouncementEnabled;
   if (announcementEnabled && row.announcementPostedAt) {
@@ -1387,13 +1387,14 @@ function canModeratePhotos(user) {
 }
 app.put('/api/home', (req, res) => {
   if (!canEditHome(req.user)) return res.status(403).json({ error: 'Only the Digital Presence Manager can edit the homepage' });
-  let { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, instagramPosts, aboutText } = req.body || {};
+  let { meetingDate, meetingTime, meetingLocation, podcastUrl, podcastEnabled, calendarUrl, instagramUrl, donationUrl, instagramPosts, aboutText } = req.body || {};
   if (meetingDate   !== undefined) meetingDate    = String(meetingDate).trim().slice(0, 100);
   if (meetingTime   !== undefined) meetingTime    = String(meetingTime).trim().slice(0, 100);
   if (meetingLocation !== undefined) meetingLocation = String(meetingLocation).trim().slice(0, 300);
   if (podcastUrl    !== undefined) podcastUrl     = String(podcastUrl).trim().slice(0, 500);
   if (calendarUrl   !== undefined) calendarUrl    = String(calendarUrl).trim().slice(0, 500);
   if (instagramUrl  !== undefined) instagramUrl   = String(instagramUrl).trim().slice(0, 300);
+  if (donationUrl   !== undefined) donationUrl    = String(donationUrl).trim().slice(0, 500);
   if (aboutText     !== undefined) aboutText      = String(aboutText).trim().slice(0, 8000);
   // Curated Instagram post URLs (one per entry) shown as live embeds. Keep only
   // valid instagram.com post/reel links, cap the count, and store as JSON.
@@ -1415,6 +1416,7 @@ app.put('/api/home', (req, res) => {
        podcastEnabled = COALESCE(?, podcastEnabled),
        calendarUrl = COALESCE(?, calendarUrl),
        instagramUrl = COALESCE(?, instagramUrl),
+       donationUrl = COALESCE(?, donationUrl),
        instagramPosts = COALESCE(?, instagramPosts),
        aboutText = COALESCE(?, aboutText),
        updatedAt = datetime('now')
@@ -1427,6 +1429,7 @@ app.put('/api/home', (req, res) => {
       podcastEnabledVal,
       calendarUrl ?? null,
       instagramUrl ?? null,
+      donationUrl ?? null,
       instagramPostsJson,
       aboutText ?? null,
     );
