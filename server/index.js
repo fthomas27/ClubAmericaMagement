@@ -16,6 +16,14 @@ process.on('uncaughtException', (err) => {
   console.error('Uncaught exception:', err);
 });
 
+// APP_URL must be a full origin ("https://example.org"). A bare hostname is an
+// easy misconfig that breaks Stripe checkout ("Invalid URL: An explicit scheme
+// … must be provided") and email links, so normalize it before any module
+// (notably ./email) reads it.
+if (process.env.APP_URL && !/^https?:\/\//i.test(process.env.APP_URL)) {
+  process.env.APP_URL = 'https://' + process.env.APP_URL.replace(/^\/+/, '');
+}
+
 const Stripe = require('stripe');
 const { db, init, seed } = require('./db');
 const { fetchUpcoming, clearCache } = require('./calendar');
