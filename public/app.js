@@ -2981,53 +2981,6 @@ function formatCents(c) {
   return '$' + (Number(c || 0) / 100).toFixed(2);
 }
 
-// ============================================================================
-// TEMP: SHOP PAGE PASSWORD PROTECTION
-// DELETE THIS ENTIRE SECTION (from "TEMP:" marker to "END TEMP:" marker)
-// when shop page is ready for public access. No other code depends on this.
-// ============================================================================
-function PasswordProtectedShopPage() {
-  const [password, setPassword] = useState('');
-  const [isUnlocked, setIsUnlocked] = useState(false);
-  const [error, setError] = useState('');
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (password === 'USArules2026') {
-      setIsUnlocked(true);
-      setError('');
-    } else {
-      setError('Incorrect password');
-      setPassword('');
-    }
-  };
-
-  if (isUnlocked) return <ShopPage />;
-
-  return (
-    <PublicPageShell title="Club America Shop" subtitle="Password protected">
-      <div className="max-w-sm mx-auto">
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <input
-            type="password"
-            placeholder="Enter password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full px-4 py-2 bg-navy2 border border-cream/20 rounded-lg text-cream placeholder-cream/40 focus:outline-none focus:border-gold"
-          />
-          <Button variant="gold" className="w-full" type="submit">
-            Unlock Shop
-          </Button>
-          {error && <p className="text-red text-sm text-center">{error}</p>}
-        </form>
-      </div>
-    </PublicPageShell>
-  );
-}
-// ============================================================================
-// END TEMP: SHOP PAGE PASSWORD PROTECTION
-// ============================================================================
-
 function ShopPage() {
   const [items, setItems] = useState(null);
   const [config, setConfig] = useState(null);
@@ -3060,6 +3013,10 @@ function ShopPage() {
         .then((d) => setCheckoutResult(d))
         .catch((err) => setCheckoutNotice(err.message || 'We could not confirm your payment — please contact us.'))
         .finally(() => load());
+    } else if (status === 'success') {
+      // Success return with no session id (mangled/truncated URL). The webhook
+      // still records any real payment, so reassure rather than alarm.
+      setCheckoutNotice('Thanks! If your payment went through, your order was recorded — check your email receipt, or contact us if you are unsure.');
     }
   }, [load]);
 
@@ -3097,16 +3054,23 @@ function ShopPage() {
 }
 
 // Shown after the buyer returns from Stripe-hosted Checkout with a paid order.
+// `processing` means a delayed payment method (e.g. bank debit) finished
+// checkout but the money hasn't cleared yet — the order is recorded when
+// Stripe confirms it, so don't claim payment was received.
 function CheckoutSuccessModal({ result, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
       <div className="bg-navy2 border border-cream/15 rounded-xl p-6 max-w-md w-full ca-scale-in text-center space-y-3" onClick={(e) => e.stopPropagation()}>
-        <div className="text-4xl">🎉</div>
-        <div className="font-display text-xl text-gold">Payment received — order placed!</div>
+        <div className="text-4xl">{result.processing ? '⏳' : '🎉'}</div>
+        <div className="font-display text-xl text-gold">
+          {result.processing ? 'Payment processing…' : 'Payment received — order placed!'}
+        </div>
         <p className="text-sm text-cream/60">
-          {result.deliveryMethod === 'pickup'
-            ? "We'll email you when your order is ready for pickup at school."
-            : "We'll ship your order and reach out if we need anything else."}
+          {result.processing
+            ? 'Your payment method takes a little while to clear. Your order will be recorded automatically once it does — no need to order again.'
+            : result.deliveryMethod === 'pickup'
+              ? "We'll email you when your order is ready for pickup at school."
+              : "We'll ship your order and reach out if we need anything else."}
         </p>
         <p className="text-xs text-cream/40">Thanks for supporting the Club America fundraiser!</p>
         <Button variant="gold" onClick={onClose}>Done</Button>
@@ -3167,6 +3131,10 @@ function OrderModal({ item, config, onClose }) {
   const variant = hasVariants ? item.variants.find((v) => v.id === Number(variantId)) : null;
   const unitPrice = variant && variant.priceOverride != null ? variant.priceOverride : item.price;
   const availableStock = variant ? variant.inventory : item.inventory;
+  // The server prices at most 20 per order; cap here too so the total shown
+  // always matches what Stripe will actually charge.
+  const MAX_PER_ORDER = 20;
+  const maxQuantity = Math.max(1, Math.min(MAX_PER_ORDER, availableStock));
   const total = unitPrice * Math.max(1, quantity);
   // Stripe won't charge a card under 50¢, so tiny totals are pickup + in-person only.
   const belowCardMinimum = total < 50;
@@ -3178,6 +3146,7 @@ function OrderModal({ item, config, onClose }) {
     if (hasVariants && !variantId) return 'Please choose an option.';
     if (!quantity || quantity < 1) return 'Quantity must be at least 1.';
     if (quantity > availableStock) return `Only ${availableStock} left in stock.`;
+    if (quantity > MAX_PER_ORDER) return `Orders are limited to ${MAX_PER_ORDER} per item — contact us for bulk orders.`;
     if (deliveryMethod === 'pickup' && !/^[^@\s]+@pcstudents\.us$/i.test(studentEmail.trim())) {
       return 'A valid @pcstudents.us student email is required for pickup.';
     }
@@ -3251,8 +3220,8 @@ function OrderModal({ item, config, onClose }) {
               </Field>
             )}
             <Field label="Quantity">
-              <input type="number" min="1" max={Math.max(1, availableStock)} className={inputCls} value={quantity}
-                onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))} />
+              <input type="number" min="1" max={maxQuantity} className={inputCls} value={quantity}
+                onChange={(e) => setQuantity(Math.min(maxQuantity, Math.max(1, Number(e.target.value) || 1)))} />
             </Field>
 
             <div className="pt-2 border-t border-cream/10">
@@ -4224,15 +4193,13 @@ const PUBLIC_PAGES = [
   { key: 'home',         label: 'Home',                   path: '/' },
   { key: 'about',        label: 'About Us',               path: '/about' },
   { key: 'board',        label: 'Meet the Board',         path: '/board' },
-  // { key: 'shop',         label: 'Shop',                   path: '/shop' },  // TEMP: Temporarily hidden, password protected
+  { key: 'shop',         label: 'Shop',                   path: '/shop' },
   { key: 'testimonials', label: 'What People Are Saying', path: '/testimonials' },
   { key: 'involved',     label: 'Get Involved',           path: '/get-involved' },
   { key: 'speak',        label: 'Apply to Speak',         path: '/apply-to-speak' },
 ];
 
 function publicPageFromPath(pathname) {
-  // TEMP: Allow direct access to /shop even though it's hidden from navigation
-  if (pathname === '/shop') return 'shop';
   const hit = PUBLIC_PAGES.find((p) => p.path === pathname);
   return hit ? hit.key : 'home';
 }
@@ -4307,7 +4274,7 @@ function PublicSite({ home, events, volunteerEvents, onEnterPortal }) {
           </PublicPageShell>
         )}
 
-        {page === 'shop' && <PasswordProtectedShopPage />}
+        {page === 'shop' && <ShopPage />}
 
         {page === 'testimonials' && (
           <PublicPageShell title="What People Are Saying" subtitle="Hear from the people who make Club America what it is.">

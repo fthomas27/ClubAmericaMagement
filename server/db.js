@@ -815,6 +815,12 @@ function init() {
     db.exec("CREATE UNIQUE INDEX idx_merch_orders_stripe ON merch_orders(stripePaymentIntentId) WHERE stripePaymentIntentId != ''");
   }
 
+  // merch_items: an item flagged hasVariants with no variant rows (all deleted
+  // before the delete route learned to clear the flag) could never be ordered.
+  // Heal such rows back to plain per-item inventory.
+  db.exec(`UPDATE merch_items SET hasVariants = 0
+    WHERE hasVariants = 1 AND id NOT IN (SELECT DISTINCT itemId FROM merch_variants)`);
+
   // speaker_applications column migrations (multi-question PDF uploads).
   const speakerAppCols = db.prepare("PRAGMA table_info(speaker_applications)").all().map((c) => c.name);
   if (!speakerAppCols.includes('uploads')) db.exec("ALTER TABLE speaker_applications ADD COLUMN uploads TEXT NOT NULL DEFAULT '[]'");
