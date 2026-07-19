@@ -95,6 +95,21 @@
     .ca-slide-down { animation: ca-slide-down 0.16s ease-out both; }
     .ca-pulse { animation: ca-pulse-badge 1.2s ease-in-out 3; }
 
+    /* Page-change transition on the public site: the new page fades in and
+       settles upward, so switching pages feels like one continuous surface. */
+    @keyframes ca-page-enter {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .ca-page { animation: ca-page-enter 0.28s ease-out both; }
+
+    /* Keyboard users get a visible gold focus ring; mouse/touch users don't. */
+    :focus-visible { outline: 2px solid rgba(201,168,76,0.85); outline-offset: 2px; }
+
+    /* Kill the double-tap-to-zoom delay on interactive elements so taps on
+       carousel dots, menus, and buttons respond immediately on mobile. */
+    button, a, [role="button"] { touch-action: manipulation; }
+
     /* ── Immersive homepage ──
        Principle: ambient (always-on) motion is limited to a soft star twinkle;
        everything else only moves in response to the user (scroll parallax,
@@ -138,7 +153,7 @@
       mask-image: linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0.5) 45%, transparent 100%);
     }
     @media (prefers-reduced-motion: reduce) {
-      .ca-star-twinkle, .ca-scroll-cue, .ca-pulse { animation: none; }
+      .ca-star-twinkle, .ca-scroll-cue, .ca-pulse, .ca-page { animation: none; }
       .ca-reveal { opacity: 1; transform: none; transition: none; }
       .ca-card3d { transform: none !important; transition: none; }
     }

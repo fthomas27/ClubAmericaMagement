@@ -184,6 +184,70 @@ const inputCls =
   'w-full bg-navy border border-cream/20 rounded-md px-3 py-2 text-cream placeholder-cream/30 focus:outline-none focus:border-gold/80 focus:ring-2 focus:ring-gold/15 transition-colors';
 
 // ---------------------------------------------------------------------------
+// Shared interaction helpers (public site)
+// ---------------------------------------------------------------------------
+// Close on Escape — for modals, menus, and lightboxes.
+function useEscClose(active, onClose) {
+  useEffect(() => {
+    if (!active) return;
+    const fn = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', fn);
+    return () => document.removeEventListener('keydown', fn);
+  }, [active, onClose]);
+}
+
+// Horizontal swipe detection for touch devices. Spread the returned handlers
+// onto a carousel/lightbox container: <div {...swipe}>. The vertical-dominance
+// check keeps normal page scrolling from registering as a swipe.
+function useSwipe(onLeft, onRight) {
+  const start = useRef(null);
+  return {
+    onTouchStart: (e) => { const t = e.touches[0]; start.current = { x: t.clientX, y: t.clientY }; },
+    onTouchEnd: (e) => {
+      const s = start.current;
+      start.current = null;
+      if (!s || !e.changedTouches.length) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - s.x, dy = t.clientY - s.y;
+      if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.5) (dx < 0 ? onLeft : onRight)();
+    },
+  };
+}
+
+// Instant jump to the top. Used on page changes — the html element opts into
+// CSS smooth scrolling, so a plain scrollTo would visibly animate all the way
+// up from the bottom of a long page, which reads as lag rather than polish.
+function scrollToTopInstant() {
+  const el = document.documentElement;
+  const prev = el.style.scrollBehavior;
+  el.style.scrollBehavior = 'auto';
+  window.scrollTo(0, 0);
+  el.style.scrollBehavior = prev;
+}
+
+// Floating "back to top" button that fades in once the visitor has scrolled
+// well past the first screen.
+function BackToTop() {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; setShow(window.scrollY > 700); });
+    };
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => { window.removeEventListener('scroll', onScroll); if (raf) cancelAnimationFrame(raf); };
+  }, []);
+  return (
+    <button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} aria-label="Back to top"
+      className={`fixed bottom-5 right-5 z-40 w-11 h-11 rounded-full bg-navy2/90 backdrop-blur border border-cream/20 text-cream/80 shadow-lg shadow-black/40 flex items-center justify-center transition-all duration-300 hover:text-gold hover:border-gold/50 ${show ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3 pointer-events-none'}`}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Shared UX primitives: loading, empty states, confirmation, retry, CSV export
 // ---------------------------------------------------------------------------
 function Spinner({ className = 'w-4 h-4' }) {
@@ -2683,8 +2747,8 @@ function GetInvolved() {
         </div>
       ) : (
         <form onSubmit={submit} className="grid sm:grid-cols-2 gap-4">
-          <Field label="Name"><input className={inputCls} value={form.name} onChange={set('name')} required /></Field>
-          <Field label="Email"><input type="email" className={inputCls} value={form.email} onChange={set('email')} required /></Field>
+          <Field label="Name"><input className={inputCls} value={form.name} onChange={set('name')} autoComplete="name" required /></Field>
+          <Field label="Email"><input type="email" className={inputCls} value={form.email} onChange={set('email')} autoComplete="email" required /></Field>
           <Field label="Grade">
             <select className={inputCls} value={form.grade} onChange={set('grade')} required>
               <option value="">Select…</option>
@@ -2748,6 +2812,7 @@ function SpeakerQuestionInput({ q, value, onChange }) {
     );
   }
   return <input type={q.type === 'email' ? 'email' : 'text'} className={inputCls} value={value}
+    autoComplete={q.type === 'email' ? 'email' : undefined}
     placeholder={q.placeholder || ''} onChange={(e) => onChange(e.target.value)} />;
 }
 
@@ -2825,20 +2890,29 @@ function SpeakerApplicationForm() {
   const triggeredQuestions = form.questions.filter((q) => q.triggersUpload && answers[q.id] === 'Yes');
   const missingUpload = triggeredQuestions.some((q) => !files[q.id]);
 
+  // On validation failure, bring the offending question into view — on a long
+  // form the message next to the submit button isn't enough on its own.
+  function failAt(qid, message) {
+    setError(message);
+    const el = qid && document.getElementById('speaker-q-' + qid);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
   async function submit(e) {
     e.preventDefault();
     setError('');
     for (const q of form.questions) {
       if (q.required && !String(answers[q.id] || '').trim()) {
-        setError(`Please answer: ${q.label}`); return;
+        failAt(q.id, `Please answer: ${q.label}`); return;
       }
       if (q.type === 'email' && String(answers[q.id] || '').trim() &&
           !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(answers[q.id]).trim())) {
-        setError(`Please enter a valid email for: ${q.label}`); return;
+        failAt(q.id, `Please enter a valid email for: ${q.label}`); return;
       }
     }
     if (missingUpload) {
-      setError('Please download, complete, and upload the required form(s) before submitting.'); return;
+      failAt(triggeredQuestions.find((q) => !files[q.id])?.id,
+        'Please download, complete, and upload the required form(s) before submitting.'); return;
     }
     setBusy(true);
     try {
@@ -2877,7 +2951,7 @@ function SpeakerApplicationForm() {
 
       <form onSubmit={submit} className="max-w-2xl mx-auto space-y-5">
         {form.questions.map((q) => (
-          <div key={q.id}>
+          <div key={q.id} id={'speaker-q-' + q.id}>
             <Field label={<>{q.label}{q.required && <span className="text-red ml-1">*</span>}</>}>
               {q.helpText && <p className="text-xs text-cream/45 mb-1.5 -mt-0.5 normal-case tracking-normal">{q.helpText}</p>}
               <SpeakerQuestionInput q={q} value={answers[q.id] || ''} onChange={(v) => setAnswer(q.id, v)} />
@@ -3067,6 +3141,7 @@ function ShopPage() {
 // checkout but the money hasn't cleared yet — the order is recorded when
 // Stripe confirms it, so don't claim payment was received.
 function CheckoutSuccessModal({ result, onClose }) {
+  useEscClose(true, onClose);
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
       <div className="bg-navy2 border border-cream/15 rounded-xl p-6 max-w-md w-full ca-scale-in text-center space-y-3" onClick={(e) => e.stopPropagation()}>
@@ -3130,6 +3205,7 @@ function OrderModal({ item, config, onClose }) {
   // Stable per-modal token; combined with the cart it forms the Stripe
   // idempotency key so a retry can't create a duplicate Checkout Session.
   const idemSessionRef = useRef(Math.random().toString(36).slice(2) + Date.now().toString(36));
+  useEscClose(!busy, onClose);
 
   const variant = hasVariants ? item.variants.find((v) => v.id === Number(variantId)) : null;
   const unitPrice = variant && variant.priceOverride != null ? variant.priceOverride : item.price;
@@ -3138,6 +3214,9 @@ function OrderModal({ item, config, onClose }) {
   // always matches what Stripe will actually charge.
   const MAX_PER_ORDER = 20;
   const maxQuantity = Math.max(1, Math.min(MAX_PER_ORDER, availableStock));
+  // Switching to a variant with less stock shouldn't leave a quantity the
+  // server would reject at checkout.
+  useEffect(() => { setQuantity((q) => Math.min(q, maxQuantity)); }, [maxQuantity]);
   const total = unitPrice * Math.max(1, quantity);
   // Stripe won't charge a card under 50¢.
   const belowCardMinimum = total < 50;
@@ -3196,10 +3275,25 @@ function OrderModal({ item, config, onClose }) {
                 </select>
               </Field>
             )}
-            <Field label="Quantity">
-              <input type="number" min="1" max={maxQuantity} className={inputCls} value={quantity}
-                onChange={(e) => setQuantity(Math.min(maxQuantity, Math.max(1, Number(e.target.value) || 1)))} />
-            </Field>
+            {/* Not a <Field>: its <label> would forward clicks to the first
+                button inside it, making the stepper misfire. */}
+            <div>
+              <span className="block text-xs uppercase tracking-wider text-cream/60 mb-1">Quantity</span>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+                  disabled={quantity <= 1} aria-label="Decrease quantity"
+                  className="w-10 h-10 shrink-0 rounded-md border border-cream/20 text-cream/80 text-xl leading-none hover:border-gold hover:text-gold disabled:opacity-30 disabled:cursor-not-allowed transition-colors">−</button>
+                <input type="number" inputMode="numeric" min="1" max={maxQuantity} aria-label="Quantity"
+                  className={inputCls + ' w-20 flex-none text-center'} value={quantity}
+                  onChange={(e) => setQuantity(Math.min(maxQuantity, Math.max(1, Number(e.target.value) || 1)))} />
+                <button type="button" onClick={() => setQuantity((q) => Math.min(maxQuantity, q + 1))}
+                  disabled={quantity >= maxQuantity} aria-label="Increase quantity"
+                  className="w-10 h-10 shrink-0 rounded-md border border-cream/20 text-cream/80 text-xl leading-none hover:border-gold hover:text-gold disabled:opacity-30 disabled:cursor-not-allowed transition-colors">+</button>
+                {availableStock > 0 && availableStock <= 5 && (
+                  <span className="text-xs text-amber-300/80">Only {availableStock} left</span>
+                )}
+              </div>
+            </div>
 
             <div className="pt-2 border-t border-cream/10">
               <span className="block text-xs uppercase tracking-wider text-cream/60 mb-1.5">Delivery</span>
@@ -3247,7 +3341,7 @@ function OrderModal({ item, config, onClose }) {
 function EventPhotos() {
   const [photos, setPhotos] = useState(null);
   const [error, setError] = useState('');
-  const [lightbox, setLightbox] = useState(null); // photo id being viewed full-size
+  const [lightbox, setLightbox] = useState(null); // index into the gallery being viewed full-size
   const [showForm, setShowForm] = useState(false);
 
   // Share form state
@@ -3292,9 +3386,24 @@ function EventPhotos() {
     finally { setBusy(false); }
   }
 
+  const list = photos || [];
+  const lbOpen = lightbox !== null && list.length > 0;
+  const lbPrev = () => setLightbox((i) => (i - 1 + list.length) % list.length);
+  const lbNext = () => setLightbox((i) => (i + 1) % list.length);
+  useEscClose(lbOpen, () => setLightbox(null));
+  useEffect(() => {
+    if (!lbOpen || list.length <= 1) return;
+    const fn = (e) => {
+      if (e.key === 'ArrowLeft') setLightbox((i) => (i - 1 + list.length) % list.length);
+      else if (e.key === 'ArrowRight') setLightbox((i) => (i + 1) % list.length);
+    };
+    document.addEventListener('keydown', fn);
+    return () => document.removeEventListener('keydown', fn);
+  }, [lbOpen, list.length]);
+  const lbSwipe = useSwipe(lbNext, lbPrev);
+
   if (error) return null; // never block the rest of the page on a gallery error
 
-  const list = photos || [];
   return (
     <section className="bg-navy2/40 border border-cream/10 rounded-2xl p-6">
       <div className="flex items-center justify-between flex-wrap gap-3 mb-1">
@@ -3356,8 +3465,8 @@ function EventPhotos() {
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {list.map((p) => (
-            <button key={p.id} onClick={() => setLightbox(p)}
+          {list.map((p, i) => (
+            <button key={p.id} onClick={() => setLightbox(i)}
               className="group relative aspect-square overflow-hidden rounded-lg border border-cream/10 bg-navy hover:border-gold/60 transition-colors">
               <img src={`/api/event-photos/${p.id}/image`} alt={p.caption || 'Event photo'} loading="lazy"
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200" />
@@ -3369,21 +3478,37 @@ function EventPhotos() {
         </div>
       )}
 
-      {lightbox && (
-        <div onClick={() => setLightbox(null)} className="fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4">
-          <div onClick={(e) => e.stopPropagation()} className="max-w-3xl w-full ca-scale-in">
-            <button onClick={() => setLightbox(null)} aria-label="Close" className="block ml-auto mb-2 text-cream/70 hover:text-cream text-4xl leading-none">×</button>
-            <img src={`/api/event-photos/${lightbox.id}/image`} alt={lightbox.caption || 'Event photo'}
-              className="w-full max-h-[75vh] object-contain rounded-lg" />
-            {(lightbox.caption || lightbox.submitterName) && (
-              <div className="mt-3 text-center">
-                {lightbox.caption && <div className="text-cream">{lightbox.caption}</div>}
-                {lightbox.submitterName && <div className="text-cream/50 text-sm mt-0.5">— {lightbox.submitterName}</div>}
+      {lbOpen && (() => {
+        const cur = list[lightbox];
+        return (
+          <div onClick={() => setLightbox(null)} className="fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4">
+            <div onClick={(e) => e.stopPropagation()} {...lbSwipe} className="relative max-w-3xl w-full ca-scale-in">
+              <div className="flex items-center justify-between mb-2">
+                {list.length > 1
+                  ? <span className="text-cream/50 text-sm tabular-nums">{lightbox + 1} / {list.length}</span>
+                  : <span />}
+                <button onClick={() => setLightbox(null)} aria-label="Close" className="text-cream/70 hover:text-cream text-4xl leading-none">×</button>
               </div>
-            )}
+              <img key={cur.id} src={`/api/event-photos/${cur.id}/image`} alt={cur.caption || 'Event photo'}
+                className="ca-fade-in w-full max-h-[75vh] object-contain rounded-lg" />
+              {list.length > 1 && (
+                <>
+                  <button onClick={lbPrev} aria-label="Previous photo"
+                    className="absolute left-1 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/55 hover:bg-black/80 text-cream text-2xl flex items-center justify-center transition-colors">‹</button>
+                  <button onClick={lbNext} aria-label="Next photo"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/55 hover:bg-black/80 text-cream text-2xl flex items-center justify-center transition-colors">›</button>
+                </>
+              )}
+              {(cur.caption || cur.submitterName) && (
+                <div className="mt-3 text-center">
+                  {cur.caption && <div className="text-cream">{cur.caption}</div>}
+                  {cur.submitterName && <div className="text-cream/50 text-sm mt-0.5">— {cur.submitterName}</div>}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </section>
   );
 }
@@ -3402,11 +3527,18 @@ function InstagramFeed({ home }) {
   useEffect(() => { api('/instagram-highlights').then((d) => setItems(d.items || [])).catch(() => setItems([])); }, []);
 
   const count = items ? items.length : 0;
+  // Auto-advance — pauses on hover, respects reduced motion, and `idx` in the
+  // deps restarts the clock after a manual step so the next slide isn't rushed.
   useEffect(() => {
     if (paused || count <= 1) return;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const t = setInterval(() => setIdx((i) => (i + 1) % count), 5000);
     return () => clearInterval(t);
-  }, [paused, count]);
+  }, [paused, count, idx]);
+  const swipe = useSwipe(
+    () => count > 1 && setIdx((i) => (i + 1) % count),
+    () => count > 1 && setIdx((i) => (i - 1 + count) % count)
+  );
 
   if (!items || items.length === 0) return null;
   const safeIdx = idx % items.length;
@@ -3423,7 +3555,7 @@ function InstagramFeed({ home }) {
         {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
       </div>
 
-      <div className="relative max-w-md mx-auto"
+      <div className="relative max-w-md mx-auto" {...swipe}
         onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
         <a key={cur.id} href={cur.link ? ensureHttps(cur.link) : (home.instagramUrl ? ensureHttps(home.instagramUrl) : '#')}
           target="_blank" rel="noopener" onClick={() => track('ig_highlight_click', cur.link)}
@@ -4173,7 +4305,9 @@ function PublicSite({ home, events, volunteerEvents, onEnterPortal }) {
     if (!pg) return;
     if (window.location.pathname !== pg.path) window.history.pushState(null, '', pg.path);
     setPage(key);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    // Jump straight to the top — the page-enter animation covers the change;
+    // smooth-scrolling up from deep in a long page just feels slow.
+    scrollToTopInstant();
   }, []);
 
   const cards = (
@@ -4186,7 +4320,8 @@ function PublicSite({ home, events, volunteerEvents, onEnterPortal }) {
   return (
     <div className="min-h-screen flex flex-col">
       <PublicNav current={page} onNavigate={navigate} onEnterPortal={onEnterPortal} />
-      <div className="flex-1">
+      {/* Keyed on the page so every navigation gets a fresh enter transition. */}
+      <div key={page} className="flex-1 ca-page">
         {page === 'home' && <PublicHomePage home={home} cards={cards} onNavigate={navigate} />}
 
         {page === 'about' && (
@@ -4227,6 +4362,7 @@ function PublicSite({ home, events, volunteerEvents, onEnterPortal }) {
         )}
       </div>
       <PublicFooter home={home} onEnterPortal={onEnterPortal} />
+      <BackToTop />
     </div>
   );
 }
@@ -4247,13 +4383,22 @@ function PublicNav({ current, onNavigate, onEnterPortal }) {
   const barRef = useRef(null);     // the visible desktop link row
   const measureRef = useRef(null); // a hidden row holding every link, used to measure
 
-  // Close any open menu on an outside click.
+  // Close any open menu on an outside click or Escape.
   useEffect(() => {
     if (!moreOpen && !mobileOpen) return;
     const close = () => { setMoreOpen(false); setMobileOpen(false); };
     window.addEventListener('click', close);
     return () => window.removeEventListener('click', close);
   }, [moreOpen, mobileOpen]);
+  useEscClose(moreOpen || mobileOpen, () => { setMoreOpen(false); setMobileOpen(false); });
+
+  // While the mobile menu is open the page behind it shouldn't scroll.
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [mobileOpen]);
 
   // Work out how many top-level links fit; the remainder go into "More".
   useLayoutEffect(() => {
@@ -4348,33 +4493,47 @@ function PublicNav({ current, onNavigate, onEnterPortal }) {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          {/* ── Mobile: single dropdown with every page + login ── */}
-          <div className="relative md:hidden" onClick={(e) => e.stopPropagation()}>
+          {/* ── Mobile: current page label + hamburger opening a full-width menu ── */}
+          <div className="md:hidden flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            <span className="text-sm font-medium text-cream/70 max-w-[40vw] truncate">{currentLabel}</span>
             <button onClick={() => setMobileOpen((v) => !v)} aria-haspopup="menu" aria-expanded={mobileOpen}
-              className="flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm text-cream/85 border border-cream/15 hover:text-cream hover:border-cream/30 hover:bg-cream/5 transition-colors">
-              <span className="font-medium">{currentLabel}</span>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-                className={`transition-transform ${mobileOpen ? 'rotate-180' : ''}`}><path d="M6 9l6 6 6-6"/></svg>
+              aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
+              className="flex items-center justify-center w-11 h-11 rounded-lg text-cream/85 border border-cream/15 hover:text-cream hover:border-cream/30 hover:bg-cream/5 transition-colors">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                {mobileOpen ? <path d="M6 6l12 12M18 6L6 18" /> : <path d="M4 7h16M4 12h16M4 17h16" />}
+              </svg>
             </button>
-            {mobileOpen && (
-              <div role="menu" className="absolute right-0 mt-2 w-60 bg-navy2 border border-cream/15 rounded-xl shadow-xl shadow-black/40 py-1.5 overflow-hidden">
-                {PUBLIC_PAGES.map((p) => (
-                  <button key={p.key} role="menuitem" onClick={() => go(p.key)}
-                    className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${current === p.key ? 'text-gold bg-cream/5' : 'text-cream/80 hover:text-cream hover:bg-cream/5'}`}>
-                    {p.label}
-                  </button>
-                ))}
-                <div className="h-px bg-cream/10 my-1.5" />
-                <button role="menuitem" onClick={() => { setMobileOpen(false); onEnterPortal(); }}
-                  className="w-full text-left px-4 py-2.5 text-sm text-gold hover:bg-cream/5 transition-colors">
-                  Board Member Login →
-                </button>
-              </div>
-            )}
           </div>
           <Button variant="primary" onClick={onEnterPortal} className="hidden sm:inline-flex">Board Login →</Button>
         </div>
       </div>
+
+      {/* ── Mobile menu panel: full-width under the bar, big touch targets ── */}
+      {mobileOpen && (
+        <div className="md:hidden absolute top-full inset-x-0" onClick={(e) => e.stopPropagation()}>
+          <div role="menu" className="ca-slide-down bg-navy2 border-b border-cream/10 shadow-xl shadow-black/40 max-h-[calc(100vh-6rem)] overflow-y-auto">
+            <nav className="max-w-5xl mx-auto px-4 py-3">
+              {PUBLIC_PAGES.map((p) => (
+                <button key={p.key} role="menuitem" onClick={() => go(p.key)}
+                  aria-current={current === p.key ? 'page' : undefined}
+                  className={`w-full flex items-center justify-between gap-3 text-left px-3 py-3 rounded-lg text-base transition-colors ${current === p.key ? 'text-gold bg-cream/5 font-medium' : 'text-cream/85 hover:text-cream hover:bg-cream/5'}`}>
+                  {p.label}
+                  {current === p.key && (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 5 5 9-9"/></svg>
+                  )}
+                </button>
+              ))}
+              <div className="h-px bg-cream/10 my-2" />
+              <button role="menuitem" onClick={() => { setMobileOpen(false); onEnterPortal(); }}
+                className="w-full text-left px-3 py-3 rounded-lg text-base font-medium text-gold hover:bg-cream/5 transition-colors">
+                Board Member Login →
+              </button>
+            </nav>
+          </div>
+          {/* Dim the page behind the open menu; tapping it closes. */}
+          <div className="h-screen bg-black/50" onClick={() => setMobileOpen(false)} aria-hidden="true" />
+        </div>
+      )}
     </header>
   );
 }
@@ -4596,17 +4755,17 @@ function InterestSurvey({ onBack }) {
         <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-slide-up" style={{ animationDelay: '80ms' }}>
           <div className="grid grid-cols-2 gap-4">
             <Field label="First Name *">
-              <input className={inputCls} value={form.firstName} onChange={set('firstName')} required autoFocus />
+              <input className={inputCls} value={form.firstName} onChange={set('firstName')} autoComplete="given-name" required autoFocus />
             </Field>
             <Field label="Last Name">
-              <input className={inputCls} value={form.lastName} onChange={set('lastName')} />
+              <input className={inputCls} value={form.lastName} onChange={set('lastName')} autoComplete="family-name" />
             </Field>
           </div>
           <Field label="Phone Number">
-            <input className={inputCls} type="tel" value={form.phone} onChange={set('phone')} placeholder="(435) 555-0100" />
+            <input className={inputCls} type="tel" value={form.phone} onChange={set('phone')} autoComplete="tel" placeholder="(435) 555-0100" />
           </Field>
           <Field label="Email">
-            <input className={inputCls} type="email" value={form.email} onChange={set('email')} placeholder="you@example.com" />
+            <input className={inputCls} type="email" value={form.email} onChange={set('email')} autoComplete="email" placeholder="you@example.com" />
           </Field>
           <Field label="Gender">
             <select className={inputCls} value={form.gender} onChange={set('gender')}>
@@ -4699,17 +4858,17 @@ function MemberSignUpPage() {
         <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-slide-up" style={{ animationDelay: '80ms' }}>
           <div className="grid grid-cols-2 gap-4">
             <Field label="First Name *">
-              <input className={inputCls} value={form.firstName} onChange={set('firstName')} required autoFocus />
+              <input className={inputCls} value={form.firstName} onChange={set('firstName')} autoComplete="given-name" required autoFocus />
             </Field>
             <Field label="Last Name">
-              <input className={inputCls} value={form.lastName} onChange={set('lastName')} />
+              <input className={inputCls} value={form.lastName} onChange={set('lastName')} autoComplete="family-name" />
             </Field>
           </div>
           <Field label="Phone Number">
-            <input className={inputCls} type="tel" value={form.phone} onChange={set('phone')} placeholder="(435) 555-0100" />
+            <input className={inputCls} type="tel" value={form.phone} onChange={set('phone')} autoComplete="tel" placeholder="(435) 555-0100" />
           </Field>
           <Field label="Email">
-            <input className={inputCls} type="email" value={form.email} onChange={set('email')} placeholder="you@example.com" />
+            <input className={inputCls} type="email" value={form.email} onChange={set('email')} autoComplete="email" placeholder="you@example.com" />
           </Field>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Grade">
@@ -5035,8 +5194,8 @@ function AddRosterMemberForm({ me, onCreated }) {
     <form onSubmit={submit} className="bg-navy2 border border-gold/30 rounded-xl p-5 space-y-3 ca-slide-up">
       <div className="font-display text-xl text-gold">Add Roster Member</div>
       <div className="grid sm:grid-cols-2 gap-3">
-        <Field label="First Name *"><input className={inputCls} value={form.firstName} onChange={set('firstName')} required autoFocus /></Field>
-        <Field label="Last Name"><input className={inputCls} value={form.lastName} onChange={set('lastName')} /></Field>
+        <Field label="First Name *"><input className={inputCls} value={form.firstName} onChange={set('firstName')} autoComplete="given-name" required autoFocus /></Field>
+        <Field label="Last Name"><input className={inputCls} value={form.lastName} onChange={set('lastName')} autoComplete="family-name" /></Field>
         <Field label="Phone *"><input className={inputCls} value={form.phone} onChange={set('phone')} required /></Field>
         <Field label="Email"><input className={inputCls} type="email" value={form.email} onChange={set('email')} /></Field>
         <Field label="Grade">
@@ -5103,7 +5262,7 @@ function EditRosterMemberModal({ member, onSaved, onClose }) {
         </div>
         <div className="grid sm:grid-cols-2 gap-3">
           <Field label="First Name *"><input className={inputCls} value={form.firstName} onChange={set('firstName')} required /></Field>
-          <Field label="Last Name"><input className={inputCls} value={form.lastName} onChange={set('lastName')} /></Field>
+          <Field label="Last Name"><input className={inputCls} value={form.lastName} onChange={set('lastName')} autoComplete="family-name" /></Field>
           <Field label="Phone"><input className={inputCls} value={form.phone} onChange={set('phone')} /></Field>
           <Field label="Email"><input className={inputCls} type="email" value={form.email} onChange={set('email')} /></Field>
           <Field label="Grade">
@@ -5268,8 +5427,8 @@ function ReferMemberForm({ onReferred }) {
       ) : (
         <form onSubmit={submit} className="space-y-3 ca-slide-up">
           <div className="grid sm:grid-cols-2 gap-3">
-            <Field label="First Name *"><input className={inputCls} value={form.firstName} onChange={set('firstName')} required autoFocus /></Field>
-            <Field label="Last Name"><input className={inputCls} value={form.lastName} onChange={set('lastName')} /></Field>
+            <Field label="First Name *"><input className={inputCls} value={form.firstName} onChange={set('firstName')} autoComplete="given-name" required autoFocus /></Field>
+            <Field label="Last Name"><input className={inputCls} value={form.lastName} onChange={set('lastName')} autoComplete="family-name" /></Field>
             <Field label="Phone *"><input className={inputCls} value={form.phone} onChange={set('phone')} required placeholder="(555) 123-4567" /></Field>
             <Field label="Email"><input className={inputCls} type="email" value={form.email} onChange={set('email')} /></Field>
             <Field label="Grade">
@@ -7880,19 +8039,19 @@ function VolunteerSignUpPage({ eventId }) {
           <div className="text-sm font-semibold text-cream mb-1">Your Information</div>
           <div>
             <label className="block text-xs text-cream/50 mb-1">Full Name *</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} required
+            <input value={name} onChange={(e) => setName(e.target.value)} required autoComplete="name"
               className="w-full bg-navy3 border border-cream/15 rounded-lg px-3 py-2 text-sm text-cream placeholder-cream/30 focus:outline-none focus:border-gold/50"
               placeholder="Your full name" />
           </div>
           <div>
             <label className="block text-xs text-cream/50 mb-1">Phone Number *</label>
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" required
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" required autoComplete="tel"
               className="w-full bg-navy3 border border-cream/15 rounded-lg px-3 py-2 text-sm text-cream placeholder-cream/30 focus:outline-none focus:border-gold/50"
               placeholder="(555) 000-0000" />
           </div>
           <div>
             <label className="block text-xs text-cream/50 mb-1">Email</label>
-            <input value={email} onChange={(e) => setEmail(e.target.value)} type="email"
+            <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" autoComplete="email"
               className="w-full bg-navy3 border border-cream/15 rounded-lg px-3 py-2 text-sm text-cream placeholder-cream/30 focus:outline-none focus:border-gold/50"
               placeholder="your@email.com" />
           </div>
@@ -11886,16 +12045,22 @@ function TestimonialsCarousel({ onNavigate }) {
   const count = items ? items.length : 0;
 
   // Auto-advance, unless paused, reduced-motion, or there's only one quote.
+  // `idx` in the deps restarts the clock after a manual step.
   useEffect(() => {
     if (paused || count <= 1) return;
     const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (reduce) return;
     const id = setInterval(() => setIdx((i) => (i + 1) % count), 9000);
     return () => clearInterval(id);
-  }, [paused, count]);
+  }, [paused, count, idx]);
 
   // Keep the index valid if the list changes underneath us.
   useEffect(() => { if (count && idx >= count) setIdx(0); }, [count, idx]);
+
+  const swipe = useSwipe(
+    () => count > 1 && setIdx((i) => (i + 1) % count),
+    () => count > 1 && setIdx((i) => (i - 1 + count) % count)
+  );
 
   if (items === null || count === 0) return null;
 
@@ -11903,7 +12068,7 @@ function TestimonialsCarousel({ onNavigate }) {
   const go = (n) => setIdx(((n % count) + count) % count);
 
   return (
-    <section className="relative bg-navy2/40 border border-cream/10 rounded-2xl p-6 sm:p-8 overflow-hidden"
+    <section className="relative bg-navy2/40 border border-cream/10 rounded-2xl p-6 sm:p-8 overflow-hidden" {...swipe}
       onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
       <div className="flex items-end justify-between gap-4 mb-5">
         <div>
@@ -12001,11 +12166,11 @@ function NewsletterSignup() {
       <form onSubmit={subscribe} className="flex flex-col sm:flex-row gap-3 max-w-lg">
         <input
           className="flex-1 bg-navy border border-cream/20 rounded-lg px-4 py-2.5 text-cream placeholder-cream/30 text-sm focus:outline-none focus:border-gold/50"
-          type="text" placeholder="Your name (optional)" value={name}
+          type="text" placeholder="Your name (optional)" value={name} autoComplete="name"
           onChange={(e) => setName(e.target.value)} />
         <input
           className="flex-1 bg-navy border border-cream/20 rounded-lg px-4 py-2.5 text-cream placeholder-cream/30 text-sm focus:outline-none focus:border-gold/50"
-          type="email" placeholder="Email address" value={email} required
+          type="email" placeholder="Email address" value={email} required autoComplete="email"
           onChange={(e) => setEmail(e.target.value)} />
         <button type="submit" disabled={busy || !email.trim()}
           className="px-6 py-2.5 bg-gold text-navy font-semibold rounded-lg text-sm hover:bg-gold/90 transition-colors disabled:opacity-50 whitespace-nowrap">
@@ -12113,7 +12278,7 @@ function TestimonialSubmitPage({ token }) {
         </div>
         <form onSubmit={submit} className="bg-navy2 border border-cream/15 rounded-2xl p-6 space-y-4">
           <Field label="Your Name">
-            <input className={inputCls} value={form.name} required placeholder="Full name"
+            <input className={inputCls} value={form.name} required placeholder="Full name" autoComplete="name"
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
           </Field>
           <Field label="Your Role / Title (optional)">
