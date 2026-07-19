@@ -42,9 +42,9 @@ init();
 const seeded = seed();
 
 // ---- Stripe (merch shop payments) -------------------------------------------
-// Configure with STRIPE_SECRET_KEY / STRIPE_PUBLISHABLE_KEY. When unset, online
-// payment is simply unavailable and shipped/free orders can't be placed — the
-// shop still works for in-person-pay pickup orders.
+// Configure with STRIPE_SECRET_KEY / STRIPE_PUBLISHABLE_KEY. When unset, the
+// shop catalog still browses but no orders can be placed — all payment goes
+// through Stripe-hosted Checkout.
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 // Test-mode keys decline every real card ("Your card was declined") — only
@@ -921,39 +921,6 @@ app.get('/api/shop/items/:id/photo', (req, res) => {
 });
 
 
-// Insert a non-Stripe order (in-person pickup), decrementing inventory in one
-// transaction. Throws Error with .code OUT_OF_STOCK when stock is short.
-function insertOrder(v, { paymentMethod, paymentStatus }) {
-  const p = v.pricing;
-  const addressJson = v.address ? JSON.stringify(v.address) : '';
-  const tx = db.transaction(() => {
-    let upd;
-    if (p.variant) {
-      upd = db.prepare('UPDATE merch_variants SET inventory = inventory - ? WHERE id = ? AND inventory >= ?').run(p.qty, p.variant.id, p.qty);
-    } else {
-      upd = db.prepare('UPDATE merch_items SET inventory = inventory - ? WHERE id = ? AND inventory >= ?').run(p.qty, p.item.id, p.qty);
-    }
-    if (upd.changes === 0) { const e = new Error('OUT_OF_STOCK'); e.code = 'OUT_OF_STOCK'; throw e; }
-    return db.prepare(`INSERT INTO merch_orders (
-      itemId, variantId, itemName, variantLabel, quantity,
-      buyerName, buyerEmail, buyerPhone, deliveryMethod, shippingAddress, studentEmail,
-      subtotal, total, paymentMethod, paymentStatus, fulfillmentStatus, stripePaymentIntentId
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', '')`).run(
-      p.item.id, p.variant ? p.variant.id : null,
-      p.item.name, p.variant ? p.variant.label : '', p.qty,
-      v.buyerName, v.buyerEmail, v.buyerPhone, v.deliveryMethod, addressJson, v.studentEmail,
-      p.subtotal, p.total, paymentMethod, paymentStatus,
-    );
-  });
-  return tx();
-}
-
-function orderInsertError(res, e) {
-  if (e.code === 'OUT_OF_STOCK') return res.status(409).json({ error: 'Sorry, that item just sold out.' });
-  console.error('[shop] order insert failed:', e.message);
-  return res.status(500).json({ error: 'Could not place order — please try again.' });
-}
-
 function notifyManagersOfOrder(order) {
   const managers = db.prepare("SELECT id, email FROM users WHERE role = 'admin' OR canManageRoster = 1").all();
   const label = order.fulfillmentStatus === 'needs_review' ? ' (needs review)' : '';
@@ -964,9 +931,9 @@ function notifyManagersOfOrder(order) {
   }
 }
 
-// Idempotently record a paid Stripe order. Called by both /api/shop/order (the
-// browser) and the webhook (Stripe) — whichever arrives first creates the row;
-// the other becomes a no-op. Keyed on the PaymentIntent id (unique index).
+// Idempotently record a paid Stripe order. Called by both /api/shop/confirm-checkout
+// (the browser) and the webhook (Stripe) — whichever arrives first creates the
+// row; the other becomes a no-op. Keyed on the session id (unique index).
 // Cart metadata we stash on the Checkout Session (and its PaymentIntent) — the
 // item/variant/qty and pickup info Stripe doesn't know. Buyer contact and
 // shipping address are collected by Stripe on its page, not stored here.
@@ -1070,7 +1037,7 @@ function recordCheckoutSession(session) {
 // phone, shipping address (for shipped orders), and any promotion code on its
 // own page. We only pass the cart + pickup info along as metadata.
 app.post('/api/shop/create-checkout-session', rateLimit({ windowMs: 60 * 60 * 1000, max: 30, name: 'shop-checkout' }), async (req, res) => {
-  if (!stripe) return res.status(503).json({ error: 'Online payment is not configured yet — please choose to pay in person.' });
+  if (!stripe) return res.status(503).json({ error: 'Online payment is not configured yet — please check back soon.' });
   let { itemId, variantId, quantity, deliveryMethod, studentEmail } = req.body || {};
   deliveryMethod = deliveryMethod === 'pickup' ? 'pickup' : 'ship';
   studentEmail = String(studentEmail || '').trim().slice(0, 200);
@@ -1080,7 +1047,7 @@ app.post('/api/shop/create-checkout-session', rateLimit({ windowMs: 60 * 60 * 10
   const p = computeOrderPricing({ itemId, variantId, quantity });
   if (p.error) return res.status(400).json({ error: p.error });
   // Stripe rejects card charges under 50¢. Say so plainly.
-  if (p.total < 50) return res.status(400).json({ error: 'Online payments must be at least $0.50 — for smaller amounts, choose student pickup and pay in person.' });
+  if (p.total < 50) return res.status(400).json({ error: 'Orders must total at least $0.50.' });
 
   const base = (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
   const lineName = `${p.item.name}${p.variant ? ' — ' + p.variant.label : ''}${p.qty > 1 ? ' × ' + p.qty : ''}`;
@@ -1150,29 +1117,8 @@ app.post('/api/shop/confirm-checkout', rateLimit({ windowMs: 60 * 60 * 1000, max
   });
 });
 
-// In-person pickup orders never touch Stripe (paid cash/Venmo later), so we
-// collect the buyer's name + school email ourselves and record them as pending.
-app.post('/api/shop/order', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name: 'shop-order' }), (req, res) => {
-  const body = req.body || {};
-  const buyerName = String(body.buyerName || '').trim().slice(0, 120);
-  const buyerEmail = String(body.buyerEmail || '').trim().slice(0, 200);
-  const buyerPhone = String(body.buyerPhone || '').trim().slice(0, 30);
-  const studentEmail = String(body.studentEmail || '').trim().slice(0, 200);
-  if (!buyerName) return res.status(400).json({ error: 'Name is required.' });
-  if (!STUDENT_EMAIL_RE.test(studentEmail)) return res.status(400).json({ error: 'Pickup requires a valid @pcstudents.us email.' });
-  if (buyerEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(buyerEmail)) return res.status(400).json({ error: 'Please enter a valid email.' });
-
-  const p = computeOrderPricing({ itemId: body.itemId, variantId: body.variantId, quantity: body.quantity });
-  if (p.error) return res.status(400).json({ error: p.error });
-
-  const v = { pricing: p, buyerName, buyerEmail, buyerPhone, studentEmail, deliveryMethod: 'pickup', address: null };
-  let info;
-  try { info = insertOrder(v, { paymentMethod: 'inperson', paymentStatus: 'pending' }); }
-  catch (e) { return orderInsertError(res, e); }
-  const order = db.prepare('SELECT * FROM merch_orders WHERE id = ?').get(info.lastInsertRowid);
-  notifyManagersOfOrder(order);
-  return res.status(201).json({ ok: true, orderId: order.id, total: p.total, paymentStatus: 'pending' });
-});
+// In-person "pay at pickup" orders were removed — every order (shipped or
+// student pickup) is paid online through Stripe-hosted Checkout.
 
 // ---- Public Speaker Application form ------------------------------------------
 // The question list is VP-managed (speaker_form_config); the public form and
