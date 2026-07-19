@@ -61,6 +61,7 @@ function init() {
       podcastEnabled          INTEGER NOT NULL DEFAULT 1,
       calendarUrl             TEXT NOT NULL DEFAULT '',
       instagramUrl            TEXT NOT NULL DEFAULT '',
+      donationUrl             TEXT NOT NULL DEFAULT '',
       aboutText               TEXT NOT NULL DEFAULT '',
       homeAnnouncement        TEXT NOT NULL DEFAULT '',
       homeAnnouncementEnabled INTEGER NOT NULL DEFAULT 0,
@@ -793,6 +794,7 @@ function init() {
   if (!siteCols.includes('podcastEnabled'))          db.exec("ALTER TABLE site_settings ADD COLUMN podcastEnabled INTEGER NOT NULL DEFAULT 1");
   if (!siteCols.includes('calendarUrl'))              db.exec("ALTER TABLE site_settings ADD COLUMN calendarUrl TEXT NOT NULL DEFAULT ''");
   if (!siteCols.includes('instagramUrl'))             db.exec("ALTER TABLE site_settings ADD COLUMN instagramUrl TEXT NOT NULL DEFAULT ''");
+  if (!siteCols.includes('donationUrl'))              db.exec("ALTER TABLE site_settings ADD COLUMN donationUrl TEXT NOT NULL DEFAULT ''");
   if (!siteCols.includes('aboutText'))                db.exec("ALTER TABLE site_settings ADD COLUMN aboutText TEXT NOT NULL DEFAULT ''");
   if (!siteCols.includes('homeAnnouncement'))         db.exec("ALTER TABLE site_settings ADD COLUMN homeAnnouncement TEXT NOT NULL DEFAULT ''");
   if (!siteCols.includes('homeAnnouncementEnabled'))  db.exec("ALTER TABLE site_settings ADD COLUMN homeAnnouncementEnabled INTEGER NOT NULL DEFAULT 0");

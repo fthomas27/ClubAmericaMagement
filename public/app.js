@@ -2552,6 +2552,7 @@ function HomeEditor({ onSaved }) {
         podcastUrl: form.podcastUrl,
         calendarUrl: form.calendarUrl,
         instagramUrl: form.instagramUrl,
+        donationUrl: form.donationUrl,
         aboutText: form.aboutText,
         podcastEnabled: form.podcastEnabled,
       }});
@@ -2597,6 +2598,7 @@ function HomeEditor({ onSaved }) {
           <div className="sm:col-span-2"><Field label="Meeting location (fallback)"><input className={inputCls} value={form.meetingLocation || ''} onChange={set('meetingLocation')} placeholder="e.g. Room 214" /></Field></div>
           <div className="sm:col-span-2"><Field label="Podcast link (YouTube video or page URL)"><input className={inputCls} value={form.podcastUrl || ''} onChange={set('podcastUrl')} placeholder="https://www.youtube.com/watch?v=…" /></Field></div>
           <div className="sm:col-span-2"><Field label="Instagram link"><input className={inputCls} value={form.instagramUrl || ''} onChange={set('instagramUrl')} placeholder="https://www.instagram.com/yourclub" /></Field></div>
+          <div className="sm:col-span-2"><Field label="Donation link (Stripe payment/donation link)"><input className={inputCls} value={form.donationUrl || ''} onChange={set('donationUrl')} placeholder="https://donate.stripe.com/…" /></Field></div>
           <div className="sm:col-span-2"><Field label="About / Mission (shown on the public homepage)"><textarea className={inputCls + ' min-h-[120px] resize-y'} value={form.aboutText || ''} onChange={set('aboutText')} placeholder="Tell visitors who Club America is and what you stand for…" /></Field></div>
           {error && <div className="sm:col-span-2 text-red text-sm">{error}</div>}
           <div className="sm:col-span-2 flex gap-2">
@@ -3025,6 +3027,13 @@ function ShopPage() {
 
   return (
     <PublicPageShell title="Club America Shop" subtitle="Grab some gear — ship it to you or pick it up at school.">
+      {config && config.stripeTestMode && (
+        <div className="max-w-md mx-auto text-center text-sm text-gold bg-gold/10 border border-gold/40 rounded-lg px-4 py-3">
+          <b>Stripe test mode</b> — real cards will be declined. Card payments only work
+          with Stripe's test numbers (e.g. 4242 4242 4242 4242) until the server is
+          switched to live keys.
+        </div>
+      )}
       {checkoutNotice && (
         <div className="max-w-md mx-auto text-center text-sm text-cream/70 bg-navy2 border border-cream/15 rounded-lg px-4 py-3">
           {checkoutNotice}
@@ -3105,25 +3114,19 @@ function ShopItemCard({ item, onOrder }) {
   );
 }
 
-// Order flow. For card payment we hand off to Stripe-hosted Checkout, which
-// collects the buyer's email, phone, shipping address, and any promo code on its
-// own page — so we only pick the item + delivery here. In-person pickup never
-// touches Stripe, so we collect a name + school email and record it as pending.
+// Order flow. All payment is online via Stripe-hosted Checkout, which collects
+// the buyer's email, phone, shipping address, and any promo code on its own
+// page — so we only pick the item + delivery here. Student pickup just adds a
+// school email so the order can be handed over at school.
 function OrderModal({ item, config, onClose }) {
   const hasVariants = item.hasVariants;
   const firstInStock = hasVariants ? (item.variants.find((v) => v.inventory > 0) || item.variants[0]) : null;
   const [variantId, setVariantId] = useState(firstInStock ? firstInStock.id : '');
   const [quantity, setQuantity] = useState(1);
   const [deliveryMethod, setDeliveryMethod] = useState('ship');
-  const [payChoice, setPayChoice] = useState('stripe'); // pickup: stripe | inperson
-  const [buyerName, setBuyerName] = useState('');
-  const [buyerEmail, setBuyerEmail] = useState('');
-  const [buyerPhone, setBuyerPhone] = useState('');
   const [studentEmail, setStudentEmail] = useState('');
-  const [step, setStep] = useState('details'); // details -> done (in-person only)
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [orderResult, setOrderResult] = useState(null);
   // Stable per-modal token; combined with the cart it forms the Stripe
   // idempotency key so a retry can't create a duplicate Checkout Session.
   const idemSessionRef = useRef(Math.random().toString(36).slice(2) + Date.now().toString(36));
@@ -3136,11 +3139,8 @@ function OrderModal({ item, config, onClose }) {
   const MAX_PER_ORDER = 20;
   const maxQuantity = Math.max(1, Math.min(MAX_PER_ORDER, availableStock));
   const total = unitPrice * Math.max(1, quantity);
-  // Stripe won't charge a card under 50¢, so tiny totals are pickup + in-person only.
+  // Stripe won't charge a card under 50¢.
   const belowCardMinimum = total < 50;
-  const effectivePayChoice = deliveryMethod === 'pickup' && belowCardMinimum ? 'inperson' : payChoice;
-  const isInPerson = deliveryMethod === 'pickup' && effectivePayChoice === 'inperson';
-  const isOnline = !isInPerson; // shipped, or pickup paid online
 
   function validateDetails() {
     if (hasVariants && !variantId) return 'Please choose an option.';
@@ -3150,26 +3150,11 @@ function OrderModal({ item, config, onClose }) {
     if (deliveryMethod === 'pickup' && !/^[^@\s]+@pcstudents\.us$/i.test(studentEmail.trim())) {
       return 'A valid @pcstudents.us student email is required for pickup.';
     }
-    if (isInPerson && !buyerName.trim()) return 'Your name is required.';
-    if (isInPerson && buyerEmail.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(buyerEmail)) return 'Please enter a valid email.';
-    if (isOnline && total < 50) return 'Online orders must total at least $0.50 — pick student pickup to pay in person.';
+    if (belowCardMinimum) return 'Orders must total at least $0.50.';
     return '';
   }
 
-  // In-person pickup — recorded directly as pending (paid at school).
-  async function placeInPerson() {
-    const err = validateDetails(); if (err) { setError(err); return; }
-    setBusy(true); setError('');
-    try {
-      const d = await api('/shop/order', { method: 'POST', body: {
-        itemId: item.id, variantId: variant ? variant.id : null, quantity,
-        buyerName, buyerEmail, buyerPhone, studentEmail, deliveryMethod: 'pickup',
-      }});
-      setOrderResult(d); setStep('done');
-    } catch (err) { setError(err.message); } finally { setBusy(false); }
-  }
-
-  // Card payment — hand off to Stripe-hosted Checkout; the browser returns to
+  // Hand off to Stripe-hosted Checkout; the browser returns to
   // /shop?checkout=success where ShopPage confirms and records the order.
   async function startCheckout() {
     const err = validateDetails(); if (err) { setError(err); return; }
@@ -3185,28 +3170,20 @@ function OrderModal({ item, config, onClose }) {
     } catch (err) { setError(err.message); setBusy(false); }
   }
 
-  // Reset scroll when an in-person order completes so the confirmation is in view.
-  useEffect(() => {
-    if (step !== 'done') return;
-    try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (_) {}
-    window.scrollTo(0, 0);
-  }, [step]);
-
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
       <div className="bg-navy2 border border-cream/15 rounded-xl p-6 max-w-md w-full ca-scale-in max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
             <div className="font-display text-2xl text-gold">{item.name}</div>
-            {step !== 'done' && <div className="text-cream/50 text-sm">{formatCents(unitPrice)} each</div>}
+            <div className="text-cream/50 text-sm">{formatCents(unitPrice)} each</div>
           </div>
           <button onClick={onClose} className="text-cream/40 hover:text-cream text-xl leading-none">×</button>
         </div>
 
         {error && <div className="text-red text-sm mb-3 whitespace-pre-wrap">{error}</div>}
 
-        {step === 'details' && (
-          <div className="space-y-3">
+        <div className="space-y-3">
             {hasVariants && (
               <Field label="Option">
                 <select className={inputCls} value={variantId} onChange={(e) => setVariantId(e.target.value)}>
@@ -3244,68 +3221,20 @@ function OrderModal({ item, config, onClose }) {
               </Field>
             )}
 
-            {deliveryMethod === 'pickup' && !belowCardMinimum && (
-              <div>
-                <span className="block text-xs uppercase tracking-wider text-cream/60 mb-1.5">How will you pay?</span>
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => setPayChoice('stripe')}
-                    className={`flex-1 px-3 py-2 rounded-md text-sm border transition-colors ${payChoice === 'stripe' ? 'border-gold text-gold bg-gold/10' : 'border-cream/20 text-cream/70 hover:border-cream/40'}`}>
-                    Pay Online Now
-                  </button>
-                  <button type="button" onClick={() => setPayChoice('inperson')}
-                    className={`flex-1 px-3 py-2 rounded-md text-sm border transition-colors ${payChoice === 'inperson' ? 'border-gold text-gold bg-gold/10' : 'border-cream/20 text-cream/70 hover:border-cream/40'}`}>
-                    Pay In Person
-                  </button>
-                </div>
-              </div>
-            )}
-            {deliveryMethod === 'pickup' && belowCardMinimum && (
-              <div className="text-sm text-cream/70 bg-navy border border-cream/20 rounded-md px-3 py-2">
-                Orders under $0.50 are paid in person at pickup.
-              </div>
-            )}
-
-            {isInPerson && (
-              <>
-                <Field label="Your Name"><input className={inputCls} value={buyerName} onChange={(e) => setBuyerName(e.target.value)} /></Field>
-                <Field label="Email (optional)"><input type="email" className={inputCls} value={buyerEmail} onChange={(e) => setBuyerEmail(e.target.value)} /></Field>
-                <Field label="Phone (optional)"><input className={inputCls} value={buyerPhone} onChange={(e) => setBuyerPhone(e.target.value)} /></Field>
-              </>
-            )}
-
-            {isOnline && (
-              <div className={`text-sm rounded-md px-3 py-2 ${config.stripeEnabled ? 'text-cream/60 bg-navy border border-cream/15' : 'text-red'}`}>
-                {config.stripeEnabled
-                  ? `You'll enter your contact info${deliveryMethod === 'ship' ? ', shipping address' : ''}, card, and any promo code on Stripe's secure checkout page.`
-                  : "Online payment isn't available right now — choose student pickup and pay in person, or contact the secretary."}
-              </div>
-            )}
+            <div className={`text-sm rounded-md px-3 py-2 ${config.stripeEnabled ? 'text-cream/60 bg-navy border border-cream/15' : 'text-red'}`}>
+              {config.stripeEnabled
+                ? `You'll enter your contact info${deliveryMethod === 'ship' ? ', shipping address' : ''}, card, and any promo code on Stripe's secure checkout page.`
+                : "Online payment isn't available right now — please check back soon or contact the secretary."}
+            </div>
 
             <div className="pt-3 border-t border-cream/10 flex items-center justify-between font-semibold">
               <span className="text-cream">Total</span><span className="text-gold">{formatCents(total)}</span>
             </div>
 
-            {isInPerson ? (
-              <Button variant="gold" className="w-full mt-1" onClick={placeInPerson} disabled={busy}>
-                {busy ? <span className="flex items-center justify-center gap-2"><Spinner /> Placing…</span> : 'Place Order (pay at pickup)'}
-              </Button>
-            ) : (
-              <Button variant="gold" className="w-full mt-1" onClick={startCheckout} disabled={busy || !config.stripeEnabled}>
-                {busy ? <span className="flex items-center justify-center gap-2"><Spinner /> Redirecting…</span> : `Continue to Checkout · ${formatCents(total)}`}
-              </Button>
-            )}
-          </div>
-        )}
-
-        {step === 'done' && orderResult && (
-          <div className="text-center py-4 space-y-3">
-            <div className="text-4xl">🎉</div>
-            <div className="font-display text-xl text-gold">Order placed!</div>
-            <p className="text-sm text-cream/60">We'll email you when your order is ready for pickup at school. Please pay at pickup.</p>
-            <p className="text-xs text-cream/40">Thanks for supporting the Club America fundraiser!</p>
-            <Button variant="gold" onClick={onClose}>Done</Button>
-          </div>
-        )}
+            <Button variant="gold" className="w-full mt-1" onClick={startCheckout} disabled={busy || !config.stripeEnabled}>
+              {busy ? <span className="flex items-center justify-center gap-2"><Spinner /> Redirecting…</span> : `Continue to Checkout · ${formatCents(total)}`}
+            </Button>
+        </div>
       </div>
     </div>
   );
@@ -4529,6 +4458,12 @@ function PublicHomePage({ home, cards, onNavigate }) {
                 className="px-8 py-3.5 border border-gold/50 text-gold hover:bg-gold/10 rounded-lg transition-all text-sm font-medium active:scale-95 hover:-translate-y-0.5">
                 Meet the Board
               </button>
+              {home.donationUrl && (
+                <a href={ensureHttps(home.donationUrl)} target="_blank" rel="noopener"
+                  className="px-8 py-3.5 bg-gold hover:bg-gold/90 text-navy font-semibold rounded-lg transition-all shadow-lg shadow-gold/25 text-sm active:scale-95 hover:shadow-xl hover:shadow-gold/35 hover:-translate-y-0.5 flex items-center gap-2">
+                  <span aria-hidden="true">♥</span> Donate
+                </a>
+              )}
               {home.instagramUrl && <InstagramLink url={home.instagramUrl} />}
             </div>
           </TiltScene>
