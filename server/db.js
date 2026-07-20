@@ -215,6 +215,16 @@ function init() {
     CREATE INDEX IF NOT EXISTS idx_site_visits_visitor
       ON site_visits(visitorId);
 
+    -- Browsers known to belong to board members (marked at portal login).
+    -- Site Activity excludes these visitorIds entirely — including rows
+    -- logged before the browser was marked, which retroactively removes the
+    -- board's own historical traffic from the stats.
+    CREATE TABLE IF NOT EXISTS internal_visitors (
+      visitorId TEXT PRIMARY KEY,
+      userId    INTEGER,
+      markedAt  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     -- AI-generated private notes for individual board members.
     CREATE TABLE IF NOT EXISTS ai_notes (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,

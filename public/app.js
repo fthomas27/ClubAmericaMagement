@@ -430,7 +430,11 @@ function Login({ onLogin, onBack }) {
     if (!cleanUser || !password) { setError('Enter your username and password.'); return; }
     setLoading(true);
     try {
-      const data = await api('/auth/login', { method: 'POST', body: { username: cleanUser, password } });
+      // Sending this browser's visitor id lets Site Activity exclude board
+      // members' own traffic from the public-site stats (past and future).
+      let visitorId = '';
+      try { visitorId = getVisitorId(); } catch (_) {}
+      const data = await api('/auth/login', { method: 'POST', body: { username: cleanUser, password, visitorId } });
       localStorage.setItem(TOKEN_KEY, data.token);
       onLogin(data.user);
     } catch (err) {
@@ -6781,7 +6785,7 @@ function StatBar({ label, count, total, color = 'bg-gold', leading = null }) {
   );
 }
 
-function SiteActivityPage() {
+function SiteActivityPage({ isAdmin = false }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -6789,6 +6793,24 @@ function SiteActivityPage() {
   const [tab, setTab] = useState('overview');
   const [visitsVisible, setVisitsVisible] = useState(50);
   const [exporting, setExporting] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [confirmEl, confirm] = useConfirm();
+
+  const resetData = async () => {
+    const ok = await confirm({
+      title: 'Reset site activity?',
+      message: 'This permanently deletes every recorded visit and starts the stats over from zero. The old numbers cannot be recovered.',
+      confirmLabel: 'Delete everything',
+      danger: true,
+    });
+    if (!ok) return;
+    setResetting(true);
+    try {
+      await api('/site-activity', { method: 'DELETE' });
+      await load();
+    } catch (e) { setError(e.message); }
+    finally { setResetting(false); }
+  };
 
   const load = async (opts = {}) => {
     if (!opts.silent) setLoading(true);
@@ -6956,8 +6978,18 @@ function SiteActivityPage() {
           >
             {loading ? <><Spinner className="w-3 h-3" /> …</> : 'Refresh'}
           </button>
+          {isAdmin && (
+            <button
+              onClick={resetData}
+              disabled={resetting}
+              className="shrink-0 text-xs text-red/80 hover:text-red border border-red/30 hover:border-red/60 px-3 py-1.5 rounded transition-colors disabled:opacity-40"
+            >
+              {resetting ? 'Resetting…' : 'Reset data'}
+            </button>
+          )}
         </div>
       </div>
+      {confirmEl}
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -9415,7 +9447,7 @@ function App() {
   else if (view.type === 'org') content = <OrgChart />;
   else if (view.type === 'admin') content = me.role === 'admin' ? <AdminPanel users={users} reload={bump} /> : null;
   else if (view.type === 'logistics') content = (me.role === 'admin' || me.canViewLogistics) ? <LogisticsPage /> : null;
-  else if (view.type === 'siteactivity') content = (me.role === 'admin' || me.canViewLogistics) ? <SiteActivityPage /> : null;
+  else if (view.type === 'siteactivity') content = (me.role === 'admin' || me.canViewLogistics) ? <SiteActivityPage isAdmin={me.role === 'admin'} /> : null;
   else if (view.type === 'ai') content = me.role === 'admin' ? <AIChatPage me={me} /> : null;
   else if (view.type === 'howto') content = isMgrOrAdmin ? <HowToPage me={me} /> : null;
   else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;

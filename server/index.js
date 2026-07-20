@@ -363,6 +363,13 @@ app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 40, name:
     const ip = String(req.ip || '').trim();
     db.prepare('INSERT INTO login_logs (userId, username, ipAddress) VALUES (?, ?, ?)').run(user.id, user.username, ip);
   } catch (_) {}
+  // Remember this browser's site-visit id as belonging to a board member so
+  // Site Activity can exclude its traffic — including views it logged in the
+  // past, before the browser was ever marked.
+  try {
+    const vid = String((req.body || {}).visitorId || '').trim().slice(0, 64);
+    if (vid) db.prepare('INSERT OR IGNORE INTO internal_visitors (visitorId, userId) VALUES (?, ?)').run(vid, user.id);
+  } catch (_) {}
   res.json({ token: signToken(user), user: publicUser(user) });
 });
 
@@ -3630,12 +3637,15 @@ const SITE_RANGES = {
     trendDays: 30,
   },
 };
-// New bot traffic is rejected at /api/site-visit, but rows logged before that
-// existed (or reclassified by the db.js migration) must not count either —
-// fold the filter into every range clause so no stats query can miss it.
+// Rows that must never count as audience traffic: bots (rejected at
+// /api/site-visit going forward, reclassified by the db.js migration for
+// old rows) and board members' own browsers (visitorIds marked at portal
+// login — which also retroactively removes their pre-existing rows). Fold
+// the filter into every range clause so no stats query can miss it.
+const AUDIENCE_ONLY = "deviceType != 'Bot' AND visitorId NOT IN (SELECT visitorId FROM internal_visitors)";
 for (const r of Object.values(SITE_RANGES)) {
-  r.cur  = `(${r.cur}) AND deviceType != 'Bot'`;
-  r.prev = `(${r.prev}) AND deviceType != 'Bot'`;
+  r.cur  = `(${r.cur}) AND ${AUDIENCE_ONLY}`;
+  r.prev = `(${r.prev}) AND ${AUDIENCE_ONLY}`;
 }
 
 app.get('/api/site-activity/stats', (req, res) => {
@@ -3658,12 +3668,12 @@ app.get('/api/site-activity/stats', (req, res) => {
 
   // Live: distinct visitors seen in the last 5 minutes (independent of range).
   const activeNow = db.prepare(
-    "SELECT COUNT(DISTINCT visitorId) AS n FROM site_visits WHERE viewedAt >= datetime('now','-5 minutes') AND deviceType != 'Bot'"
+    `SELECT COUNT(DISTINCT visitorId) AS n FROM site_visits WHERE viewedAt >= datetime('now','-5 minutes') AND ${AUDIENCE_ONLY}`
   ).get().n;
 
   // All-time reference numbers, always shown regardless of range.
   const allTime = db.prepare(
-    "SELECT COUNT(*) AS views, COUNT(DISTINCT visitorId) AS visitors FROM site_visits WHERE deviceType != 'Bot'"
+    `SELECT COUNT(*) AS views, COUNT(DISTINCT visitorId) AS visitors FROM site_visits WHERE ${AUDIENCE_ONLY}`
   ).get();
 
   const totals = {
@@ -3698,7 +3708,7 @@ app.get('/api/site-activity/stats', (req, res) => {
   const dailyTrend = db.prepare(`
     SELECT DATE(viewedAt) AS day, COUNT(*) AS views, COUNT(DISTINCT visitorId) AS visitors
     FROM site_visits
-    WHERE viewedAt >= DATE('now', '-${R.trendDays - 1} days') AND deviceType != 'Bot'
+    WHERE viewedAt >= DATE('now', '-${R.trendDays - 1} days') AND ${AUDIENCE_ONLY}
     GROUP BY day
     ORDER BY day ASC
   `).all();
@@ -3812,6 +3822,15 @@ app.get('/api/site-activity/export.csv', (req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="site-activity-${req.query.range || '7d'}.csv"`);
   res.send(lines.join('\n'));
+});
+
+// Wipe all recorded site visits and start counting fresh. Admin only (not
+// canViewLogistics) — it's destructive, so the president/VP has to pull the
+// trigger themselves from the dashboard's confirm dialog.
+app.delete('/api/site-activity', (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+  const deleted = db.prepare('DELETE FROM site_visits').run().changes;
+  res.json({ ok: true, deleted });
 });
 
 // ---- Grade Pipeline ---------------------------------------------------------
