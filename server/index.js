@@ -573,15 +573,26 @@ app.post('/api/track', rateLimit({ windowMs: 60 * 1000, max: 120, name: 'track' 
 
 // Lightweight user-agent parsing — enough for a device/browser breakdown
 // without pulling in a heavyweight dependency.
+// Crawlers must be detected before the device checks — Googlebot's smartphone
+// UA contains "Android … Mobile" and would otherwise be classed as a real
+// mobile visitor. An empty UA is treated as a bot too: real browsers always
+// send one, scripts and monitors often don't.
+function isBotUserAgent(ua) {
+  const s = String(ua || '');
+  if (!s.trim()) return true;
+  return /bot|crawl|spider|slurp|bingpreview|headless|lighthouse|facebookexternalhit|python|curl\/|wget\/|axios\/|go-http-client|node-fetch|okhttp/i.test(s);
+}
+
 function parseUserAgent(ua) {
   const s = String(ua || '');
   let deviceType = 'Desktop';
-  if (/\b(iPad|Tablet)\b|Android(?!.*Mobile)/i.test(s)) deviceType = 'Tablet';
+  if (isBotUserAgent(s)) deviceType = 'Bot';
+  else if (/\b(iPad|Tablet)\b|Android(?!.*Mobile)/i.test(s)) deviceType = 'Tablet';
   else if (/Mobi|iPhone|iPod|Android.*Mobile|Windows Phone/i.test(s)) deviceType = 'Mobile';
-  else if (/bot|crawl|spider|slurp|bingpreview/i.test(s)) deviceType = 'Bot';
 
   let browser = 'Other';
-  if (/Edg[eiOS]?\//i.test(s)) browser = 'Edge';
+  if (isBotUserAgent(s)) browser = 'Bot';
+  else if (/Edg[eiOS]?\//i.test(s)) browser = 'Edge';
   else if (/OPR\/|Opera/i.test(s)) browser = 'Opera';
   else if (/SamsungBrowser/i.test(s)) browser = 'Samsung Internet';
   else if (/CriOS/i.test(s)) browser = 'Chrome';
@@ -589,7 +600,6 @@ function parseUserAgent(ua) {
   else if (/Firefox\//i.test(s)) browser = 'Firefox';
   else if (/Chrome\//i.test(s)) browser = 'Chrome';
   else if (/Version\/.*Safari/i.test(s)) browser = 'Safari';
-  else if (/bot|crawl|spider/i.test(s)) browser = 'Bot';
   return { deviceType, browser };
 }
 
@@ -626,14 +636,23 @@ function geoFor(req, ip) {
 // site (path, referrer, rough geo from IP, device/browser). No auth required.
 app.post('/api/site-visit', rateLimit({ windowMs: 60 * 1000, max: 120, name: 'site-visit' }), (req, res) => {
   const { visitorId, path: visitPath, referrer } = req.body || {};
+  // Crawlers that execute JS (Googlebot, link previewers, uptime monitors)
+  // would otherwise register as real views and — since their storage never
+  // persists — as a brand-new visitor on every single hit. Don't log them.
+  if (isBotUserAgent(req.headers['user-agent'])) return res.json({ ok: true, id: null });
   const ip = clientIp(req);
   const geo = geoFor(req, ip);
   const { deviceType, browser } = parseUserAgent(req.headers['user-agent']);
+  // A missing/empty visitorId (blocked storage, malformed request) must never
+  // collapse into a shared '' bucket — that would undercount distinct
+  // visitors and skew new-vs-returning. Fall back to a one-off random id so
+  // it still counts as its own visitor instead of merging with everyone else.
+  const cleanVisitorId = String(visitorId || '').trim().slice(0, 64) || crypto.randomUUID();
   const info = db.prepare(`
     INSERT INTO site_visits (visitorId, path, referrer, ipAddress, country, region, city, userAgent, deviceType, browser)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    String(visitorId || '').slice(0, 64),
+    cleanVisitorId,
     String(visitPath || '/').slice(0, 200),
     String(referrer || '').slice(0, 300),
     ip,
@@ -3611,6 +3630,13 @@ const SITE_RANGES = {
     trendDays: 30,
   },
 };
+// New bot traffic is rejected at /api/site-visit, but rows logged before that
+// existed (or reclassified by the db.js migration) must not count either —
+// fold the filter into every range clause so no stats query can miss it.
+for (const r of Object.values(SITE_RANGES)) {
+  r.cur  = `(${r.cur}) AND deviceType != 'Bot'`;
+  r.prev = `(${r.prev}) AND deviceType != 'Bot'`;
+}
 
 app.get('/api/site-activity/stats', (req, res) => {
   if (req.user.role !== 'admin' && !req.user.canViewLogistics) return res.status(403).json({ error: 'Access denied' });
@@ -3632,12 +3658,12 @@ app.get('/api/site-activity/stats', (req, res) => {
 
   // Live: distinct visitors seen in the last 5 minutes (independent of range).
   const activeNow = db.prepare(
-    "SELECT COUNT(DISTINCT visitorId) AS n FROM site_visits WHERE viewedAt >= datetime('now','-5 minutes')"
+    "SELECT COUNT(DISTINCT visitorId) AS n FROM site_visits WHERE viewedAt >= datetime('now','-5 minutes') AND deviceType != 'Bot'"
   ).get().n;
 
   // All-time reference numbers, always shown regardless of range.
   const allTime = db.prepare(
-    'SELECT COUNT(*) AS views, COUNT(DISTINCT visitorId) AS visitors FROM site_visits'
+    "SELECT COUNT(*) AS views, COUNT(DISTINCT visitorId) AS visitors FROM site_visits WHERE deviceType != 'Bot'"
   ).get();
 
   const totals = {
@@ -3672,7 +3698,7 @@ app.get('/api/site-activity/stats', (req, res) => {
   const dailyTrend = db.prepare(`
     SELECT DATE(viewedAt) AS day, COUNT(*) AS views, COUNT(DISTINCT visitorId) AS visitors
     FROM site_visits
-    WHERE viewedAt >= DATE('now', '-${R.trendDays - 1} days')
+    WHERE viewedAt >= DATE('now', '-${R.trendDays - 1} days') AND deviceType != 'Bot'
     GROUP BY day
     ORDER BY day ASC
   `).all();

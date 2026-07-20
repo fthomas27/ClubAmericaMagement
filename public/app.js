@@ -47,16 +47,31 @@ function track(event, label = '') {
 // referrer, rough geo from IP, time on page). Never blocks the UI.
 // ---------------------------------------------------------------------------
 const VISITOR_ID_KEY = 'ca_visitor_id';
+let memoryVisitorId = null;
 function getVisitorId() {
-  let id = localStorage.getItem(VISITOR_ID_KEY);
-  if (!id) {
-    id = window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    localStorage.setItem(VISITOR_ID_KEY, id);
+  // localStorage can throw (private browsing, blocked storage, quota) — fall
+  // back to an in-memory id for the session rather than letting a distinct
+  // visitor silently collapse into an empty/undefined bucket server-side.
+  try {
+    let id = localStorage.getItem(VISITOR_ID_KEY);
+    if (!id) {
+      id = window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      localStorage.setItem(VISITOR_ID_KEY, id);
+    }
+    return id;
+  } catch (_) {
+    if (!memoryVisitorId) {
+      memoryVisitorId = window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+    return memoryVisitorId;
   }
-  return id;
 }
 
 function trackSiteVisit(path) {
+  // Board members browsing the public site while signed in are not audience
+  // traffic — with ~20 board accounts hitting the homepage on every portal
+  // login, counting them badly inflates the Site Activity numbers.
+  try { if (localStorage.getItem(TOKEN_KEY)) return Promise.resolve(null); } catch (_) {}
   return fetch('/api/site-visit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -460,9 +475,6 @@ function Login({ onLogin, onBack }) {
           <Button type="submit" variant="gold" className="w-full" disabled={loading}>
             {loading ? 'Signing in…' : 'Sign In'}
           </Button>
-          <p className="text-center text-xs text-cream/40">
-            First time? Your password is your username — you'll set a new one after signing in.
-          </p>
           {onBack && (
             <button type="button" onClick={onBack} className="block mx-auto text-xs text-cream/50 hover:text-gold">
               ← Back to homepage
@@ -4114,7 +4126,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         </section>
         <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 space-y-8">
           <HomeAnnouncementBanner home={home} />
-          {home.memberCount > 0 && <MemberStatsBar memberCount={home.memberCount} />}
+          {home.memberCount > 40 && <MemberStatsBar memberCount={home.memberCount} />}
           {cards}
           <AboutSection home={home} />
           <ValuesSection />
@@ -4200,10 +4212,24 @@ function PublicSite({ home, events, volunteerEvents, onEnterPortal }) {
   useEffect(() => {
     const prev = visitRef.current;
     if (prev.id) sendVisitDuration(prev.id, Math.round((Date.now() - prev.start) / 1000));
-    visitRef.current = { id: null, start: Date.now() };
-    trackSiteVisit(window.location.pathname).then((d) => {
-      if (d && d.id) visitRef.current.id = d.id;
-    });
+    // Capture this navigation's own record so a late-arriving response can't
+    // tag whatever page the visitor has since moved on to (visitRef.current
+    // may point at a newer record by the time this resolves).
+    const rec = { id: null, start: Date.now() };
+    visitRef.current = rec;
+    const fire = () => {
+      rec.start = Date.now();
+      trackSiteVisit(window.location.pathname).then((d) => {
+        if (d && d.id) rec.id = d.id;
+      });
+    };
+    // Chrome speculatively prerenders pages the visitor may never open — hold
+    // the view until the prerendered page is actually shown.
+    if (document.prerendering) {
+      document.addEventListener('prerenderingchange', fire, { once: true });
+      return () => document.removeEventListener('prerenderingchange', fire);
+    }
+    fire();
   }, [page]);
   useEffect(() => {
     const flush = () => {
@@ -4460,7 +4486,7 @@ function PublicPageShell({ title, subtitle, children }) {
 // The landing page: the immersive hero, then the announcement, stats, and the
 // Next Meeting / Podcast cards. Everything else now lives on its own page.
 function PublicHomePage({ home, cards, onNavigate }) {
-  const hasBelow = (home.homeAnnouncementEnabled && home.homeAnnouncement) || home.memberCount > 0;
+  const hasBelow = (home.homeAnnouncementEnabled && home.homeAnnouncement) || home.memberCount > 40;
   return (
     <div>
       <div className="relative min-h-[calc(100vh-5rem)] flex flex-col overflow-hidden">
@@ -4540,7 +4566,7 @@ function PublicHomePage({ home, cards, onNavigate }) {
         </div>
         <main id="club-content" className="relative max-w-5xl mx-auto px-4 sm:px-6 pb-20 pt-10 space-y-8">
           {home.homeAnnouncementEnabled && home.homeAnnouncement && <Reveal><HomeAnnouncementBanner home={home} /></Reveal>}
-          {home.memberCount > 0 && <Reveal><MemberStatsBar memberCount={home.memberCount} /></Reveal>}
+          {home.memberCount > 40 && <Reveal><MemberStatsBar memberCount={home.memberCount} /></Reveal>}
           <Reveal>{cards}</Reveal>
           <Reveal><SpeakerCTA onNavigate={onNavigate} /></Reveal>
           <Reveal><TestimonialsCarousel onNavigate={onNavigate} /></Reveal>
