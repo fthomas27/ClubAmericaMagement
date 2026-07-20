@@ -1424,6 +1424,31 @@ app.post('/api/me/telegram/disconnect', (req, res) => {
   res.json({ ok: true, linked: false });
 });
 
+// Admins & managers can DM a board member through the bot from the team page.
+app.post('/api/telegram/message', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Managers and admins only' });
+  if (!telegramEnabled()) return res.status(400).json({ error: 'Telegram is not set up yet' });
+  const userId = Number((req.body || {}).userId);
+  const text = String((req.body || {}).text || '').trim().slice(0, 3000);
+  if (!userId || !text) return res.status(400).json({ error: 'Recipient and a message are required' });
+  const target = db.prepare('SELECT id, displayName, telegramChatId FROM users WHERE id = ?').get(userId);
+  if (!target) return res.status(404).json({ error: 'That member no longer exists' });
+  if (!target.telegramChatId) return res.status(400).json({ error: `${target.displayName} hasn't connected Telegram yet` });
+  sendTelegram(target.telegramChatId, `💬 Message from ${req.user.displayName}:\n\n${text}`);
+  res.json({ ok: true });
+});
+
+// Broadcast a Telegram DM to every board member who's linked their account.
+app.post('/api/telegram/broadcast', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Managers and admins only' });
+  if (!telegramEnabled()) return res.status(400).json({ error: 'Telegram is not set up yet' });
+  const text = String((req.body || {}).text || '').trim().slice(0, 3000);
+  if (!text) return res.status(400).json({ error: 'A message is required' });
+  const recipients = db.prepare("SELECT telegramChatId FROM users WHERE telegramChatId != ''").all();
+  for (const r of recipients) sendTelegram(r.telegramChatId, `📢 Message to all of Club America from ${req.user.displayName}:\n\n${text}`);
+  res.json({ ok: true, sent: recipients.length });
+});
+
 // ---- In-app notifications ----------------------------------------------------
 app.get('/api/notifications', (req, res) => {
   const notifications = db

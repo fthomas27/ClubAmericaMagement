@@ -26,12 +26,15 @@ function signToken(user) {
 // the client. Photos are fetched only where needed (own profile, board page).
 function publicUser(u) {
   if (!u) return null;
-  const { passwordHash, photo, ...rest } = u;
+  // telegramChatId / telegramLinkCode are secrets (the link code lets someone
+  // claim the account's Telegram) — never expose them; surface only a boolean.
+  const { passwordHash, photo, telegramChatId, telegramLinkCode, ...rest } = u;
   return {
     ...rest,
     firstLogin: !!u.firstLogin,
     profileComplete: !!u.profileComplete,
     hasPhoto: !!photo,
+    telegramLinked: !!telegramChatId,
   };
 }
 
