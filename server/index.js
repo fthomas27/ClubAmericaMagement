@@ -56,6 +56,33 @@ if (STRIPE_TEST_MODE) {
 }
 const STUDENT_EMAIL_RE = /^[^@\s]+@pcstudents\.us$/i;
 
+// ---- Telegram DM notifications ----------------------------------------------
+// Board members can link their Telegram to their account (Profile → Connect
+// Telegram) and then receive a private DM for every in-app notification —
+// tasks assigned to them, orders placed, forms submitted, and so on. Set up
+// via BotFather: create a bot, then configure these three env vars. When
+// TELEGRAM_BOT_TOKEN is unset the whole feature quietly disables itself and
+// the "Connect" UI shows a "not set up yet" note instead.
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+const TELEGRAM_BOT_USERNAME = String(process.env.TELEGRAM_BOT_USERNAME || '').replace(/^@/, '').trim();
+// Guards the public webhook URL so only Telegram (which knows the secret path)
+// can post updates. Falls back to a token-derived value if not set explicitly.
+const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET ||
+  (TELEGRAM_BOT_TOKEN ? crypto.createHash('sha256').update('tg-webhook:' + TELEGRAM_BOT_TOKEN).digest('hex').slice(0, 32) : '');
+const telegramEnabled = () => !!TELEGRAM_BOT_TOKEN;
+
+// Fire-and-forget send of a Telegram message. Never throws, never blocks the
+// request that triggered it.
+function sendTelegram(chatId, text) {
+  if (!TELEGRAM_BOT_TOKEN || !chatId || !text) return;
+  fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text: String(text).slice(0, 4000), disable_web_page_preview: true }),
+  }).then((r) => { if (!r.ok) return r.text().then((t) => console.warn('[telegram] send failed:', r.status, t.slice(0, 200))); })
+    .catch((e) => console.warn('[telegram] send error:', e.message));
+}
+
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1); // behind Railway's proxy
@@ -195,6 +222,17 @@ function pushNotification(userId, message, link = '', type = 'info') {
       .run(userId, String(message).slice(0, 500), String(link || '').slice(0, 200), type);
   } catch (e) {
     console.error('[notification] insert failed:', e.message);
+  }
+  // Mirror to Telegram for members who've linked their account. Guarded so a
+  // Telegram outage can never affect the in-app notification above.
+  if (telegramEnabled()) {
+    try {
+      const row = db.prepare("SELECT telegramChatId FROM users WHERE id = ?").get(userId);
+      if (row && row.telegramChatId) {
+        const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+        sendTelegram(row.telegramChatId, `🔔 ${message}${appUrl ? `\n\nOpen the portal: ${appUrl}` : ''}`);
+      }
+    } catch (e) { console.warn('[telegram] notify lookup failed:', e.message); }
   }
 }
 
@@ -1292,6 +1330,43 @@ app.post('/api/public/speaker-apply', rateLimit({ windowMs: 60 * 60 * 1000, max:
   res.status(201).json({ ok: true, id: info.lastInsertRowid });
 });
 
+// ---- Telegram webhook (public — Telegram posts here) ------------------------
+// Telegram delivers bot updates to this URL. The :secret in the path is the
+// only thing gating it, so it must match TELEGRAM_WEBHOOK_SECRET. We only care
+// about the "/start <code>" a member sends when they tap their Connect link,
+// and "/stop" to unlink. Always answer 200 so Telegram doesn't retry.
+app.post('/api/telegram/webhook/:secret', (req, res) => {
+  if (!telegramEnabled() || req.params.secret !== TELEGRAM_WEBHOOK_SECRET) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  try {
+    const msg = (req.body && req.body.message) || {};
+    const chatId = msg.chat && msg.chat.id;
+    const text = String(msg.text || '').trim();
+    if (chatId && text) {
+      const startMatch = text.match(/^\/start(?:\s+(\S+))?/i);
+      if (startMatch) {
+        const code = String(startMatch[1] || '').trim();
+        const user = code ? db.prepare('SELECT id, displayName FROM users WHERE telegramLinkCode = ? AND telegramLinkCode != \'\'').get(code) : null;
+        if (user) {
+          // One code, one chat: clear it from any other account first.
+          db.prepare("UPDATE users SET telegramChatId = '' WHERE telegramChatId = ?").run(String(chatId));
+          db.prepare('UPDATE users SET telegramChatId = ? WHERE id = ?').run(String(chatId), user.id);
+          sendTelegram(chatId, `✅ Connected! You're linked as ${user.displayName} and will now get Club America updates here — tasks, orders, and form submissions. Send /stop any time to turn them off.`);
+        } else {
+          sendTelegram(chatId, `👋 Hi! To get Club America updates, open the "Connect Telegram" button on your profile in the board portal — it'll bring you back here with your personal link.`);
+        }
+      } else if (/^\/stop\b/i.test(text)) {
+        db.prepare("UPDATE users SET telegramChatId = '' WHERE telegramChatId = ?").run(String(chatId));
+        sendTelegram(chatId, '🔕 Done — you won\'t get Club America updates here anymore. Reconnect any time from your profile in the portal.');
+      }
+    }
+  } catch (e) {
+    console.warn('[telegram] webhook error:', e.message);
+  }
+  res.json({ ok: true });
+});
+
 // Everything past this point requires a changed password.
 app.use('/api', authenticate, requirePasswordChanged);
 
@@ -1317,6 +1392,36 @@ app.put('/api/me/profile', (req, res) => {
   db.prepare('UPDATE users SET photo = COALESCE(?, photo), bio = ?, email = ?, phone = ?, profileComplete = 1 WHERE id = ?')
     .run(photo || null, bio, email, phone, req.user.id);
   res.json({ user: publicUser(getUser(req.user.id)) });
+});
+
+// ---- Telegram account linking (per-member DM updates) -----------------------
+// Returns whether the feature is configured, whether this member is linked,
+// and a personal deep link that opens the bot with their one-time code.
+app.get('/api/me/telegram', (req, res) => {
+  if (!telegramEnabled() || !TELEGRAM_BOT_USERNAME) {
+    return res.json({ configured: false, linked: false });
+  }
+  const row = db.prepare('SELECT telegramChatId, telegramLinkCode FROM users WHERE id = ?').get(req.user.id);
+  let code = row.telegramLinkCode;
+  if (!code) {
+    code = crypto.randomBytes(12).toString('hex');
+    db.prepare('UPDATE users SET telegramLinkCode = ? WHERE id = ?').run(code, req.user.id);
+  }
+  res.json({
+    configured: true,
+    linked: !!row.telegramChatId,
+    connectUrl: `https://t.me/${TELEGRAM_BOT_USERNAME}?start=${code}`,
+  });
+});
+
+// Unlink Telegram from this account (also tell the chat it's off).
+app.post('/api/me/telegram/disconnect', (req, res) => {
+  const row = db.prepare('SELECT telegramChatId FROM users WHERE id = ?').get(req.user.id);
+  db.prepare("UPDATE users SET telegramChatId = '' WHERE id = ?").run(req.user.id);
+  if (row && row.telegramChatId) {
+    sendTelegram(row.telegramChatId, '🔕 This account was disconnected from Club America updates. Reconnect any time from your profile in the portal.');
+  }
+  res.json({ ok: true, linked: false });
 });
 
 // ---- In-app notifications ----------------------------------------------------
@@ -4772,11 +4877,39 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Something went wrong' });
 });
 
+// Point Telegram at our webhook so /start and /stop reach us. Idempotent —
+// safe to call on every boot. Needs APP_URL to build a public https URL.
+async function registerTelegramWebhook() {
+  if (!telegramEnabled()) {
+    console.log('[telegram] TELEGRAM_BOT_TOKEN not set — Telegram updates disabled.');
+    return;
+  }
+  const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+  if (!appUrl || !/^https:\/\//i.test(appUrl)) {
+    console.warn('[telegram] APP_URL (https) not set — cannot register webhook; DMs will still send but /start linking is inbound-only.');
+    return;
+  }
+  const url = `${appUrl}/api/telegram/webhook/${TELEGRAM_WEBHOOK_SECRET}`;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, allowed_updates: ['message'] }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (d.ok) console.log('[telegram] webhook registered.');
+    else console.warn('[telegram] setWebhook failed:', JSON.stringify(d).slice(0, 200));
+  } catch (e) {
+    console.warn('[telegram] setWebhook error:', e.message);
+  }
+}
+
 const PORT = process.env.PORT || 3000;
 if (require.main === module) {
   app.listen(PORT, () => {
     if (seeded) console.log('Seeded database with default Club America accounts.');
     console.log(`Club America Management running at http://localhost:${PORT}`);
+    registerTelegramWebhook();
   });
 }
 

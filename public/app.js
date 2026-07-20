@@ -669,6 +669,66 @@ function CropModal({ src, onCrop, onCancel }) {
 
 // Profile setup — runs right after the password step on first login, and is
 // reachable later via "Edit profile". Collects a photo and an intro bio.
+// Lets a board member link their Telegram so they get a private DM for every
+// portal notification — tasks assigned to them, orders, and form submissions.
+function TelegramConnect() {
+  const [status, setStatus] = useState(null); // { configured, linked, connectUrl }
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try { setStatus(await api('/me/telegram')); } catch (_) { setStatus({ configured: false }); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  // A member links inside Telegram in another tab/app — refresh when they come
+  // back so the "Connected" state shows without a manual reload.
+  useEffect(() => {
+    const onFocus = () => load();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [load]);
+
+  async function disconnect() {
+    setBusy(true);
+    try { await api('/me/telegram/disconnect', { method: 'POST' }); await load(); }
+    catch (_) {} finally { setBusy(false); }
+  }
+
+  if (!status) return null;
+
+  return (
+    <div className="border border-cream/10 rounded-lg p-4 bg-navy3/40">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-sky-400" aria-hidden="true">✈️</span>
+        <span className="text-cream font-medium text-sm">Telegram Updates</span>
+        {status.linked && (
+          <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded-full px-2 py-0.5">Connected</span>
+        )}
+      </div>
+      {!status.configured ? (
+        <p className="text-cream/45 text-xs">
+          Telegram updates aren't set up for the club yet. Once an admin configures the bot, you'll be able to connect here and get a DM whenever you're assigned a task or a form/order comes in.
+        </p>
+      ) : status.linked ? (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-cream/50 text-xs">You'll get a Telegram DM for your tasks, new orders, and form submissions.</p>
+          <button type="button" onClick={disconnect} disabled={busy}
+            className="shrink-0 text-xs text-red/80 hover:text-red border border-red/30 hover:border-red/60 px-3 py-1.5 rounded transition-colors disabled:opacity-40">
+            {busy ? '…' : 'Disconnect'}
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-cream/50 text-xs">Connect Telegram to get a private DM whenever you're assigned a task or a form/order comes in.</p>
+          <a href={status.connectUrl} target="_blank" rel="noopener" onClick={() => setTimeout(load, 4000)}
+            className="shrink-0 text-xs text-sky-300 hover:text-sky-200 border border-sky-400/40 hover:border-sky-400/70 px-3 py-1.5 rounded transition-colors">
+            Connect Telegram →
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProfileSetup({ me, forced, onDone, onSkip }) {
   const [photo, setPhoto] = useState('');
   const [rawSrc, setRawSrc] = useState(''); // original file src for re-cropping
@@ -755,6 +815,8 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
         <textarea className={inputCls + ' min-h-[140px] resize-y'} value={bio}
           onChange={(e) => setBio(e.target.value)} placeholder="Tell the club a bit about you — your year, what you're involved in, and why you're part of Club America." />
       </Field>
+
+      {!forced && <TelegramConnect />}
 
       {error && <div className="text-red text-sm">{error}</div>}
       <div className="flex gap-2">
