@@ -47,13 +47,24 @@ function track(event, label = '') {
 // referrer, rough geo from IP, time on page). Never blocks the UI.
 // ---------------------------------------------------------------------------
 const VISITOR_ID_KEY = 'ca_visitor_id';
+let memoryVisitorId = null;
 function getVisitorId() {
-  let id = localStorage.getItem(VISITOR_ID_KEY);
-  if (!id) {
-    id = window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    localStorage.setItem(VISITOR_ID_KEY, id);
+  // localStorage can throw (private browsing, blocked storage, quota) — fall
+  // back to an in-memory id for the session rather than letting a distinct
+  // visitor silently collapse into an empty/undefined bucket server-side.
+  try {
+    let id = localStorage.getItem(VISITOR_ID_KEY);
+    if (!id) {
+      id = window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      localStorage.setItem(VISITOR_ID_KEY, id);
+    }
+    return id;
+  } catch (_) {
+    if (!memoryVisitorId) {
+      memoryVisitorId = window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+    return memoryVisitorId;
   }
-  return id;
 }
 
 function trackSiteVisit(path) {
@@ -4197,9 +4208,13 @@ function PublicSite({ home, events, volunteerEvents, onEnterPortal }) {
   useEffect(() => {
     const prev = visitRef.current;
     if (prev.id) sendVisitDuration(prev.id, Math.round((Date.now() - prev.start) / 1000));
-    visitRef.current = { id: null, start: Date.now() };
+    // Capture this navigation's own record so a late-arriving response can't
+    // tag whatever page the visitor has since moved on to (visitRef.current
+    // may point at a newer record by the time this resolves).
+    const rec = { id: null, start: Date.now() };
+    visitRef.current = rec;
     trackSiteVisit(window.location.pathname).then((d) => {
-      if (d && d.id) visitRef.current.id = d.id;
+      if (d && d.id) rec.id = d.id;
     });
   }, [page]);
   useEffect(() => {

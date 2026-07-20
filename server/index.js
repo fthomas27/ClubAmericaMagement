@@ -629,11 +629,16 @@ app.post('/api/site-visit', rateLimit({ windowMs: 60 * 1000, max: 120, name: 'si
   const ip = clientIp(req);
   const geo = geoFor(req, ip);
   const { deviceType, browser } = parseUserAgent(req.headers['user-agent']);
+  // A missing/empty visitorId (blocked storage, malformed request) must never
+  // collapse into a shared '' bucket — that would undercount distinct
+  // visitors and skew new-vs-returning. Fall back to a one-off random id so
+  // it still counts as its own visitor instead of merging with everyone else.
+  const cleanVisitorId = String(visitorId || '').trim().slice(0, 64) || crypto.randomUUID();
   const info = db.prepare(`
     INSERT INTO site_visits (visitorId, path, referrer, ipAddress, country, region, city, userAgent, deviceType, browser)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    String(visitorId || '').slice(0, 64),
+    cleanVisitorId,
     String(visitPath || '/').slice(0, 200),
     String(referrer || '').slice(0, 300),
     ip,
