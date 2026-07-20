@@ -834,6 +834,20 @@ function init() {
   if (!visitCols.includes('deviceType')) db.exec("ALTER TABLE site_visits ADD COLUMN deviceType TEXT NOT NULL DEFAULT ''");
   if (!visitCols.includes('browser'))    db.exec("ALTER TABLE site_visits ADD COLUMN browser TEXT NOT NULL DEFAULT ''");
 
+  // Reclassify crawler traffic that predates bot filtering. Mobile-crawler
+  // UAs (e.g. Googlebot Smartphone contains "Android … Mobile") were filed as
+  // real Mobile visits; the stats endpoint now excludes deviceType='Bot', so
+  // mark them all. Cheap and idempotent, safe to run on every boot.
+  db.exec(`UPDATE site_visits SET deviceType = 'Bot', browser = 'Bot'
+    WHERE deviceType != 'Bot' AND (
+      trim(userAgent) = '' OR userAgent LIKE '%bot%' OR userAgent LIKE '%crawl%'
+      OR userAgent LIKE '%spider%' OR userAgent LIKE '%slurp%' OR userAgent LIKE '%bingpreview%'
+      OR userAgent LIKE '%headless%' OR userAgent LIKE '%lighthouse%'
+      OR userAgent LIKE '%facebookexternalhit%' OR userAgent LIKE '%python%'
+      OR userAgent LIKE '%curl/%' OR userAgent LIKE '%wget/%' OR userAgent LIKE '%axios/%'
+      OR userAgent LIKE '%go-http-client%' OR userAgent LIKE '%node-fetch%' OR userAgent LIKE '%okhttp%'
+    )`);
+
   // Ensure the homepage row exists.
   db.prepare(`INSERT OR IGNORE INTO site_settings (id, meetingDate, meetingTime, meetingLocation, podcastUrl)
               VALUES (1, 'To be announced', 'To be announced', 'To be announced', '')`).run();

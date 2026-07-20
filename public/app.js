@@ -68,6 +68,10 @@ function getVisitorId() {
 }
 
 function trackSiteVisit(path) {
+  // Board members browsing the public site while signed in are not audience
+  // traffic — with ~20 board accounts hitting the homepage on every portal
+  // login, counting them badly inflates the Site Activity numbers.
+  try { if (localStorage.getItem(TOKEN_KEY)) return Promise.resolve(null); } catch (_) {}
   return fetch('/api/site-visit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -4213,9 +4217,19 @@ function PublicSite({ home, events, volunteerEvents, onEnterPortal }) {
     // may point at a newer record by the time this resolves).
     const rec = { id: null, start: Date.now() };
     visitRef.current = rec;
-    trackSiteVisit(window.location.pathname).then((d) => {
-      if (d && d.id) rec.id = d.id;
-    });
+    const fire = () => {
+      rec.start = Date.now();
+      trackSiteVisit(window.location.pathname).then((d) => {
+        if (d && d.id) rec.id = d.id;
+      });
+    };
+    // Chrome speculatively prerenders pages the visitor may never open — hold
+    // the view until the prerendered page is actually shown.
+    if (document.prerendering) {
+      document.addEventListener('prerenderingchange', fire, { once: true });
+      return () => document.removeEventListener('prerenderingchange', fire);
+    }
+    fire();
   }, [page]);
   useEffect(() => {
     const flush = () => {
