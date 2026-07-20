@@ -711,6 +711,11 @@ function init() {
     db.prepare("UPDATE users SET bigBoard = 1 WHERE role = 'admin' OR role = 'manager' OR title = 'Secretary'").run();
   }
   if (!cols.includes('canViewLogistics')) db.exec("ALTER TABLE users ADD COLUMN canViewLogistics INTEGER NOT NULL DEFAULT 0");
+  // Telegram DM notifications: the private chat id we send to (empty until the
+  // member links their account) and the one-time code that ties an incoming
+  // /start message from the bot back to this user.
+  if (!cols.includes('telegramChatId'))   db.exec("ALTER TABLE users ADD COLUMN telegramChatId TEXT NOT NULL DEFAULT ''");
+  if (!cols.includes('telegramLinkCode')) db.exec("ALTER TABLE users ADD COLUMN telegramLinkCode TEXT NOT NULL DEFAULT ''");
 
   // Task column migrations.
   const taskCols = db.prepare("PRAGMA table_info(tasks)").all().map((c) => c.name);
