@@ -460,9 +460,6 @@ function Login({ onLogin, onBack }) {
           <Button type="submit" variant="gold" className="w-full" disabled={loading}>
             {loading ? 'Signing in…' : 'Sign In'}
           </Button>
-          <p className="text-center text-xs text-cream/40">
-            First time? Your password is your username — you'll set a new one after signing in.
-          </p>
           {onBack && (
             <button type="button" onClick={onBack} className="block mx-auto text-xs text-cream/50 hover:text-gold">
               ← Back to homepage
@@ -4114,7 +4111,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
         </section>
         <main className="max-w-5xl mx-auto px-4 sm:px-6 pb-20 space-y-8">
           <HomeAnnouncementBanner home={home} />
-          {home.memberCount > 0 && <MemberStatsBar memberCount={home.memberCount} />}
+          {home.memberCount > 40 && <MemberStatsBar memberCount={home.memberCount} />}
           {cards}
           <AboutSection home={home} />
           <ValuesSection />
@@ -4460,7 +4457,7 @@ function PublicPageShell({ title, subtitle, children }) {
 // The landing page: the immersive hero, then the announcement, stats, and the
 // Next Meeting / Podcast cards. Everything else now lives on its own page.
 function PublicHomePage({ home, cards, onNavigate }) {
-  const hasBelow = (home.homeAnnouncementEnabled && home.homeAnnouncement) || home.memberCount > 0;
+  const hasBelow = (home.homeAnnouncementEnabled && home.homeAnnouncement) || home.memberCount > 40;
   return (
     <div>
       <div className="relative min-h-[calc(100vh-5rem)] flex flex-col overflow-hidden">
@@ -4540,7 +4537,7 @@ function PublicHomePage({ home, cards, onNavigate }) {
         </div>
         <main id="club-content" className="relative max-w-5xl mx-auto px-4 sm:px-6 pb-20 pt-10 space-y-8">
           {home.homeAnnouncementEnabled && home.homeAnnouncement && <Reveal><HomeAnnouncementBanner home={home} /></Reveal>}
-          {home.memberCount > 0 && <Reveal><MemberStatsBar memberCount={home.memberCount} /></Reveal>}
+          {home.memberCount > 40 && <Reveal><MemberStatsBar memberCount={home.memberCount} /></Reveal>}
           <Reveal>{cards}</Reveal>
           <Reveal><SpeakerCTA onNavigate={onNavigate} /></Reveal>
           <Reveal><TestimonialsCarousel onNavigate={onNavigate} /></Reveal>
