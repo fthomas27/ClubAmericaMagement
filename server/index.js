@@ -518,6 +518,17 @@ app.post('/api/roster/survey', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, na
   res.status(201).json({ ok: true, id: info.lastInsertRowid });
 });
 
+// Whether the "Who referred you?" field on /join is currently active.
+// The president/admin can flip this off to pause referral crediting.
+function getJoinReferralEnabled() {
+  const row = db.prepare('SELECT joinReferralEnabled FROM site_settings WHERE id=1').get();
+  return !!row?.joinReferralEnabled;
+}
+
+app.get('/api/join/referral-settings', (req, res) => {
+  res.json({ enabled: getJoinReferralEnabled() });
+});
+
 // Public self-service member sign-up (shown at /join) — no auth required. The
 // secretary shares one link and members fill in their own details; the entry
 // lands as 'Pending' so nothing reaches the live roster until it's approved.
@@ -530,10 +541,11 @@ app.post('/api/roster/self-submit', rateLimit({ windowMs: 60 * 60 * 1000, max: 2
   if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email).trim())) {
     return res.status(400).json({ error: 'Please enter a valid email' });
   }
-  // Optional "who referred you?" — only credited if it names a real member.
-  // Approving the submission later awards the referral point to that member.
+  // Optional "who referred you?" — only credited if it names a real member
+  // and referrals are currently enabled. Approving the submission later
+  // awards the referral point to that member.
   let referrer = null;
-  if (referredByUserId) {
+  if (referredByUserId && getJoinReferralEnabled()) {
     referrer = db.prepare("SELECT id, displayName FROM users WHERE id = ? AND username != 'logistics'").get(Number(referredByUserId));
   }
   const info = db.prepare(`INSERT INTO roster_members (firstName, lastName, phone, email, grade, gender, notes, status, referredByUserId, referralStatus)
@@ -1939,6 +1951,13 @@ app.put('/api/checkins/settings', (req, res) => {
   if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Managers and admins only' });
   const enabled = !!(req.body || {}).enabled;
   db.prepare("UPDATE site_settings SET weeklyCheckinEnabled=?, updatedAt=datetime('now') WHERE id=1").run(enabled ? 1 : 0);
+  res.json({ enabled });
+});
+
+app.put('/api/join/referral-settings', (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
+  const enabled = !!(req.body || {}).enabled;
+  db.prepare("UPDATE site_settings SET joinReferralEnabled=?, updatedAt=datetime('now') WHERE id=1").run(enabled ? 1 : 0);
   res.json({ enabled });
 });
 
