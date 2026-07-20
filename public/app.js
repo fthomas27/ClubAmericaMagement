@@ -8993,27 +8993,120 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
   );
 }
 
-function MyTeamView({ reports, onNavigate }) {
+// Compose + send a Telegram message (one recipient or a broadcast). onSend
+// resolves to a success line to show; it throws on failure.
+function TelegramComposeModal({ title, subtitle, sendLabel = 'Send', onSend, onClose }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [done, setDone] = useState('');
+
+  async function submit() {
+    if (!text.trim()) { setError('Write a message first.'); return; }
+    setBusy(true); setError('');
+    try { setDone(await onSend(text.trim()) || 'Sent!'); setText(''); }
+    catch (e) { setError(e.message || 'Failed to send'); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
+      <div className="bg-navy2 border border-cream/15 rounded-xl p-5 max-w-md w-full ca-scale-in" onClick={(e) => e.stopPropagation()}>
+        <div className="font-display text-lg text-gold mb-1">{title}</div>
+        {subtitle && <p className="text-sm text-cream/60 mb-3">{subtitle}</p>}
+        {done ? (
+          <div className="text-emerald-300 text-sm mb-2">{done}</div>
+        ) : (
+          <textarea className={inputCls + ' min-h-[120px] resize-y w-full'} value={text} maxLength={3000}
+            onChange={(e) => setText(e.target.value)} placeholder="Type your Telegram message…" autoFocus />
+        )}
+        {error && <div className="text-red text-sm mt-2">{error}</div>}
+        <div className="flex gap-2 justify-end mt-4">
+          <Button variant="ghost" onClick={onClose}>{done ? 'Close' : 'Cancel'}</Button>
+          {!done && <Button variant="gold" onClick={submit} disabled={busy}>{busy ? 'Sending…' : sendLabel}</Button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MyTeamView({ me, reports, onNavigate }) {
+  const [tg, setTg] = useState(null); // { configured }
+  const [compose, setCompose] = useState(null); // { mode:'all' } | { mode:'one', user }
+
+  useEffect(() => { api('/me/telegram').then(setTg).catch(() => setTg({ configured: false })); }, []);
+  const canMessage = (me.role === 'admin' || me.role === 'manager') && tg && tg.configured;
+
+  async function sendOne(text) {
+    await api('/telegram/message', { method: 'POST', body: { userId: compose.user.id, text } });
+    return `Message sent to ${compose.user.displayName} on Telegram.`;
+  }
+  async function sendAll(text) {
+    const d = await api('/telegram/broadcast', { method: 'POST', body: { text } });
+    return d.sent > 0
+      ? `Sent to ${d.sent} member${d.sent === 1 ? '' : 's'} who've connected Telegram.`
+      : 'No one has connected Telegram yet, so no messages went out.';
+  }
+
   return (
     <div className="w-full">
-      <h2 className="font-display text-3xl text-cream mb-6">My Team</h2>
+      <div className="flex items-center justify-between gap-4 flex-wrap mb-6">
+        <h2 className="font-display text-3xl text-cream">My Team</h2>
+        {canMessage && (
+          <button onClick={() => setCompose({ mode: 'all' })}
+            className="shrink-0 text-sm text-sky-300 hover:text-sky-200 border border-sky-400/40 hover:border-sky-400/70 px-3.5 py-2 rounded-lg transition-colors flex items-center gap-2">
+            <span aria-hidden="true">📢</span> Message everyone on Telegram
+          </button>
+        )}
+      </div>
       {reports.length === 0 ? (
         <p className="text-cream/40">No direct reports.</p>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 w-full">
           {reports.map(r => (
-            <button key={r.id} onClick={() => onNavigate({ type: 'person', userId: r.id })}
-              className="group bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/30 rounded-xl p-5 flex items-center gap-4 text-left transition-all duration-200 active:scale-95 w-full hover:-translate-y-0.5 hover:shadow-md hover:shadow-black/25">
-              <div className="w-12 h-12 rounded-full bg-navy3 flex items-center justify-center text-cream/70 text-lg font-semibold shrink-0">
-                {r.displayName.charAt(0).toUpperCase()}
-              </div>
-              <div>
-                <div className="text-cream text-base font-semibold group-hover:text-gold transition-colors">{r.displayName}</div>
-                <div className="text-cream/50 text-sm mt-0.5">{r.title || roleLabel(r.role)}</div>
-              </div>
-            </button>
+            <div key={r.id}
+              className="group relative bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/30 rounded-xl p-5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md hover:shadow-black/25">
+              <button onClick={() => onNavigate({ type: 'person', userId: r.id })}
+                className="flex items-center gap-4 text-left w-full active:scale-95 transition-transform">
+                <div className="w-12 h-12 rounded-full bg-navy3 flex items-center justify-center text-cream/70 text-lg font-semibold shrink-0">
+                  {r.displayName.charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-cream text-base font-semibold group-hover:text-gold transition-colors truncate">{r.displayName}</div>
+                  <div className="text-cream/50 text-sm mt-0.5 truncate">{r.title || roleLabel(r.role)}</div>
+                </div>
+              </button>
+              {canMessage && (
+                r.telegramLinked ? (
+                  <button onClick={() => setCompose({ mode: 'one', user: r })}
+                    className="mt-3 w-full text-xs text-sky-300 hover:text-sky-200 border border-sky-400/30 hover:border-sky-400/60 px-3 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5">
+                    <span aria-hidden="true">💬</span> Message on Telegram
+                  </button>
+                ) : (
+                  <div className="mt-3 text-center text-[11px] text-cream/30">Not on Telegram yet</div>
+                )
+              )}
+            </div>
           ))}
         </div>
+      )}
+
+      {compose && compose.mode === 'all' && (
+        <TelegramComposeModal
+          title="Message everyone on Telegram"
+          subtitle="Sends a Telegram DM to every board member who's connected their account."
+          sendLabel="Send to all"
+          onSend={sendAll}
+          onClose={() => setCompose(null)}
+        />
+      )}
+      {compose && compose.mode === 'one' && (
+        <TelegramComposeModal
+          title={`Message ${compose.user.displayName}`}
+          subtitle="Sends a private Telegram DM to this member."
+          onSend={sendOne}
+          onClose={() => setCompose(null)}
+        />
       )}
     </div>
   );
@@ -9495,7 +9588,7 @@ function App() {
   else if (view.type === 'photos') content = (me.role === 'admin' || me.canEditHome || me.canManageSocial) ? <PhotoModerationPage me={me} /> : null;
   else if (view.type === 'mytasks') content = <TaskPage me={me} userId={me.id} users={users} refreshSignal={refreshSignal} onNavigate={navigate} />;
   else if (view.type === 'person') content = <TaskPage me={me} userId={view.userId} users={users} refreshSignal={refreshSignal} onNavigate={navigate} />;
-  else if (view.type === 'myteam') content = <MyTeamView reports={reports} onNavigate={navigate} />;
+  else if (view.type === 'myteam') content = <MyTeamView me={me} reports={reports} onNavigate={navigate} />;
   else if (view.type === 'announce') content = (me.role === 'admin' || me.role === 'manager') ? <TeamAnnouncementView me={me} reports={reports} /> : null;
   else if (view.type === 'approvals') content = <Approvals onChanged={bump} refreshSignal={refreshSignal} />;
   else if (view.type === 'submissions') content = <SubmissionsInbox onChanged={bump} refreshSignal={refreshSignal} />;
