@@ -8854,21 +8854,47 @@ function AppIcon({ name, className, size = 26 }) {
   }
 }
 
-function AppTile({ label, icon, badge, onClick, style }) {
+// Home-tile favorites: let each member pin their most-used tiles to a "Pinned"
+// row at the top of the grid. Stored per-user in localStorage, mirroring the
+// intro-state helpers below — no backend round-trip, instant and offline-safe.
+function getFavTiles(userId) {
+  try { return JSON.parse(localStorage.getItem('ca_favs_v1_' + userId) || '[]'); }
+  catch (_) { return []; }
+}
+function saveFavTiles(userId, favs) {
+  try { localStorage.setItem('ca_favs_v1_' + userId, JSON.stringify(favs)); } catch (_) {}
+}
+
+function AppTile({ label, icon, badge, onClick, style, pinned, onTogglePin }) {
   const tone = TILE_TONES[icon] || { icon: 'text-cream/60', bg: 'bg-cream/5' };
+  // Wrapper carries the `group` + entrance animation so the pin control (a
+  // sibling of the tile button, not a child — nested <button>s are invalid)
+  // can still react to hover, and so lifting the tile doesn't move the star.
   return (
-    <button onClick={onClick} style={style}
-      className="ca-fade-in group relative bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/40 rounded-2xl p-5 flex flex-col items-center gap-3 transition-all duration-200 active:scale-95 w-full hover:-translate-y-1 hover:shadow-lg hover:shadow-black/30">
-      <div className="relative">
-        <div className={`w-14 h-14 rounded-2xl ${tone.bg} flex items-center justify-center transition-transform duration-200 group-hover:scale-110`}>
-          <AppIcon name={icon} className={`${tone.icon} transition-colors duration-150`} />
+    <div className="group relative w-full ca-fade-in" style={style}>
+      <button onClick={onClick}
+        className="relative bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/40 rounded-2xl p-5 flex flex-col items-center gap-3 transition-all duration-200 active:scale-95 w-full hover:-translate-y-1 hover:shadow-lg hover:shadow-black/30">
+        <div className="relative">
+          <div className={`w-14 h-14 rounded-2xl ${tone.bg} flex items-center justify-center transition-transform duration-200 group-hover:scale-110`}>
+            <AppIcon name={icon} className={`${tone.icon} transition-colors duration-150`} />
+          </div>
+          {badge > 0 && (
+            <span className="absolute -top-1 -right-1 bg-red text-cream text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 ca-pulse">{badge}</span>
+          )}
         </div>
-        {badge > 0 && (
-          <span className="absolute -top-1 -right-1 bg-red text-cream text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 ca-pulse">{badge}</span>
-        )}
-      </div>
-      <span className="text-cream/80 text-xs font-medium text-center leading-tight group-hover:text-cream transition-colors">{label}</span>
-    </button>
+        <span className="text-cream/80 text-xs font-medium text-center leading-tight group-hover:text-cream transition-colors">{label}</span>
+      </button>
+      {onTogglePin && (
+        <button onClick={(e) => { e.stopPropagation(); onTogglePin(); }}
+          aria-label={pinned ? 'Unpin ' + label : 'Pin ' + label + ' to top'} aria-pressed={pinned}
+          title={pinned ? 'Unpin' : 'Pin to top'}
+          className={`absolute top-2 left-2 z-10 w-6 h-6 rounded-md flex items-center justify-center transition-colors ${pinned ? 'text-gold' : 'text-cream/20 hover:text-gold sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100'}`}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill={pinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m12 2.5 2.9 5.9 6.5.95-4.7 4.58 1.1 6.47L12 17.35 6.2 20.4l1.1-6.47L2.6 9.35l6.5-.95Z"/>
+          </svg>
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -8879,6 +8905,14 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
   const canRoster = isManager || !!me.canManageRoster;
   const appHiddenTabs = parseHiddenTabs(me.hiddenTabs);
   const visible = (type) => !appHiddenTabs.has(type);
+
+  const [favs, setFavs] = useState(() => getFavTiles(me.id));
+  const favSet = new Set(favs);
+  const toggleFav = (type) => setFavs((cur) => {
+    const next = cur.includes(type) ? cur.filter((t) => t !== type) : [...cur, type];
+    saveFavTiles(me.id, next);
+    return next;
+  });
 
   // Tiles grouped into labeled sections so the home screen reads as a few
   // small clusters instead of one undifferentiated wall.
@@ -8940,6 +8974,13 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
   const dateLine = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
   let tileIndex = 0;
 
+  // Pinned tiles resolve against the *visible* tile set (in the order the user
+  // pinned them), so a tile that's since been hidden or lost by permission just
+  // drops out silently instead of rendering a dead shortcut.
+  const tileByType = {};
+  sections.forEach((s) => s.tiles.forEach((t) => { tileByType[t.type] = t; }));
+  const pinnedTiles = favs.map((type) => tileByType[type]).filter(Boolean);
+
   return (
     <div className="relative min-h-screen flex flex-col ca-fade-in" style={{ background: '#0d1b2e' }}>
       <PatriotBackdrop stars={16} stripes />
@@ -8971,6 +9012,23 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
         </div>
         <HomeSummaryCard me={me} onNavigate={onNavigate} />
         <div className="space-y-8">
+          {pinnedTiles.length > 0 && (
+            <div>
+              <div className="flex items-center gap-3 mb-3">
+                <span className="text-gold/70 text-[10px]" aria-hidden="true">★</span>
+                <span className="text-xs font-semibold text-gold/50 uppercase tracking-widest">Pinned</span>
+                <div className="flex-1 h-px bg-gold/15" />
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {pinnedTiles.map((t) => (
+                  <AppTile key={'pin-' + t.type} label={t.label} icon={t.icon} badge={t.badge}
+                    pinned onTogglePin={() => toggleFav(t.type)}
+                    onClick={t.onClick || (() => onNavigate({ type: t.type }))}
+                    style={{ animationDelay: `${tileIndex++ * 28}ms` }} />
+                ))}
+              </div>
+            </div>
+          )}
           {sections.map((section) => (
             <div key={section.title}>
               <div className="flex items-center gap-3 mb-3">
@@ -8981,12 +9039,18 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                 {section.tiles.map((t) => (
                   <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge}
+                    pinned={favSet.has(t.type)} onTogglePin={() => toggleFav(t.type)}
                     onClick={t.onClick || (() => onNavigate({ type: t.type }))}
                     style={{ animationDelay: `${tileIndex++ * 28}ms` }} />
                 ))}
               </div>
             </div>
           ))}
+          {favs.length === 0 && (
+            <p className="text-center text-cream/25 text-xs pt-1">
+              Tip: tap the ☆ on any tile to pin it to the top.
+            </p>
+          )}
         </div>
       </div>
     </div>
