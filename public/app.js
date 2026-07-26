@@ -8304,6 +8304,13 @@ function ProductCard({ item, onChanged, onDelete }) {
     finally { setBusy(false); }
   }
 
+  async function syncStripe() {
+    setBusy(true); setError('');
+    try { await api(`/shop/admin/items/${item.id}/sync-stripe`, { method: 'POST' }); onChanged(); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
   async function updateItemInventory(val) {
     try { await api(`/shop/admin/items/${item.id}`, { method: 'PATCH', body: { inventory: Number(val) || 0 } }); onChanged(); }
     catch (err) { setError(err.message); }
@@ -8345,6 +8352,11 @@ function ProductCard({ item, onChanged, onDelete }) {
             <Badge tone={item.active ? 'green' : 'slate'}>{item.active ? 'Active' : 'Hidden'}</Badge>
           </div>
           <div className="text-sm text-cream/50">{formatCents(item.price)}{!item.hasVariants ? ` · ${item.inventory} in stock` : ''}</div>
+          {item.stripeEnabled && (
+            item.stripeProductId
+              ? <div className="text-xs text-cream/40 mt-1 truncate" title="Use this Stripe Product id when creating a coupon restricted to specific products.">Stripe product: <code className="text-cream/60">{item.stripeProductId}</code></div>
+              : <div className="text-xs text-gold/70 mt-1">Not synced to Stripe yet — click Sync so promo codes can target this item.</div>
+          )}
         </div>
       </div>
 
@@ -8354,6 +8366,7 @@ function ProductCard({ item, onChanged, onDelete }) {
         <div className="flex gap-2 mt-3 flex-wrap">
           <Button variant="ghost" className="text-xs px-3 py-1" onClick={() => setEditing(true)}>Edit</Button>
           <Button variant="ghost" className="text-xs px-3 py-1" onClick={toggleActive} disabled={busy}>{item.active ? 'Hide' : 'Unhide'}</Button>
+          {item.stripeEnabled && <Button variant="ghost" className="text-xs px-3 py-1" onClick={syncStripe} disabled={busy}>{item.stripeProductId ? 'Re-sync Stripe' : 'Sync to Stripe'}</Button>}
           <Button variant="danger" className="text-xs px-3 py-1" onClick={onDelete}>Delete</Button>
         </div>
       ) : (
