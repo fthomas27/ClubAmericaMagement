@@ -790,6 +790,12 @@ function init() {
   if (!merchItemCols.includes('stripeProductId')) {
     db.exec("ALTER TABLE merch_items ADD COLUMN stripeProductId TEXT NOT NULL DEFAULT ''");
   }
+  // Donation / pay-what-you-want items: the buyer names the amount at checkout,
+  // subject to a minimum stored in the price column. Such items carry no
+  // variants and no inventory.
+  if (!merchItemCols.includes('isDonation')) {
+    db.exec("ALTER TABLE merch_items ADD COLUMN isDonation INTEGER NOT NULL DEFAULT 0");
+  }
 
   // Additional user column migrations.
   if (!cols.includes('canManageSocial')) db.exec("ALTER TABLE users ADD COLUMN canManageSocial INTEGER NOT NULL DEFAULT 0");

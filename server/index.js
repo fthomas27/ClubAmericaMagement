@@ -972,9 +972,24 @@ async function ensureStripeProduct(item) {
 // so pricing here is simply unit price × quantity. Returns { error } or a
 // pricing breakdown. Pass ignoreStock once a payment has already succeeded, so
 // a sold-out item is recorded as needs_review rather than rejected.
-function computeOrderPricing({ itemId, variantId, quantity, ignoreStock }) {
+function computeOrderPricing({ itemId, variantId, quantity, amount, ignoreStock }) {
   const item = db.prepare('SELECT * FROM merch_items WHERE id = ? AND active = 1').get(Number(itemId));
   if (!item) return { error: 'Item not found.' };
+
+  // Donation / pay-what-you-want: the buyer names the amount, subject to the
+  // item's minimum (kept in the price column). No variants, no inventory, and
+  // always "in stock". Post-payment re-reads (ignoreStock) trust whatever
+  // Stripe already charged, so they skip the minimum check.
+  if (item.isDonation) {
+    const min = Math.max(50, item.price || 0);
+    const amt = Math.round(Number(amount) || 0);
+    if (!ignoreStock && (!amt || amt < min)) {
+      return { error: `Please enter at least $${(min / 100).toFixed(2)}.` };
+    }
+    const total = amt || min;
+    return { item, variant: null, qty: 1, unitPrice: total, subtotal: total, total, isDonation: true };
+  }
+
   let variant = null;
   if (item.hasVariants) {
     variant = db.prepare('SELECT * FROM merch_variants WHERE id = ? AND itemId = ?').get(Number(variantId), item.id);
@@ -1008,6 +1023,7 @@ app.get('/api/shop/items', (req, res) => {
       hasVariants: !!item.hasVariants,
       active: !!item.active,
       hasPhoto: !!photo,
+      isDonation: !!item.isDonation,
       variants: item.hasVariants
         ? db.prepare('SELECT id, label, inventory, priceOverride FROM merch_variants WHERE itemId = ? ORDER BY id').all(item.id)
         : [],
@@ -1085,7 +1101,8 @@ function recordCheckoutSession(session) {
     state: (a.state || '').slice(0, 50),
     zip: (a.postal_code || '').slice(0, 20),
   } : null;
-  const deliveryMethod = md.deliveryMethod === 'pickup' ? 'pickup' : 'ship';
+  const deliveryMethod = md.deliveryMethod === 'pickup' ? 'pickup'
+    : md.deliveryMethod === 'digital' ? 'digital' : 'ship';
   const amount = Number(session.amount_total) || 0;                 // charged after any promo
   const discount = Number((session.total_details || {}).amount_discount) || 0;
   const paymentStatus = amount === 0 ? 'free' : 'paid';
@@ -1105,10 +1122,13 @@ function recordCheckoutSession(session) {
       variantId = priced.variant ? priced.variant.id : null;
       variantLabel = priced.variant ? priced.variant.label : '';
       qty = priced.qty;
-      let upd;
-      if (priced.variant) upd = db.prepare('UPDATE merch_variants SET inventory = inventory - ? WHERE id = ? AND inventory >= ?').run(qty, priced.variant.id, qty);
-      else upd = db.prepare('UPDATE merch_items SET inventory = inventory - ? WHERE id = ? AND inventory >= ?').run(qty, priced.item.id, qty);
-      if (upd.changes === 0) fulfillmentStatus = 'needs_review'; // sold out after payment
+      if (!priced.isDonation) {
+        // Donations carry no inventory; everything else decrements stock.
+        let upd;
+        if (priced.variant) upd = db.prepare('UPDATE merch_variants SET inventory = inventory - ? WHERE id = ? AND inventory >= ?').run(qty, priced.variant.id, qty);
+        else upd = db.prepare('UPDATE merch_items SET inventory = inventory - ? WHERE id = ? AND inventory >= ?').run(qty, priced.item.id, qty);
+        if (upd.changes === 0) fulfillmentStatus = 'needs_review'; // sold out after payment
+      }
     } else {
       fulfillmentStatus = 'needs_review'; // item changed/removed since checkout
     }
@@ -1144,19 +1164,30 @@ function recordCheckoutSession(session) {
 // own page. We only pass the cart + pickup info along as metadata.
 app.post('/api/shop/create-checkout-session', rateLimit({ windowMs: 60 * 60 * 1000, max: 30, name: 'shop-checkout' }), async (req, res) => {
   if (!stripe) return res.status(503).json({ error: 'Online payment is not configured yet — please check back soon.' });
-  let { itemId, variantId, quantity, deliveryMethod, studentEmail } = req.body || {};
-  deliveryMethod = deliveryMethod === 'pickup' ? 'pickup' : 'ship';
-  studentEmail = String(studentEmail || '').trim().slice(0, 200);
-  if (deliveryMethod === 'pickup' && !STUDENT_EMAIL_RE.test(studentEmail)) {
-    return res.status(400).json({ error: 'Student pickup requires a valid @pcstudents.us email.' });
-  }
-  const p = computeOrderPricing({ itemId, variantId, quantity });
+  let { itemId, variantId, quantity, amount, deliveryMethod, studentEmail } = req.body || {};
+  const p = computeOrderPricing({ itemId, variantId, quantity, amount });
   if (p.error) return res.status(400).json({ error: p.error });
+
+  // Donations have nothing to ship or hand over, so they skip the delivery
+  // choice, the student-email requirement, and the shipping-address collection.
+  const isDonation = !!p.isDonation;
+  if (isDonation) {
+    deliveryMethod = 'digital';
+    studentEmail = '';
+  } else {
+    deliveryMethod = deliveryMethod === 'pickup' ? 'pickup' : 'ship';
+    studentEmail = String(studentEmail || '').trim().slice(0, 200);
+    if (deliveryMethod === 'pickup' && !STUDENT_EMAIL_RE.test(studentEmail)) {
+      return res.status(400).json({ error: 'Student pickup requires a valid @pcstudents.us email.' });
+    }
+  }
   // Stripe rejects card charges under 50¢. Say so plainly.
   if (p.total < 50) return res.status(400).json({ error: 'Orders must total at least $0.50.' });
 
   const base = (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
-  const lineName = `${p.item.name}${p.variant ? ' — ' + p.variant.label : ''}${p.qty > 1 ? ' × ' + p.qty : ''}`;
+  const lineName = isDonation
+    ? p.item.name
+    : `${p.item.name}${p.variant ? ' — ' + p.variant.label : ''}${p.qty > 1 ? ' × ' + p.qty : ''}`;
   const idemKey = String((req.body || {}).idempotencyKey || '').trim().slice(0, 200);
   const meta = cartMetadata(p, deliveryMethod, studentEmail);
   // Reference the item's persistent Stripe Product so promotion codes scoped to
@@ -1176,7 +1207,8 @@ app.post('/api/shop/create-checkout-session', rateLimit({ windowMs: 60 * 60 * 10
         },
       }],
       allow_promotion_codes: true,                    // Stripe shows + validates promo codes
-      phone_number_collection: { enabled: true },     // Stripe collects the phone
+      // Collect the phone for physical orders; a donation needs no logistics.
+      ...(isDonation ? {} : { phone_number_collection: { enabled: true } }),
       // Stripe collects + validates the shipping address for shipped orders.
       ...(deliveryMethod === 'ship' ? { shipping_address_collection: { allowed_countries: ['US'] } } : {}),
       success_url: `${base}/shop?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
@@ -1212,7 +1244,7 @@ app.post('/api/shop/confirm-checkout', rateLimit({ windowMs: 60 * 60 * 1000, max
       return res.json({
         ok: true, processing: true, orderId: null,
         total: Number(session.amount_total) || 0, paymentStatus: 'processing',
-        deliveryMethod: (session.metadata || {}).deliveryMethod === 'pickup' ? 'pickup' : 'ship',
+        deliveryMethod: (session.metadata || {}).deliveryMethod === 'pickup' ? 'pickup' : (session.metadata || {}).deliveryMethod === 'digital' ? 'digital' : 'ship',
       });
     }
     return res.status(400).json({ error: 'Payment was not completed.' });
@@ -1228,7 +1260,7 @@ app.post('/api/shop/confirm-checkout', rateLimit({ windowMs: 60 * 60 * 1000, max
     orderId: order ? order.id : null,
     total: Number(session.amount_total) || 0,
     paymentStatus: order ? order.paymentStatus : 'paid',
-    deliveryMethod: (session.metadata || {}).deliveryMethod === 'pickup' ? 'pickup' : 'ship',
+    deliveryMethod: (session.metadata || {}).deliveryMethod === 'pickup' ? 'pickup' : (session.metadata || {}).deliveryMethod === 'digital' ? 'digital' : 'ship',
   });
 });
 
@@ -4741,6 +4773,7 @@ function adminItemWithVariants(item) {
     hasVariants: !!item.hasVariants,
     active: !!item.active,
     hasPhoto: !!photo,
+    isDonation: !!item.isDonation,
     stripeProductId: item.stripeProductId || '',
     stripeEnabled: !!stripe,
     variants: db.prepare('SELECT id, label, inventory, priceOverride FROM merch_variants WHERE itemId = ? ORDER BY id').all(item.id),
@@ -4755,17 +4788,21 @@ app.get('/api/shop/admin/items', (req, res) => {
 
 app.post('/api/shop/admin/items', async (req, res) => {
   if (!canManageShop(req.user)) return res.status(403).json({ error: 'Not allowed' });
-  let { name, description, price, photo, hasVariants, inventory, variants } = req.body || {};
+  let { name, description, price, photo, hasVariants, inventory, variants, isDonation } = req.body || {};
   name = String(name || '').trim().slice(0, 120);
   description = String(description || '').trim().slice(0, 2000);
   price = Math.max(0, Math.round(Number(price) || 0));
   photo = cleanPhotoDataUrl(photo);
-  hasVariants = !!hasVariants;
+  isDonation = !!isDonation;
+  // A donation item is pay-what-you-want (price = minimum), so it has no
+  // variants and no inventory.
+  hasVariants = !isDonation && !!hasVariants;
   inventory = Math.max(0, Math.round(Number(inventory) || 0));
   if (!name) return res.status(400).json({ error: 'Name is required.' });
+  if (isDonation && price < 50) return res.status(400).json({ error: 'The minimum donation must be at least $0.50.' });
 
-  const info = db.prepare(`INSERT INTO merch_items (name, description, price, photo, hasVariants, inventory, createdById)
-    VALUES (?, ?, ?, ?, ?, ?, ?)`).run(name, description, price, photo, hasVariants ? 1 : 0, hasVariants ? 0 : inventory, req.user.id);
+  const info = db.prepare(`INSERT INTO merch_items (name, description, price, photo, hasVariants, inventory, isDonation, createdById)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(name, description, price, photo, hasVariants ? 1 : 0, hasVariants ? 0 : inventory, isDonation ? 1 : 0, req.user.id);
   const itemId = info.lastInsertRowid;
 
   if (hasVariants && Array.isArray(variants)) {
