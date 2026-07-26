@@ -783,6 +783,14 @@ function init() {
       ON attendance_records(eventId, rosterId) WHERE rosterId IS NOT NULL;
   `);
 
+  // merch_items migration: cache the matching Stripe Product id so promotion
+  // codes restricted to "specific products" can target the item. Empty until
+  // the item is first synced to Stripe (on create, checkout, or a manual sync).
+  const merchItemCols = db.prepare("PRAGMA table_info(merch_items)").all().map((c) => c.name);
+  if (!merchItemCols.includes('stripeProductId')) {
+    db.exec("ALTER TABLE merch_items ADD COLUMN stripeProductId TEXT NOT NULL DEFAULT ''");
+  }
+
   // Additional user column migrations.
   if (!cols.includes('canManageSocial')) db.exec("ALTER TABLE users ADD COLUMN canManageSocial INTEGER NOT NULL DEFAULT 0");
   if (!cols.includes('phone')) db.exec("ALTER TABLE users ADD COLUMN phone TEXT NOT NULL DEFAULT ''");

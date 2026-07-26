@@ -937,6 +937,36 @@ function canManageShop(user) {
   return user.role === 'admin' || !!user.canManageRoster;
 }
 
+// Ensures a merch item has a matching Stripe Product and returns its id (or ''
+// when Stripe is off or the call fails). A persistent Product is required for
+// promotion codes restricted to "specific products" — Stripe can only apply
+// such a coupon to a line item that references that Product. The id is cached
+// on the row; a stale id (product deleted, or created in the other test/live
+// mode) is transparently recreated. Best-effort: on failure we return '' and
+// checkout falls back to an ad-hoc product, which still works for order-wide
+// promo codes.
+async function ensureStripeProduct(item) {
+  if (!stripe || !item || !item.id) return '';
+  if (item.stripeProductId) {
+    try {
+      const existing = await stripe.products.retrieve(item.stripeProductId);
+      if (existing && existing.deleted !== true && existing.active) return existing.id;
+    } catch (e) { /* stale id — fall through and recreate */ }
+  }
+  try {
+    const created = await stripe.products.create({
+      name: item.name || 'Club America merch',
+      ...(item.description ? { description: String(item.description).slice(0, 500) } : {}),
+      metadata: { merchItemId: String(item.id) },
+    });
+    db.prepare('UPDATE merch_items SET stripeProductId = ? WHERE id = ?').run(created.id, item.id);
+    return created.id;
+  } catch (e) {
+    console.error('[stripe] ensure product failed for item', item.id, '—', e.message);
+    return '';
+  }
+}
+
 // Prices a cart from our own catalog (never trusts a client-sent total).
 // Discounts are handled by Stripe promotion codes on the hosted checkout page,
 // so pricing here is simply unit price × quantity. Returns { error } or a
@@ -1129,12 +1159,21 @@ app.post('/api/shop/create-checkout-session', rateLimit({ windowMs: 60 * 60 * 10
   const lineName = `${p.item.name}${p.variant ? ' — ' + p.variant.label : ''}${p.qty > 1 ? ' × ' + p.qty : ''}`;
   const idemKey = String((req.body || {}).idempotencyKey || '').trim().slice(0, 200);
   const meta = cartMetadata(p, deliveryMethod, studentEmail);
+  // Reference the item's persistent Stripe Product so promotion codes scoped to
+  // "specific products" can match. If Stripe has no product for it yet (or the
+  // call fails), fall back to an ad-hoc product — order-wide promo codes still
+  // work, only product-restricted ones require the persistent product.
+  const stripeProductId = await ensureStripeProduct(p.item);
   try {
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       line_items: [{
         quantity: 1,
-        price_data: { currency: 'usd', unit_amount: p.total, product_data: { name: lineName } },
+        price_data: {
+          currency: 'usd',
+          unit_amount: p.total,
+          ...(stripeProductId ? { product: stripeProductId } : { product_data: { name: lineName } }),
+        },
       }],
       allow_promotion_codes: true,                    // Stripe shows + validates promo codes
       phone_number_collection: { enabled: true },     // Stripe collects the phone
@@ -4702,6 +4741,8 @@ function adminItemWithVariants(item) {
     hasVariants: !!item.hasVariants,
     active: !!item.active,
     hasPhoto: !!photo,
+    stripeProductId: item.stripeProductId || '',
+    stripeEnabled: !!stripe,
     variants: db.prepare('SELECT id, label, inventory, priceOverride FROM merch_variants WHERE itemId = ? ORDER BY id').all(item.id),
   };
 }
@@ -4712,7 +4753,7 @@ app.get('/api/shop/admin/items', (req, res) => {
   res.json({ items });
 });
 
-app.post('/api/shop/admin/items', (req, res) => {
+app.post('/api/shop/admin/items', async (req, res) => {
   if (!canManageShop(req.user)) return res.status(403).json({ error: 'Not allowed' });
   let { name, description, price, photo, hasVariants, inventory, variants } = req.body || {};
   name = String(name || '').trim().slice(0, 120);
@@ -4739,6 +4780,11 @@ app.post('/api/shop/admin/items', (req, res) => {
       insertVariant.run(itemId, label, vInventory, priceOverride);
     }
   }
+  // Create the matching Stripe Product now so it's available in the Stripe
+  // Dashboard when the admin builds a product-restricted promotion code, and
+  // so checkout can reference it. Best-effort — item creation still succeeds
+  // if Stripe is unreachable.
+  await ensureStripeProduct(db.prepare('SELECT * FROM merch_items WHERE id = ?').get(itemId));
   res.status(201).json({ item: adminItemWithVariants(db.prepare('SELECT * FROM merch_items WHERE id = ?').get(itemId)) });
 });
 
@@ -4773,6 +4819,20 @@ app.delete('/api/shop/admin/items/:id', (req, res) => {
   if (!canManageShop(req.user)) return res.status(403).json({ error: 'Not allowed' });
   db.prepare('DELETE FROM merch_items WHERE id = ?').run(Number(req.params.id));
   res.json({ ok: true });
+});
+
+// Create (or re-link) the item's Stripe Product on demand. Used to backfill
+// items that predate Stripe syncing, and to re-create the product after
+// switching between Stripe test and live keys (each mode has its own products).
+// Returns the product id the admin can point a "specific products" coupon at.
+app.post('/api/shop/admin/items/:id/sync-stripe', async (req, res) => {
+  if (!canManageShop(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  if (!stripe) return res.status(503).json({ error: 'Stripe is not configured yet.' });
+  const item = db.prepare('SELECT * FROM merch_items WHERE id = ?').get(Number(req.params.id));
+  if (!item) return res.status(404).json({ error: 'Not found' });
+  const stripeProductId = await ensureStripeProduct(item);
+  if (!stripeProductId) return res.status(502).json({ error: 'Could not sync to Stripe — please try again.' });
+  res.json({ stripeProductId });
 });
 
 app.post('/api/shop/admin/items/:id/variants', (req, res) => {
