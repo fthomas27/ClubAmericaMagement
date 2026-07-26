@@ -3199,16 +3199,18 @@ function CheckoutSuccessModal({ result, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
       <div className="bg-navy2 border border-cream/15 rounded-xl p-6 max-w-md w-full ca-scale-in text-center space-y-3" onClick={(e) => e.stopPropagation()}>
-        <div className="text-4xl">{result.processing ? '⏳' : '🎉'}</div>
+        <div className="text-4xl">{result.processing ? '⏳' : result.deliveryMethod === 'digital' ? '❤️' : '🎉'}</div>
         <div className="font-display text-xl text-gold">
-          {result.processing ? 'Payment processing…' : 'Payment received — order placed!'}
+          {result.processing ? 'Payment processing…' : result.deliveryMethod === 'digital' ? 'Thank you for your donation!' : 'Payment received — order placed!'}
         </div>
         <p className="text-sm text-cream/60">
           {result.processing
             ? 'Your payment method takes a little while to clear. Your order will be recorded automatically once it does — no need to order again.'
-            : result.deliveryMethod === 'pickup'
-              ? "We'll email you when your order is ready for pickup at school."
-              : "We'll ship your order and reach out if we need anything else."}
+            : result.deliveryMethod === 'digital'
+              ? 'Your gift directly supports Club America. A receipt is on its way to your email.'
+              : result.deliveryMethod === 'pickup'
+                ? "We'll email you when your order is ready for pickup at school."
+                : "We'll ship your order and reach out if we need anything else."}
         </p>
         <p className="text-xs text-cream/40">Thanks for supporting the Club America fundraiser!</p>
         <Button variant="gold" onClick={onClose}>Done</Button>
@@ -3218,7 +3220,8 @@ function CheckoutSuccessModal({ result, onClose }) {
 }
 
 function ShopItemCard({ item, onOrder }) {
-  const inStock = item.hasVariants ? item.variants.some((v) => v.inventory > 0) : item.inventory > 0;
+  const isDonation = item.isDonation;
+  const inStock = isDonation ? true : (item.hasVariants ? item.variants.some((v) => v.inventory > 0) : item.inventory > 0);
   const prices = item.hasVariants && item.variants.length
     ? item.variants.map((v) => (v.priceOverride != null ? v.priceOverride : item.price))
     : [item.price];
@@ -3234,10 +3237,10 @@ function ShopItemCard({ item, onOrder }) {
         <div className="font-display text-xl text-cream">{item.name}</div>
         {item.description && <p className="text-sm text-cream/60 mt-1 flex-1">{item.description}</p>}
         <div className="flex items-center justify-between mt-3">
-          <span className="text-gold font-semibold">{minP === maxP ? formatCents(minP) : `${formatCents(minP)}–${formatCents(maxP)}`}</span>
-          {!inStock && <Badge tone="red">Sold out</Badge>}
+          <span className="text-gold font-semibold">{isDonation ? `${formatCents(item.price)}+` : (minP === maxP ? formatCents(minP) : `${formatCents(minP)}–${formatCents(maxP)}`)}</span>
+          {isDonation ? <Badge tone="gold">Donation</Badge> : (!inStock && <Badge tone="red">Sold out</Badge>)}
         </div>
-        <Button variant="gold" className="mt-3" disabled={!inStock} onClick={onOrder}>{inStock ? 'Order Now' : 'Sold Out'}</Button>
+        <Button variant="gold" className="mt-3" disabled={!inStock} onClick={onOrder}>{isDonation ? 'Donate' : (inStock ? 'Order Now' : 'Sold Out')}</Button>
       </div>
     </div>
   );
@@ -3248,12 +3251,15 @@ function ShopItemCard({ item, onOrder }) {
 // page — so we only pick the item + delivery here. Student pickup just adds a
 // school email so the order can be handed over at school.
 function OrderModal({ item, config, onClose }) {
+  const isDonation = item.isDonation;
   const hasVariants = item.hasVariants;
   const firstInStock = hasVariants ? (item.variants.find((v) => v.inventory > 0) || item.variants[0]) : null;
   const [variantId, setVariantId] = useState(firstInStock ? firstInStock.id : '');
   const [quantity, setQuantity] = useState(1);
   const [deliveryMethod, setDeliveryMethod] = useState('ship');
   const [studentEmail, setStudentEmail] = useState('');
+  // Donation amount, in dollars; defaults to the item's minimum.
+  const [donationDollars, setDonationDollars] = useState((item.price / 100).toFixed(2));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   // Stable per-modal token; combined with the cart it forms the Stripe
@@ -3267,11 +3273,17 @@ function OrderModal({ item, config, onClose }) {
   // always matches what Stripe will actually charge.
   const MAX_PER_ORDER = 20;
   const maxQuantity = Math.max(1, Math.min(MAX_PER_ORDER, availableStock));
-  const total = unitPrice * Math.max(1, quantity);
+  const donationCents = Math.round(Number(donationDollars || 0) * 100);
+  const minDonation = Math.max(50, item.price || 0);
+  const total = isDonation ? donationCents : unitPrice * Math.max(1, quantity);
   // Stripe won't charge a card under 50¢.
   const belowCardMinimum = total < 50;
 
   function validateDetails() {
+    if (isDonation) {
+      if (!donationCents || donationCents < minDonation) return `Please enter at least ${formatCents(minDonation)}.`;
+      return '';
+    }
     if (hasVariants && !variantId) return 'Please choose an option.';
     if (!quantity || quantity < 1) return 'Quantity must be at least 1.';
     if (quantity > availableStock) return `Only ${availableStock} left in stock.`;
@@ -3289,12 +3301,18 @@ function OrderModal({ item, config, onClose }) {
     const err = validateDetails(); if (err) { setError(err); return; }
     setBusy(true); setError('');
     try {
-      const d = await api('/shop/create-checkout-session', { method: 'POST', body: {
-        itemId: item.id, variantId: variant ? variant.id : null, quantity,
-        deliveryMethod, studentEmail: deliveryMethod === 'pickup' ? studentEmail : '',
-        // Key on the full cart so a retry reuses the same session; a changed cart gets a fresh one.
-        idempotencyKey: `${idemSessionRef.current}-${item.id}-${variant ? variant.id : 'x'}-${quantity}-${deliveryMethod}-${total}`,
-      }});
+      const body = isDonation
+        ? {
+            itemId: item.id, amount: donationCents,
+            idempotencyKey: `${idemSessionRef.current}-${item.id}-donation-${donationCents}`,
+          }
+        : {
+            itemId: item.id, variantId: variant ? variant.id : null, quantity,
+            deliveryMethod, studentEmail: deliveryMethod === 'pickup' ? studentEmail : '',
+            // Key on the full cart so a retry reuses the same session; a changed cart gets a fresh one.
+            idempotencyKey: `${idemSessionRef.current}-${item.id}-${variant ? variant.id : 'x'}-${quantity}-${deliveryMethod}-${total}`,
+          };
+      const d = await api('/shop/create-checkout-session', { method: 'POST', body });
       window.location.href = d.url; // leaving the page; keep busy=true through nav
     } catch (err) { setError(err.message); setBusy(false); }
   }
@@ -3305,7 +3323,7 @@ function OrderModal({ item, config, onClose }) {
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
             <div className="font-display text-2xl text-gold">{item.name}</div>
-            <div className="text-cream/50 text-sm">{formatCents(unitPrice)} each</div>
+            <div className="text-cream/50 text-sm">{isDonation ? `${formatCents(minDonation)} minimum` : `${formatCents(unitPrice)} each`}</div>
           </div>
           <button onClick={onClose} className="text-cream/40 hover:text-cream text-xl leading-none">×</button>
         </div>
@@ -3313,46 +3331,61 @@ function OrderModal({ item, config, onClose }) {
         {error && <div className="text-red text-sm mb-3 whitespace-pre-wrap">{error}</div>}
 
         <div className="space-y-3">
-            {hasVariants && (
-              <Field label="Option">
-                <select className={inputCls} value={variantId} onChange={(e) => setVariantId(e.target.value)}>
-                  <option value="" disabled>Choose an option…</option>
-                  {item.variants.map((v) => (
-                    <option key={v.id} value={v.id} disabled={v.inventory <= 0}>
-                      {v.label}{v.inventory <= 0 ? ' (sold out)' : ` (${v.inventory} left)`}
-                    </option>
-                  ))}
-                </select>
+            {isDonation ? (
+              <Field label={`Amount (minimum ${formatCents(minDonation)})`}>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-cream/50">$</span>
+                  <input type="number" min={(minDonation / 100).toFixed(2)} step="0.01"
+                    className={inputCls + ' pl-6'} value={donationDollars}
+                    onChange={(e) => setDonationDollars(e.target.value)} />
+                </div>
               </Field>
-            )}
-            <Field label="Quantity">
-              <input type="number" min="1" max={maxQuantity} className={inputCls} value={quantity}
-                onChange={(e) => setQuantity(Math.min(maxQuantity, Math.max(1, Number(e.target.value) || 1)))} />
-            </Field>
+            ) : (
+              <>
+                {hasVariants && (
+                  <Field label="Option">
+                    <select className={inputCls} value={variantId} onChange={(e) => setVariantId(e.target.value)}>
+                      <option value="" disabled>Choose an option…</option>
+                      {item.variants.map((v) => (
+                        <option key={v.id} value={v.id} disabled={v.inventory <= 0}>
+                          {v.label}{v.inventory <= 0 ? ' (sold out)' : ` (${v.inventory} left)`}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+                <Field label="Quantity">
+                  <input type="number" min="1" max={maxQuantity} className={inputCls} value={quantity}
+                    onChange={(e) => setQuantity(Math.min(maxQuantity, Math.max(1, Number(e.target.value) || 1)))} />
+                </Field>
 
-            <div className="pt-2 border-t border-cream/10">
-              <span className="block text-xs uppercase tracking-wider text-cream/60 mb-1.5">Delivery</span>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => setDeliveryMethod('ship')}
-                  className={`flex-1 px-3 py-2 rounded-md text-sm border transition-colors ${deliveryMethod === 'ship' ? 'border-gold text-gold bg-gold/10' : 'border-cream/20 text-cream/70 hover:border-cream/40'}`}>
-                  Ship to Me
-                </button>
-                <button type="button" onClick={() => setDeliveryMethod('pickup')}
-                  className={`flex-1 px-3 py-2 rounded-md text-sm border transition-colors ${deliveryMethod === 'pickup' ? 'border-gold text-gold bg-gold/10' : 'border-cream/20 text-cream/70 hover:border-cream/40'}`}>
-                  Student Pick Up
-                </button>
-              </div>
-            </div>
+                <div className="pt-2 border-t border-cream/10">
+                  <span className="block text-xs uppercase tracking-wider text-cream/60 mb-1.5">Delivery</span>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setDeliveryMethod('ship')}
+                      className={`flex-1 px-3 py-2 rounded-md text-sm border transition-colors ${deliveryMethod === 'ship' ? 'border-gold text-gold bg-gold/10' : 'border-cream/20 text-cream/70 hover:border-cream/40'}`}>
+                      Ship to Me
+                    </button>
+                    <button type="button" onClick={() => setDeliveryMethod('pickup')}
+                      className={`flex-1 px-3 py-2 rounded-md text-sm border transition-colors ${deliveryMethod === 'pickup' ? 'border-gold text-gold bg-gold/10' : 'border-cream/20 text-cream/70 hover:border-cream/40'}`}>
+                      Student Pick Up
+                    </button>
+                  </div>
+                </div>
 
-            {deliveryMethod === 'pickup' && (
-              <Field label="School Email (@pcstudents.us)">
-                <input type="email" className={inputCls} value={studentEmail} onChange={(e) => setStudentEmail(e.target.value)} placeholder="you@pcstudents.us" />
-              </Field>
+                {deliveryMethod === 'pickup' && (
+                  <Field label="School Email (@pcstudents.us)">
+                    <input type="email" className={inputCls} value={studentEmail} onChange={(e) => setStudentEmail(e.target.value)} placeholder="you@pcstudents.us" />
+                  </Field>
+                )}
+              </>
             )}
 
             <div className={`text-sm rounded-md px-3 py-2 ${config.stripeEnabled ? 'text-cream/60 bg-navy border border-cream/15' : 'text-red'}`}>
               {config.stripeEnabled
-                ? `You'll enter your contact info${deliveryMethod === 'ship' ? ', shipping address' : ''}, card, and any promo code on Stripe's secure checkout page.`
+                ? (isDonation
+                    ? "You'll enter your contact info, card, and any promo code on Stripe's secure checkout page."
+                    : `You'll enter your contact info${deliveryMethod === 'ship' ? ', shipping address' : ''}, card, and any promo code on Stripe's secure checkout page.`)
                 : "Online payment isn't available right now — please check back soon or contact the secretary."}
             </div>
 
@@ -3361,7 +3394,7 @@ function OrderModal({ item, config, onClose }) {
             </div>
 
             <Button variant="gold" className="w-full mt-1" onClick={startCheckout} disabled={busy || !config.stripeEnabled}>
-              {busy ? <span className="flex items-center justify-center gap-2"><Spinner /> Redirecting…</span> : `Continue to Checkout · ${formatCents(total)}`}
+              {busy ? <span className="flex items-center justify-center gap-2"><Spinner /> Redirecting…</span> : `${isDonation ? 'Donate' : 'Continue to Checkout'} · ${formatCents(total)}`}
             </Button>
         </div>
       </div>
@@ -8179,6 +8212,7 @@ function NewProductForm({ onDone, onCancel }) {
   const [price, setPrice] = useState('');
   const [photo, setPhoto] = useState('');
   const [hasVariants, setHasVariants] = useState(false);
+  const [isDonation, setIsDonation] = useState(false);
   const [inventory, setInventory] = useState('0');
   const [variants, setVariants] = useState([{ label: '', inventory: '0', priceOverride: '' }]);
   const [busy, setBusy] = useState(false);
@@ -8208,8 +8242,9 @@ function NewProductForm({ onDone, onCancel }) {
         method: 'POST',
         body: {
           name: name.trim(), description, price: Math.round(Number(price || 0) * 100), photo,
-          hasVariants, inventory: Number(inventory) || 0,
-          variants: hasVariants
+          isDonation,
+          hasVariants: isDonation ? false : hasVariants, inventory: Number(inventory) || 0,
+          variants: !isDonation && hasVariants
             ? variants.filter((v) => v.label.trim()).map((v) => ({
                 label: v.label.trim(),
                 inventory: Number(v.inventory) || 0,
@@ -8228,19 +8263,25 @@ function NewProductForm({ onDone, onCancel }) {
       <div className="font-display text-xl text-gold">New Product</div>
       <Field label="Name *"><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} autoFocus /></Field>
       <Field label="Description"><textarea className={inputCls} rows="2" value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
-      <Field label="Price ($)"><input type="number" min="0" step="0.01" className={inputCls} value={price} onChange={(e) => setPrice(e.target.value)} /></Field>
+
+      <label className="flex items-center gap-2 text-sm text-cream/80">
+        <input type="checkbox" checked={isDonation} onChange={(e) => setIsDonation(e.target.checked)} />
+        Donation (buyer chooses the amount, with a minimum)
+      </label>
+
+      <Field label={isDonation ? 'Minimum amount ($)' : 'Price ($)'}><input type="number" min="0" step="0.01" className={inputCls} value={price} onChange={(e) => setPrice(e.target.value)} /></Field>
       <Field label="Photo">
         <input ref={fileRef} type="file" accept="image/*" onChange={pickPhoto}
           className="block w-full text-sm text-cream/70 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-gold file:text-navy file:font-semibold file:cursor-pointer hover:file:bg-gold/85" />
       </Field>
       {photo && <img src={photo} alt="Preview" className="max-h-32 rounded-lg border border-cream/15 object-contain" />}
 
-      <label className="flex items-center gap-2 text-sm text-cream/80">
+      {!isDonation && <label className="flex items-center gap-2 text-sm text-cream/80">
         <input type="checkbox" checked={hasVariants} onChange={(e) => setHasVariants(e.target.checked)} />
         This item has sizes/colors (variants)
-      </label>
+      </label>}
 
-      {!hasVariants ? (
+      {isDonation ? null : !hasVariants ? (
         <Field label="Inventory"><input type="number" min="0" className={inputCls} value={inventory} onChange={(e) => setInventory(e.target.value)} /></Field>
       ) : (
         <div className="space-y-2">
@@ -8350,8 +8391,9 @@ function ProductCard({ item, onChanged, onDelete }) {
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-medium text-cream truncate">{item.name}</span>
             <Badge tone={item.active ? 'green' : 'slate'}>{item.active ? 'Active' : 'Hidden'}</Badge>
+            {item.isDonation && <Badge tone="gold">Donation</Badge>}
           </div>
-          <div className="text-sm text-cream/50">{formatCents(item.price)}{!item.hasVariants ? ` · ${item.inventory} in stock` : ''}</div>
+          <div className="text-sm text-cream/50">{item.isDonation ? `${formatCents(item.price)} minimum` : `${formatCents(item.price)}${!item.hasVariants ? ` · ${item.inventory} in stock` : ''}`}</div>
           {item.stripeEnabled && (
             item.stripeProductId
               ? <div className="text-xs text-cream/40 mt-1 truncate" title="Use this Stripe Product id when creating a coupon restricted to specific products.">Stripe product: <code className="text-cream/60">{item.stripeProductId}</code></div>
@@ -8373,13 +8415,13 @@ function ProductCard({ item, onChanged, onDelete }) {
         <div className="mt-3 space-y-2 border-t border-cream/10 pt-3">
           <Field label="Name"><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} /></Field>
           <Field label="Description"><textarea className={inputCls} rows="2" value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
-          <Field label="Price ($)"><input type="number" min="0" step="0.01" className={inputCls} value={price} onChange={(e) => setPrice(e.target.value)} /></Field>
+          <Field label={item.isDonation ? 'Minimum amount ($)' : 'Price ($)'}><input type="number" min="0" step="0.01" className={inputCls} value={price} onChange={(e) => setPrice(e.target.value)} /></Field>
           <Field label="Replace Photo">
             <input ref={fileRef} type="file" accept="image/*" onChange={pickPhoto}
               className="block w-full text-sm text-cream/70 file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-gold file:text-navy file:font-semibold file:cursor-pointer hover:file:bg-gold/85" />
           </Field>
           {photo && <img src={photo} alt="Preview" className="max-h-28 rounded-lg border border-cream/15 object-contain" />}
-          {!item.hasVariants && (
+          {!item.hasVariants && !item.isDonation && (
             <Field label="Inventory"><input type="number" min="0" className={inputCls} defaultValue={item.inventory} onBlur={(e) => updateItemInventory(e.target.value)} /></Field>
           )}
           <div className="flex gap-2">
@@ -8470,10 +8512,10 @@ function OrderRow({ order, busy, onAction, statusColors }) {
     <div className="bg-navy2 border border-cream/10 rounded-xl p-4">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <div className="font-medium text-cream">{order.itemName}{order.variantLabel ? ` — ${order.variantLabel}` : ''} × {order.quantity}</div>
+          <div className="font-medium text-cream">{order.itemName}{order.variantLabel ? ` — ${order.variantLabel}` : ''}{order.deliveryMethod === 'digital' ? '' : ` × ${order.quantity}`}</div>
           <div className="text-sm text-cream/60 mt-0.5">{order.buyerName} · {order.buyerEmail}{order.buyerPhone ? ' · ' + order.buyerPhone : ''}</div>
           <div className="text-xs text-cream/40 mt-1">
-            {order.deliveryMethod === 'ship' ? 'Ship to buyer' : 'Student pickup'}
+            {order.deliveryMethod === 'ship' ? 'Ship to buyer' : order.deliveryMethod === 'digital' ? 'Donation' : 'Student pickup'}
             {order.deliveryMethod === 'pickup' && order.studentEmail ? ` (${order.studentEmail})` : ''}
             {order.discountAmount > 0 ? ` · promo −${formatCents(order.discountAmount)}` : ''} · {timeAgo(order.createdAt)}
           </div>
