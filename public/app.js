@@ -5587,14 +5587,19 @@ function RosterPage({ me }) {
   const isFlagged = (m) => m.status === 'Onboarded' && m.absenceAlertEventId && !m.absenceContactedAt;
 
   const tabFilteredMembers = useMemo(() => {
-    if (tab === 'attention') return members.filter(isFlagged);
-    if (tab === 'pending') return members.filter((m) => m.status === 'Pending');
-    if (tab === 'pipeline') return members.filter((m) => m.status === 'Prospect' || m.status === 'Contacted');
-    if (tab === 'members') return members.filter((m) => m.status === 'Onboarded');
-    if (tab === 'declined') return members.filter((m) => m.status === 'Declined');
+    let list;
+    if (tab === 'attention') list = members.filter(isFlagged);
+    else if (tab === 'pending') list = members.filter((m) => m.status === 'Pending');
+    else if (tab === 'pipeline') list = members.filter((m) => m.status === 'Prospect' || m.status === 'Contacted');
+    else if (tab === 'members') list = members.filter((m) => m.status === 'Onboarded');
+    else if (tab === 'declined') list = members.filter((m) => m.status === 'Declined');
     // The catch-all "All" view hides Pending sign-ups — they live in their own
     // approval queue until a roster manager acts on them.
-    return members.filter((m) => m.status !== 'Pending');
+    else list = members.filter((m) => m.status !== 'Pending');
+    // Always show the roster alphabetically by first name (last name breaks ties).
+    return [...list].sort((a, b) =>
+      (a.firstName || '').localeCompare(b.firstName || '', undefined, { sensitivity: 'base' }) ||
+      (a.lastName || '').localeCompare(b.lastName || '', undefined, { sensitivity: 'base' }));
   }, [members, tab]);
 
   // Reset visible count when the view changes.
