@@ -4833,7 +4833,12 @@ function MemberSignUpPage() {
     e.preventDefault();
     setError('');
     if (!form.firstName.trim()) { setError('First name is required.'); return; }
-    if (form.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) { setError('Please enter a valid email.'); return; }
+    if (!form.lastName.trim()) { setError('Last name is required.'); return; }
+    if (!form.phone.trim()) { setError('Phone number is required.'); return; }
+    if (!form.email.trim()) { setError('Email is required.'); return; }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) { setError('Please enter a valid email.'); return; }
+    if (!form.grade) { setError('Grade is required.'); return; }
+    if (!form.gender) { setError('Gender is required.'); return; }
     setBusy(true);
     try {
       const r = await fetch('/api/roster/self-submit', {
@@ -4874,33 +4879,33 @@ function MemberSignUpPage() {
         <div className="font-display text-3xl text-gold mb-1">Join the Roster</div>
         <p className="text-cream/60 text-sm mb-6">
           Fill in your info below and you'll be added to the Club America roster once
-          the secretary approves it. Only your first name is required.
+          the secretary approves it. All fields are required except the last.
         </p>
         <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-slide-up" style={{ animationDelay: '80ms' }}>
           <div className="grid grid-cols-2 gap-4">
             <Field label="First Name *">
               <input className={inputCls} value={form.firstName} onChange={set('firstName')} required autoFocus />
             </Field>
-            <Field label="Last Name">
-              <input className={inputCls} value={form.lastName} onChange={set('lastName')} />
+            <Field label="Last Name *">
+              <input className={inputCls} value={form.lastName} onChange={set('lastName')} required />
             </Field>
           </div>
-          <Field label="Phone Number">
-            <input className={inputCls} type="tel" value={form.phone} onChange={set('phone')} placeholder="(435) 555-0100" />
+          <Field label="Phone Number *">
+            <input className={inputCls} type="tel" value={form.phone} onChange={set('phone')} placeholder="(435) 555-0100" required />
           </Field>
-          <Field label="Email">
-            <input className={inputCls} type="email" value={form.email} onChange={set('email')} placeholder="you@example.com" />
+          <Field label="Email *">
+            <input className={inputCls} type="email" value={form.email} onChange={set('email')} placeholder="you@example.com" required />
           </Field>
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Grade">
-              <select className={inputCls} value={form.grade} onChange={set('grade')}>
+            <Field label="Grade *">
+              <select className={inputCls} value={form.grade} onChange={set('grade')} required>
                 <option value="">—</option>
                 {[9,10,11,12].map((g) => <option key={g} value={g}>{g}th</option>)}
               </select>
             </Field>
-            <Field label="Gender">
-              <select className={inputCls} value={form.gender} onChange={set('gender')}>
-                <option value="">Prefer not to say</option>
+            <Field label="Gender *">
+              <select className={inputCls} value={form.gender} onChange={set('gender')} required>
+                <option value="">—</option>
                 <option value="Male">Male</option>
                 <option value="Female">Female</option>
               </select>
