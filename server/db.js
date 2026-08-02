@@ -745,6 +745,9 @@ function init() {
   // volunteer_signups column migrations.
   const vsCols = db.prepare("PRAGMA table_info(volunteer_signups)").all().map((c) => c.name);
   if (!vsCols.includes('needsReview')) db.exec("ALTER TABLE volunteer_signups ADD COLUMN needsReview INTEGER NOT NULL DEFAULT 0");
+  // Set once a volunteer manager checks someone in at the event. Only
+  // attended sign-ups count toward a roster member's volunteer history.
+  if (!vsCols.includes('attendedAt')) db.exec("ALTER TABLE volunteer_signups ADD COLUMN attendedAt TEXT");
 
   // ai_chat_messages migration: taskProposal holds the JSON of an AI-drafted
   // bulk task-assignment proposal attached to an assistant message ('' = none).
