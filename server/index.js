@@ -29,6 +29,7 @@ const { db, init, seed } = require('./db');
 const { fetchUpcoming, clearCache } = require('./calendar');
 const { notify, escHtml } = require('./email');
 const { analyzeTeamHealth, chatWithAI, chatWithHowTo, aiEnabled } = require('./ai');
+const { registerMcpEndpoint } = require('./mcp');
 const {
   signToken,
   publicUser,
@@ -176,8 +177,12 @@ app.use((req, res, next) => {
   // Speaker applications can carry a completed PDF form as a base64 data URL
   // (5 MB file ≈ 7 MB of JSON once base64-encoded).
   const isSpeakerApply = req.method === 'POST' && req.path === '/api/public/speaker-apply';
+  // MCP tool calls (remote Claude connector) carry JSON-RPC bodies that can
+  // exceed the tight default — task batches, long descriptions, etc.
+  const isMcp = req.path.startsWith('/mcp/');
   const limit = isSpeakerApply ? '8mb'
-    : isProfilePhoto || isEventPhoto || isIgHighlight || isTestimonial || isMerchItem ? '6mb' : '50kb';
+    : isProfilePhoto || isEventPhoto || isIgHighlight || isTestimonial || isMerchItem ? '6mb'
+    : isMcp ? '2mb' : '50kb';
   express.json({ limit })(req, res, next);
 });
 
@@ -5041,6 +5046,13 @@ app.patch('/api/shop/admin/orders/:id', (req, res) => {
 // Promo codes are managed in the Stripe Dashboard and applied on Stripe's
 // hosted checkout page (allow_promotion_codes), so there are no promo-code
 // endpoints here anymore.
+
+// ---- Remote MCP endpoint ----------------------------------------------------
+// Lets an external Claude chat (claude.ai custom connector) manage the site —
+// tasks, volunteers, events, shop, roster, and more. Enabled by setting
+// MCP_SECRET; actions run through the same notification/audit helpers as the
+// web routes. See server/mcp.js and the README's "Claude MCP connector" section.
+registerMcpEndpoint(app, { pushNotification, logApproval, ensureStripeProduct });
 
 // ---- Static frontend --------------------------------------------------------
 app.use(express.static(path.join(__dirname, '..', 'public')));
