@@ -947,12 +947,11 @@ function TaskCard({ task, canEdit, onChange, onDelete, onOpenDetail }) {
     : null;
   return (
     <div className="bg-navy2 border border-cream/10 rounded-lg px-3 py-2 hover:border-cream/25 transition-colors">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex items-start justify-between gap-2">
         <button
           type="button"
           onClick={() => onOpenDetail && onOpenDetail(task)}
-          title={task.name}
-          className="min-w-0 flex-1 text-left font-medium text-cream text-sm truncate hover:text-gold hover:underline transition-colors"
+          className="min-w-0 flex-1 text-left font-medium text-cream text-sm break-words hover:text-gold hover:underline transition-colors"
         >
           {task.name}
         </button>
