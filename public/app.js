@@ -936,62 +936,50 @@ function DelegateSubtask({ parentTask, reports }) {
   );
 }
 
-function TaskCard({ task, canEdit, onChange, onDelete, me, users, onOpenDetail }) {
+// Compact by design: full description, doc link, delegate control, and
+// comments live in TaskDetailModal (opened via the title). Keeping those out
+// of the card is what lets a whole list of tasks fit on a small screen
+// without scrolling past every card's full contents to get to the next one.
+function TaskCard({ task, canEdit, onChange, onDelete, onOpenDetail }) {
   const [saving, setSaving] = useState(false);
   const recurringDays = task.isRecurring && task.recurringDays
     ? String(task.recurringDays).split(',').map(Number).filter((d) => d >= 0 && d <= 6).map((d) => DAY_LABELS[d]).join(', ')
     : null;
-  const safeDocUrl = task.docUrl ? (task.docUrl.startsWith('http://') || task.docUrl.startsWith('https://') ? task.docUrl : 'https://' + task.docUrl) : '';
   return (
-    <div className="bg-navy2 border border-cream/10 rounded-lg p-4 hover:border-cream/25 hover:-translate-y-0.5 hover:shadow-md hover:shadow-black/25 transition-all duration-200">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <button
-            type="button"
-            onClick={() => onOpenDetail && onOpenDetail(task)}
-            title={task.name}
-            className="font-medium text-cream truncate text-left block w-full hover:text-gold hover:underline transition-colors"
-          >
-            {task.name}
-          </button>
-          {task.description && <div className="text-sm text-cream/60 mt-1 whitespace-pre-wrap">{task.description}</div>}
-          {safeDocUrl && (
-            <a href={safeDocUrl} target="_blank" rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 mt-2 text-xs text-sky-300 hover:text-sky-200 transition-colors">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>
-              Open Document
-            </a>
-          )}
-        </div>
-        <div className="flex flex-col items-end gap-1 shrink-0">
-          <Badge tone={statusTone(task.status)}>{task.status}</Badge>
-          {recurringDays && <span className="text-[10px] text-gold/70">↻ {recurringDays}</span>}
-        </div>
+    <div className="bg-navy2 border border-cream/10 rounded-lg px-3 py-2 hover:border-cream/25 transition-colors">
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => onOpenDetail && onOpenDetail(task)}
+          title={task.name}
+          className="min-w-0 flex-1 text-left font-medium text-cream text-sm truncate hover:text-gold hover:underline transition-colors"
+        >
+          {task.name}
+        </button>
+        {task.approvalStatus === 'pending' && <Badge tone="red">Pending</Badge>}
       </div>
-      <div className="flex items-center flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-cream/50">
+      <div className="flex items-center flex-wrap gap-x-3 gap-y-0.5 mt-1 text-[11px] text-cream/45">
         {task.dueDate && <span>Due {fmtShortDate(task.dueDate)}</span>}
-        <span>Assigned by <span className="text-gold/80">{task.assignedByName}</span></span>
-        {task.approvalStatus === 'pending' && <Badge tone="red">Pending approval</Badge>}
+        <span>by <span className="text-gold/70">{task.assignedByName}</span></span>
+        {recurringDays && <span className="text-gold/60">↻ {recurringDays}</span>}
       </div>
       {canEdit && task.approvalStatus === 'approved' && (
-        <div className="flex items-center gap-2 mt-3">
-          <div className="flex items-center gap-2">
-            <select
-              className="bg-navy border border-cream/20 rounded px-2 py-1 text-sm disabled:opacity-50"
-              value={task.status}
-              disabled={saving}
-              onChange={async (e) => {
-                setSaving(true);
-                try { await onChange(task, { status: e.target.value }); } catch (_) {}
-                finally { setSaving(false); }
-              }}
-            >
-              <option>Not Started</option>
-              <option>In Progress</option>
-              <option>Complete</option>
-            </select>
-            {saving && <span className="flex items-center gap-1 text-xs text-cream/40"><Spinner className="w-3 h-3" /> Saving…</span>}
-          </div>
+        <div className="flex items-center gap-2 mt-1.5">
+          <select
+            className="bg-navy border border-cream/20 rounded px-1.5 py-0.5 text-xs disabled:opacity-50"
+            value={task.status}
+            disabled={saving}
+            onChange={async (e) => {
+              setSaving(true);
+              try { await onChange(task, { status: e.target.value }); } catch (_) {}
+              finally { setSaving(false); }
+            }}
+          >
+            <option>Not Started</option>
+            <option>In Progress</option>
+            <option>Complete</option>
+          </select>
+          {saving && <Spinner className="w-3 h-3" />}
           {onDelete && (
             <button onClick={() => onDelete(task)} className="text-xs text-red/80 hover:text-red ml-auto">
               Delete
@@ -999,15 +987,6 @@ function TaskCard({ task, canEdit, onChange, onDelete, me, users, onOpenDetail }
           )}
         </div>
       )}
-      {(() => {
-        // Show the Delegate control when the signed-in user owns this approved
-        // task and has direct reports they can hand sub-tasks to.
-        if (!me || task.userId !== me.id || task.approvalStatus !== 'approved') return null;
-        const reports = (users || []).filter((u) => u.managerId === me.id);
-        if (reports.length === 0) return null;
-        return <DelegateSubtask parentTask={task} reports={reports} />;
-      })()}
-      {me && <TaskComments taskId={task.id} me={me} />}
     </div>
   );
 }
@@ -1755,13 +1734,13 @@ function TaskPage({ me, userId, users, refreshSignal, onNavigate }) {
         />
       )}
 
-      {tasks.length > 0 && viewMode === 'cards' && <div className="grid md:grid-cols-3 gap-4">
+      {tasks.length > 0 && viewMode === 'cards' && <div className="grid md:grid-cols-3 gap-3">
         {['Not Started', 'In Progress', 'Complete'].map((col) => (
           <div key={col}>
-            <div className="font-display text-xl text-gold mb-2">{col} <span className="text-cream/30 text-base">({grouped[col].length})</span></div>
-            <div className="space-y-3">
+            <div className="font-display text-lg text-gold mb-1.5">{col} <span className="text-cream/30 text-sm">({grouped[col].length})</span></div>
+            <div className="space-y-1.5">
               {grouped[col].map((t) => (
-                <TaskCard key={t.id} task={t} canEdit={true} onChange={changeTask} onDelete={deleteTask} me={me} users={users} onOpenDetail={setDetailTask} />
+                <TaskCard key={t.id} task={t} canEdit={true} onChange={changeTask} onDelete={deleteTask} onOpenDetail={setDetailTask} />
               ))}
             </div>
           </div>
