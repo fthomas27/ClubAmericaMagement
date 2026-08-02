@@ -93,6 +93,23 @@ does the right thing without the warning.
 | `STRIPE_SECRET_KEY` | Enables **online card payments** in the merch shop. From the Stripe Dashboard → Developers → API keys (`sk_live_…` / `sk_test_…`). Without it, only in-person (cash/Venmo) pickup orders can be placed. |
 | `STRIPE_PUBLISHABLE_KEY` | The matching publishable key (`pk_live_…` / `pk_test_…`), served to the shop's card form. |
 | `STRIPE_WEBHOOK_SECRET` | Signing secret (`whsec_…`) for the `/api/shop/webhook` endpoint. Required for online payments — it lets Stripe confirm a payment even if the buyer's browser closes right after paying, so no paid order is ever lost. |
+| `MCP_SECRET` | Enables the **remote Claude connector** (MCP endpoint) — a long random string (16+ chars) that becomes part of the connector URL. Without it the endpoint is disabled. See "Manage the site from Claude" below. |
+| `MCP_ACTOR_USERNAME` | Optional. The board account username that Claude's actions run as (task assignments, approvals, audit-log entries). Defaults to the first admin. |
+
+### Manage the site from Claude (MCP connector)
+
+The app can expose a [Model Context Protocol](https://modelcontextprotocol.io) endpoint so your own Claude chat — claude.ai, the desktop app, or Claude Code — can manage the whole site conversationally: create and assign tasks, run volunteer events and signups, schedule meetings and speaker events, manage the merch shop and orders, work the roster pipeline, review funding/reimbursements, post homepage announcements, and send members notifications (≈50 tools; see `server/mcp.js`).
+
+**Setup:**
+
+1. Generate a long random secret, e.g. `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`, and set it as the `MCP_SECRET` env var on your host. Redeploy.
+2. The endpoint is now live at `https://<your-app-url>/mcp/<that secret>`.
+3. In claude.ai: **Settings → Connectors → Add custom connector**, paste that URL, and leave authentication off (the secret in the URL is the credential). Claude Desktop and Claude Code accept the same URL as a remote MCP server.
+4. Chat away: *"Add a task for Will to book the bake-sale table by Friday, create Saturday's volunteer event with 3 cashier slots, and mark order #12 fulfilled."*
+
+**How it behaves:** every action runs "as" the actor account (default: the first admin), so assignees get the normal in-app + Telegram notifications, approvals land in the audit log, and inventory/status rules (roster pipeline transitions, order cancel restocking, no self-review of funding) are enforced exactly like the web UI.
+
+**Security notes:** the site must be served over HTTPS; treat the URL like a password (anyone holding it has admin-level control) and rotate `MCP_SECRET` if it leaks. Requests with a wrong secret get a plain 404.
 
 ### Stripe merch-shop setup
 
