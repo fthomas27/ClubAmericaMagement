@@ -5143,9 +5143,12 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
     setShowActivity(true);
     setActivityLoading(true);
     try {
+      // Both endpoints require auth — use the api() helper so the bearer
+      // token actually gets sent (a bare fetch() 401s silently here since
+      // neither route falls back to a session cookie).
       const [att, vol] = await Promise.all([
-        fetch(`/api/roster-members/${member.id}/attendance-history`).then((r) => r.json()),
-        fetch(`/api/roster-members/${member.id}/volunteer-history`).then((r) => r.json()),
+        api(`/roster-members/${member.id}/attendance-history`),
+        api(`/roster-members/${member.id}/volunteer-history`),
       ]);
       setMeetings(att.history || []);
       setVolunteerEvents(vol.history || []);
