@@ -5061,6 +5061,14 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 // Paths that look like files (have an extension) get a real 404 instead of
 // index.html, so a broken asset path fails loudly rather than feeding HTML
 // to the script loader.
+// MCP/OAuth-discovery clients (including claude.ai's connector setup) probe
+// well-known paths like /.well-known/oauth-authorization-server before
+// connecting. These have no file extension, so without this route they'd
+// fall through to the SPA catch-all below and get back a 200 HTML page —
+// which confuses clients expecting a clean 404 ("no OAuth here, proceed
+// unauthenticated").
+app.get('/.well-known/*', (req, res) => res.status(404).end());
+
 app.get('*', (req, res) => {
   if (path.extname(req.path)) return res.status(404).end();
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));

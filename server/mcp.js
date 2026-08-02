@@ -965,17 +965,21 @@ function registerMcpEndpoint(app, helpers) {
     return;
   }
 
-  app.all('/mcp/:secret', async (req, res) => {
+  function checkSecret(req, res) {
     if (!timingSafeEqual(req.params.secret, MCP_SECRET)) {
-      return res.status(404).json({ error: 'Not found' });
+      res.status(404).json({ error: 'Not found' });
+      return false;
     }
-    // Stateless mode: a fresh server + transport per request. Claude reconnects
-    // with full context each call, so no session state needs to live here.
+    return true;
+  }
+
+  // JSON-RPC calls (initialize, tools/list, tools/call, ...) arrive as POST.
+  // Stateless mode: a fresh server + transport per request. Claude reconnects
+  // with full context each call, so no session state needs to live here.
+  app.post('/mcp/:secret', async (req, res) => {
+    if (!checkSecret(req, res)) return;
     const server = buildServer(helpers);
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-      enableJsonResponse: true,
-    });
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => { transport.close(); server.close(); });
     try {
       await server.connect(transport);
@@ -987,6 +991,20 @@ function registerMcpEndpoint(app, helpers) {
       }
     }
   });
+
+  // GET/DELETE are part of the Streamable HTTP spec for stateful servers
+  // (opening a standalone SSE stream / ending a session). This server is
+  // stateless, so — per the SDK's own reference implementation — these must
+  // return a clean 405 rather than being routed into transport.handleRequest,
+  // which would otherwise demand an `Accept: text/event-stream` header and
+  // return a confusing "Not Acceptable" error (this is also what you get if
+  // you open the URL directly in a browser — that's expected, not a bug).
+  const methodNotAllowed = (req, res) => {
+    if (!checkSecret(req, res)) return;
+    res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed.' }, id: null });
+  };
+  app.get('/mcp/:secret', methodNotAllowed);
+  app.delete('/mcp/:secret', methodNotAllowed);
 
   console.log('[mcp] Remote MCP endpoint enabled at /mcp/<secret> (' +
     'connect it as a claude.ai custom connector).');
