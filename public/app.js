@@ -2129,11 +2129,11 @@ function JoinReferralToggle() {
       <div className="font-display text-2xl text-gold mb-1">Join Page</div>
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <div className="text-cream">"Who referred you?" field</div>
+          <div className="text-cream">Personal referral links</div>
           <div className="text-cream/50 text-sm">
             {enabled === null ? 'Loading…'
-              : enabled ? 'Shown on /join — new sign-ups can credit a referral.'
-              : 'Hidden on /join — referral crediting is paused.'}
+              : enabled ? 'Active — sign-ups through /join/username credit that board member.'
+              : 'Paused — /join/username still opens the form, but nobody gets credit.'}
           </div>
         </div>
         <button
@@ -4965,15 +4965,20 @@ function InterestSurvey({ onBack }) {
 }
 
 // ---------------------------------------------------------------------------
-// Member Self-Service Sign-Up (shown at /join path, no auth)
+// Member Self-Service Sign-Up (shown at /join, no auth)
 // Members fill in their own roster info; it lands as a Pending submission the
 // secretary approves before it joins the live roster.
+// Each board member also has a personal referral link, /join/:username, which
+// renders this same page with their name attached — that link is the only way
+// a sign-up gets credited, so the form itself asks nothing about referrals.
 // ---------------------------------------------------------------------------
-function MemberSignUpPage() {
-  const blankForm = { firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', notes: '', referredByUserId: '' };
+function MemberSignUpPage({ referrerUsername }) {
+  const blankForm = { firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', notes: '' };
   const [form, setForm] = useState(blankForm);
-  const [members, setMembers] = useState([]);
-  const [referralEnabled, setReferralEnabled] = useState(true);
+  // The board member behind /join/:username, once the server confirms the
+  // username is real and referral crediting is on. Null on the plain /join
+  // link, on an unknown username, or while referrals are paused.
+  const [referrer, setReferrer] = useState(null);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -4982,15 +4987,13 @@ function MemberSignUpPage() {
   // club-day sign-up table instead of reloading the page for every person.
   const [formKey, setFormKey] = useState(0);
 
-  // Public board list powers the "who referred you?" dropdown.
   useEffect(() => {
-    fetch('/api/board').then((r) => r.json())
-      .then((d) => setMembers((d.members || []).filter((m) => m.displayName)))
+    if (!referrerUsername) { setReferrer(null); return; }
+    fetch(`/api/join/referrer/${encodeURIComponent(referrerUsername)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setReferrer(d?.member || null))
       .catch(() => {});
-    fetch('/api/join/referral-settings').then((r) => r.json())
-      .then((d) => setReferralEnabled(d.enabled !== false))
-      .catch(() => {});
-  }, []);
+  }, [referrerUsername]);
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
@@ -5009,7 +5012,7 @@ function MemberSignUpPage() {
       const r = await fetch('/api/roster/self-submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify(referrer ? { ...form, referredByUsername: referrer.username } : form),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'Failed');
@@ -5034,7 +5037,8 @@ function MemberSignUpPage() {
           <div className="font-display text-4xl text-gold mb-3">You're on the list!</div>
           <p className="text-cream/70 mb-6">
             Thanks{form.firstName ? `, ${form.firstName.trim()}` : ''}! Your info has been sent to the
-            Club America secretary. Once it's approved you'll be part of the official roster.
+            Club America secretary. Once it's approved you'll be part of the official roster
+            {referrer ? <> — and {referrer.displayName} gets credit for referring you</> : null}.
           </p>
           <Button variant="gold" className="w-full" onClick={submitAnother}>Submit Another</Button>
         </div>
@@ -5050,6 +5054,15 @@ function MemberSignUpPage() {
           <Logo size="login" />
         </div>
         <div className="font-display text-3xl text-gold mb-1">Join the Roster</div>
+        {referrer && (
+          <div className="flex items-center gap-2 bg-gold/10 border border-gold/40 rounded-xl px-4 py-2.5 mb-3 ca-slide-up">
+            <span className="text-gold shrink-0"><AppIcon name="person" size={18} /></span>
+            <div className="text-sm text-cream/80 min-w-0">
+              Invited by <span className="text-gold font-medium">{referrer.displayName}</span>
+              {referrer.title ? <span className="text-cream/50"> · {referrer.title}</span> : null}
+            </div>
+          </div>
+        )}
         <p className="text-cream/60 text-sm mb-6">
           Fill in your info below and you'll be added to the Club America roster once
           the secretary approves it. All fields are required except the last.
@@ -5084,16 +5097,6 @@ function MemberSignUpPage() {
               </select>
             </Field>
           </div>
-          {referralEnabled && (
-            <Field label="Who referred you? (optional)">
-              <select className={inputCls} value={form.referredByUserId} onChange={set('referredByUserId')}>
-                <option value="">— No one / found it myself —</option>
-                {members.map((m) => (
-                  <option key={m.id} value={m.id}>{m.displayName}{m.title ? ` (${m.title})` : ''}</option>
-                ))}
-              </select>
-            </Field>
-          )}
           <Field label="Anything else? (optional)">
             <textarea className={inputCls} rows="2" value={form.notes} onChange={set('notes')}
               placeholder="Role you're interested in, questions, etc." />
@@ -5648,13 +5651,71 @@ function ReferMemberForm({ onReferred }) {
   );
 }
 
+// Every member's personal referral link: /join/<their username>. Anyone who
+// signs up through it lands in the roster already attributed to them, so the
+// point is credited the moment the Secretary approves the submission — no
+// "who referred you?" question for the new member to get wrong.
+function MyReferralLink({ me }) {
+  const link = `${window.location.origin}/join/${me.username}`;
+  const [copied, setCopied] = useState(false);
+  const [enabled, setEnabled] = useState(true);
+
+  useEffect(() => {
+    api('/join/referral-settings')
+      .then((d) => setEnabled(d.enabled !== false))
+      .catch(() => {});
+  }, []);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (_) {
+      // Fallback for browsers without clipboard permission — select-and-prompt.
+      window.prompt('Copy this link:', link);
+    }
+  }
+
+  async function share() {
+    const text = `Join Club America — sign up here: ${link}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Join Club America', text, url: link }); return; } catch (_) { /* cancelled */ }
+    }
+    copy();
+  }
+
+  return (
+    <div className="bg-navy2 border-2 border-gold/40 rounded-2xl p-5 mb-6">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-gold"><AppIcon name="link" size={18} /></span>
+        <div className="font-display text-xl text-gold">Your Referral Link</div>
+      </div>
+      <p className="text-cream/60 text-sm mb-3">
+        Send this to anyone you want to bring in. Everyone who signs up through it is
+        automatically credited to you — you just need the Secretary to approve them.
+        {!enabled && <span className="text-gold/80"> Referral crediting is paused right now, so the link still works but won't award points.</span>}
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <code className="flex-1 min-w-0 truncate bg-navy border border-cream/15 rounded-md px-3 py-2 text-sm text-cream/80">{link}</code>
+        <Button variant="gold" className="text-sm px-4 py-2" onClick={copy}>
+          {copied ? 'Copied ✓' : 'Copy Link'}
+        </Button>
+        <Button variant="ghost" className="text-sm px-4 py-2" onClick={share}>Share</Button>
+        <a href={`/join/${me.username}`} target="_blank" rel="noopener" className="text-xs text-gold/60 hover:text-gold">Preview ↗</a>
+      </div>
+    </div>
+  );
+}
+
 // Full-page referral competition view — visible to every member.
 function ReferralsPage({ me }) {
   const [refresh, setRefresh] = useState(0);
   return (
     <div className="max-w-3xl">
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Referral Competition</h1>
-      <p className="text-cream/50 mb-6">Refer new members and climb the leaderboard.</p>
+      <p className="text-cream/50 mb-6">Share your link, refer new members, and climb the leaderboard.</p>
+      <MyReferralLink me={me} />
       <ReferMemberForm onReferred={() => setRefresh((n) => n + 1)} />
       <ReferralLeaderboard me={me} refreshSignal={refresh} />
     </div>
@@ -5691,6 +5752,8 @@ function RosterInviteLink({ pendingCount }) {
         {pendingCount > 0 && (
           <span className="text-gold font-medium"> {pendingCount} waiting.</span>
         )}
+        {' '}This link credits no one — board members share their own{' '}
+        <span className="text-gold">/join/username</span> link from the Referral Competition page to earn credit.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <code className="flex-1 min-w-0 truncate bg-navy border border-cream/15 rounded-md px-3 py-2 text-sm text-cream/80">{link}</code>
@@ -9341,6 +9404,7 @@ function AppIcon({ name, className, size = 26 }) {
     case 'pin':          return <svg {...p}><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>;
     case 'clock':        return <svg {...p}><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>;
     case 'warning':      return <svg {...p}><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg>;
+    case 'link':         return <svg {...p}><path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.5"/><path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.33-1.33"/></svg>;
     default:             return <svg {...p}><circle cx="12" cy="12" r="9"/></svg>;
   }
 }
@@ -9863,7 +9927,9 @@ function App() {
   const portalActiveRef = useRef(false);
 
   const isSurveyPath = window.location.pathname === '/survey';
-  const isJoinPath = window.location.pathname === '/join';
+  // /join is the plain sign-up form; /join/:username is a board member's
+  // personal referral link, which credits them for the sign-up.
+  const joinMatch = window.location.pathname.match(/^\/join(?:\/([A-Za-z0-9._-]{1,60}))?\/?$/);
   const volunteerMatch = window.location.pathname.match(/^\/volunteer\/(\d+)$/);
   // Match both /testimonial-submit (universal) and /testimonial-submit/:token (pre-filled)
   const testimonialSubmitMatch = window.location.pathname.match(/^\/testimonial-submit(?:\/([a-zA-Z0-9]*))?$/);
@@ -9979,7 +10045,7 @@ function App() {
 
   if (!booted) return <div className="min-h-screen flex items-center justify-center gap-2 text-cream/40"><Spinner className="w-5 h-5" /> Loading…</div>;
   if (isSurveyPath) return <InterestSurvey onBack={() => { window.history.pushState(null, '', '/'); window.location.reload(); }} />;
-  if (isJoinPath) return <MemberSignUpPage />;
+  if (joinMatch) return <MemberSignUpPage referrerUsername={joinMatch[1] || null} />;
   if (volunteerMatch) return <VolunteerSignUpPage eventId={Number(volunteerMatch[1])} />;
   if (testimonialSubmitMatch) return <TestimonialSubmitPage token={testimonialSubmitMatch[1] || null} />;
   if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;

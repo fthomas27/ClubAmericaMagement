@@ -580,8 +580,9 @@ app.post('/api/roster/survey', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, na
   res.status(201).json({ ok: true, id: info.lastInsertRowid });
 });
 
-// Whether the "Who referred you?" field on /join is currently active.
-// The president/admin can flip this off to pause referral crediting.
+// Whether personal referral links (/join/:username) currently credit anyone.
+// The president/admin can flip this off to pause referral crediting — the
+// sign-up form still works, the submission just isn't attributed.
 function getJoinReferralEnabled() {
   const row = db.prepare('SELECT joinReferralEnabled FROM site_settings WHERE id=1').get();
   return !!row?.joinReferralEnabled;
@@ -591,14 +592,38 @@ app.get('/api/join/referral-settings', (req, res) => {
   res.json({ enabled: getJoinReferralEnabled() });
 });
 
-// Public self-service member sign-up (shown at /join) — no auth required. The
+// Resolves the board member behind a personal referral link (/join/:username)
+// so the public sign-up page can show "Referred by …". No auth: the same
+// names and titles are already public on /api/board. Returns 404 when the
+// username isn't a real member or referral crediting is paused, which lets
+// the page fall back to the plain form instead of promising a credit that
+// self-submit would then drop.
+app.get('/api/join/referrer/:username', (req, res) => {
+  if (!getJoinReferralEnabled()) return res.status(404).json({ error: 'Referrals are paused' });
+  const member = findReferrerByUsername(req.params.username);
+  if (!member) return res.status(404).json({ error: 'Unknown referral link' });
+  res.json({ member });
+});
+
+// Look up a referral-link owner by username (case-insensitive — links get
+// typed by hand and shared in chats that capitalize the first letter). The
+// hidden 'logistics' system account is never a board member.
+function findReferrerByUsername(username) {
+  if (!username || typeof username !== 'string') return null;
+  return db.prepare(
+    "SELECT id, username, displayName, title FROM users WHERE lower(username) = lower(?) AND username != 'logistics'"
+  ).get(username.trim()) || null;
+}
+
+// Public self-service member sign-up (shown at /join and at each board
+// member's personal link, /join/:username) — no auth required. The
 // secretary shares one link and members fill in their own details; the entry
 // lands as 'Pending' so nothing reaches the live roster until it's approved.
 // Limit is generous because this also powers a shared club-day sign-up kiosk,
 // where many real submissions come from one device/IP in a short window —
 // each still lands as Pending, so abuse just means more to review, not risk.
 app.post('/api/roster/self-submit', rateLimit({ windowMs: 60 * 60 * 1000, max: 300, name: 'self-submit' }), (req, res) => {
-  const { firstName, lastName, phone, email, grade, gender, notes, referredByUserId } = req.body || {};
+  const { firstName, lastName, phone, email, grade, gender, notes, referredByUsername } = req.body || {};
   if (!firstName || !String(firstName).trim()) return res.status(400).json({ error: 'First name required' });
   if (grade != null && grade !== '' && !GRADES.includes(String(grade))) {
     return res.status(400).json({ error: 'Grade must be 9, 10, 11, or 12' });
@@ -606,12 +631,13 @@ app.post('/api/roster/self-submit', rateLimit({ windowMs: 60 * 60 * 1000, max: 3
   if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email).trim())) {
     return res.status(400).json({ error: 'Please enter a valid email' });
   }
-  // Optional "who referred you?" — only credited if it names a real member
-  // and referrals are currently enabled. Approving the submission later
-  // awards the referral point to that member.
+  // Credit comes from the personal referral link the member arrived through
+  // (/join/:username) — the plain /join form has no referral field at all.
+  // Only credited if the username names a real member and referrals are
+  // currently enabled. Approving the submission later awards the point.
   let referrer = null;
-  if (referredByUserId && getJoinReferralEnabled()) {
-    referrer = db.prepare("SELECT id, displayName FROM users WHERE id = ? AND username != 'logistics'").get(Number(referredByUserId));
+  if (referredByUsername && getJoinReferralEnabled()) {
+    referrer = findReferrerByUsername(referredByUsername);
   }
   const info = db.prepare(`INSERT INTO roster_members (firstName, lastName, phone, email, grade, gender, notes, status, referredByUserId, referralStatus)
     VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', ?, ?)`).run(
