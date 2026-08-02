@@ -911,8 +911,8 @@ const SEED_USERS = [
   { username: 'lmoffat',     firstName: 'Ledger',   lastName: 'Moffat',     role: 'member',  title: 'Public Engagement',        manager: 'mflachsmann' },
   { username: 'whaladin',    firstName: 'Will',     lastName: 'Haladin',    role: 'member',  title: 'Fundraising & Volunteer',  manager: 'hfossey' },
   { username: 'jkindt',      firstName: 'Jacob',    lastName: 'Kindt',      role: 'member',  title: 'Content Editor',           manager: 'dhays' },
-  { username: 'sgavin',      firstName: 'Sosie',    lastName: 'Gavin',      role: 'member',  title: 'Historian',                manager: 'dhays' },
-  { username: 'ssosie',      firstName: 'Sosie',    lastName: '',           role: 'member',  title: 'Historian',                manager: 'dhays' },
+  { username: 'gbergan',     firstName: 'Gavin',    lastName: 'Bergan',     role: 'member',  title: 'Historian',                manager: 'dhays' },
+  { username: 'ssheffert',   firstName: 'Sosie',    lastName: 'Sheffert',   role: 'member',  title: 'Historian',                manager: 'dhays' },
 
   { username: 'dhuges',      firstName: 'Davis',    lastName: 'Hughes',     role: 'member',  title: 'Grade Rep',                manager: 'deddy' },
   { username: 'lmcnalley',   firstName: 'Liam',     lastName: 'McNalley',   role: 'member',  title: 'Grade Rep',                manager: 'deddy' },
