@@ -4624,7 +4624,7 @@ app.delete('/api/volunteer-roles/:id', requireManagerOrAdmin, (req, res) => {
 app.get('/api/volunteer-events/:id/signups', requireManagerOrAdmin, (req, res) => {
   const eventId = Number(req.params.id);
   const signups = db.prepare(`
-    SELECT vs.id, vs.name, vs.phone, vs.email, vs.grade, vs.status, vs.needsReview, vs.createdAt,
+    SELECT vs.id, vs.name, vs.phone, vs.email, vs.grade, vs.status, vs.needsReview, vs.createdAt, vs.attendedAt,
            vr.roleName, rm.firstName || ' ' || rm.lastName AS matchedName, rm.id AS rosterMatchId
     FROM volunteer_signups vs
     LEFT JOIN volunteer_roles vr ON vr.id = vs.roleId
@@ -4635,22 +4635,37 @@ app.get('/api/volunteer-events/:id/signups', requireManagerOrAdmin, (req, res) =
   res.json({ signups });
 });
 
+// Check a volunteer in/out at the event. Only checked-in sign-ups show up on
+// a matched roster member's volunteer history — signing up isn't the same
+// as showing up.
+app.patch('/api/volunteer-signups/:id/attendance', requireManagerOrAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const signup = db.prepare('SELECT id FROM volunteer_signups WHERE id = ?').get(id);
+  if (!signup) return res.status(404).json({ error: 'Not found' });
+  const attended = !!(req.body || {}).attended;
+  if (attended) db.prepare("UPDATE volunteer_signups SET attendedAt = datetime('now') WHERE id = ?").run(id);
+  else db.prepare('UPDATE volunteer_signups SET attendedAt = NULL WHERE id = ?').run(id);
+  res.json({ ok: true });
+});
+
 app.delete('/api/volunteer-signups/:id', requireManagerOrAdmin, (req, res) => {
   db.prepare('DELETE FROM volunteer_signups WHERE id = ?').run(Number(req.params.id));
   res.json({ ok: true });
 });
 
-// Roster cross-reference: volunteer events this roster member signed up for.
+// Roster cross-reference: volunteer events this roster member actually showed
+// up to. Signing up alone doesn't count — a volunteer manager has to check
+// them in at the event (attendedAt set) before it lands here.
 app.get('/api/roster-members/:id/volunteer-history', (req, res) => {
   if (!canViewRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
   const rosterId = Number(req.params.id);
   const history = db.prepare(`
-    SELECT vs.id, vs.name, vs.status, vs.createdAt, ve.title AS eventTitle, ve.startDate,
+    SELECT vs.id, vs.name, vs.status, vs.createdAt, vs.attendedAt, ve.title AS eventTitle, ve.startDate,
            vr.roleName
     FROM volunteer_signups vs
     JOIN volunteer_events ve ON ve.id = vs.eventId
     LEFT JOIN volunteer_roles vr ON vr.id = vs.roleId
-    WHERE vs.matchedRosterId = ?
+    WHERE vs.matchedRosterId = ? AND vs.attendedAt IS NOT NULL
     ORDER BY vs.createdAt DESC
   `).all(rosterId);
   res.json({ history });

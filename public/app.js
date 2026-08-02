@@ -5343,7 +5343,7 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
                 <div>
                   <div className="text-xs font-semibold text-cream/40 uppercase tracking-wide mb-1.5">Volunteer Events</div>
                   {volunteerEvents.length === 0 ? (
-                    <div className="text-xs text-cream/25">No volunteer history found</div>
+                    <div className="text-xs text-cream/25">No checked-in volunteer events yet</div>
                   ) : (
                     <div className="space-y-1">
                       {volunteerEvents.map((v) => (
@@ -5353,9 +5353,7 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
                           </span>
                           <div className="flex items-center gap-1.5 shrink-0">
                             <span className="text-cream/35">{v.startDate ? v.startDate.slice(0, 10) : ''}</span>
-                            <span className={`rounded-full px-1.5 py-0.5 ${
-                              v.status === 'waitlisted' ? 'bg-amber-500/15 text-amber-400' : 'bg-emerald-500/15 text-emerald-400'
-                            }`}>{v.status}</span>
+                            <span className="rounded-full px-1.5 py-0.5 bg-emerald-500/15 text-emerald-400">Present</span>
                           </div>
                         </div>
                       ))}
@@ -9049,6 +9047,15 @@ function VolunteerManagerPage({ me }) {
     });
   }
 
+  // Checking someone in here is what makes the event show up on their roster
+  // page — signing up alone doesn't count as having volunteered.
+  async function toggleAttendance(signupId, eventId, attended) {
+    await run(async () => {
+      await api('/volunteer-signups/' + signupId + '/attendance', { method: 'PATCH', body: { attended } });
+      await loadSignups(eventId);
+    });
+  }
+
   function copyLink(id) {
     const url = window.location.origin + '/volunteer/' + id;
     navigator.clipboard.writeText(url).catch(() => {});
@@ -9201,6 +9208,11 @@ function VolunteerManagerPage({ me }) {
                                     Needs Review
                                   </span>
                                 ) : null}
+                                {s.attendedAt && (
+                                  <span className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-1.5 py-0.5">
+                                    ✓ Present
+                                  </span>
+                                )}
                               </div>
                               <div className="text-xs text-cream/35 mt-0.5 flex gap-3 flex-wrap">
                                 {s.phone && <span>{s.phone}</span>}
@@ -9208,7 +9220,19 @@ function VolunteerManagerPage({ me }) {
                                 {s.grade && <span>Grade {s.grade}</span>}
                               </div>
                             </div>
-                            <button onClick={() => removeSignup(s.id, ev.id)} className="text-xs text-red/40 hover:text-red shrink-0">Remove</button>
+                            <div className="flex flex-col items-end gap-1 shrink-0">
+                              <button onClick={() => toggleAttendance(s.id, ev.id, !s.attendedAt)}
+                                disabled={loading}
+                                title={s.matchedName ? 'Checking in adds this to their roster volunteer history' : ''}
+                                className={`text-xs rounded px-2 py-1 border transition-colors disabled:opacity-40 ${
+                                  s.attendedAt
+                                    ? 'text-emerald-400/70 hover:text-emerald-300 border-emerald-500/30 hover:border-emerald-500/50'
+                                    : 'text-gold/70 hover:text-gold border-gold/30 hover:border-gold/50'
+                                }`}>
+                                {s.attendedAt ? 'Undo Present' : 'Mark Present'}
+                              </button>
+                              <button onClick={() => removeSignup(s.id, ev.id)} className="text-xs text-red/40 hover:text-red">Remove</button>
+                            </div>
                           </div>
                         ))}
                       </div>
