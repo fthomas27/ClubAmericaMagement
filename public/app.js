@@ -5692,6 +5692,81 @@ function RosterInviteLink({ pendingCount }) {
   );
 }
 
+// Sidebar widget for the Roster page — fills the wide empty margin on desktop
+// with a quick visual read of who's actually onboarded: male/female split and
+// grade distribution. Purely derived from the already-loaded roster, so no
+// extra request.
+function RosterDemographics({ members }) {
+  const onboarded = useMemo(() => members.filter((m) => m.status === 'Onboarded'), [members]);
+  const total = onboarded.length;
+
+  const genderCounts = useMemo(() => {
+    const c = { Male: 0, Female: 0, Unknown: 0 };
+    onboarded.forEach((m) => { c[m.gender === 'Male' || m.gender === 'Female' ? m.gender : 'Unknown']++; });
+    return c;
+  }, [onboarded]);
+
+  const gradeRows = useMemo(() => {
+    const c = { 9: 0, 10: 0, 11: 0, 12: 0, Unknown: 0 };
+    onboarded.forEach((m) => { c[[9, 10, 11, 12].includes(Number(m.grade)) ? Number(m.grade) : 'Unknown']++; });
+    return [9, 10, 11, 12].map((g) => ({ label: `${g}th Grade`, count: c[g] }))
+      .concat(c.Unknown ? [{ label: 'Unknown', count: c.Unknown }] : [])
+      .filter((r) => r.count > 0);
+  }, [onboarded]);
+
+  if (total === 0) return null;
+
+  const pctMale = Math.round((genderCounts.Male / total) * 100);
+  const pctFemale = Math.round((genderCounts.Female / total) * 100);
+  const pctUnknown = 100 - pctMale - pctFemale;
+  const gradeColors = ['bg-red', 'bg-gold', 'bg-sky-400', 'bg-emerald-400', 'bg-cream/30'];
+
+  return (
+    <div className="bg-navy2 border border-cream/10 rounded-xl p-5 space-y-6">
+      <div>
+        <div className="text-2xl font-bold text-gold">{total}</div>
+        <div className="text-cream/50 text-xs mt-0.5">Onboarded Members</div>
+      </div>
+
+      <div>
+        <div className="text-cream/60 text-sm font-medium mb-2.5">Male vs. Female</div>
+        <div className="h-3 rounded-full overflow-hidden flex bg-navy">
+          {pctMale > 0 && <div className="h-full bg-sky-400" style={{ width: `${pctMale}%` }} />}
+          {pctFemale > 0 && <div className="h-full bg-red/70" style={{ width: `${pctFemale}%` }} />}
+          {pctUnknown > 0 && <div className="h-full bg-cream/20" style={{ width: `${pctUnknown}%` }} />}
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs mt-2.5">
+          <span className="text-cream/70"><span className="inline-block w-2 h-2 rounded-full bg-sky-400 mr-1.5" />Male {pctMale}% <span className="text-cream/35">({genderCounts.Male})</span></span>
+          <span className="text-cream/70"><span className="inline-block w-2 h-2 rounded-full bg-red/70 mr-1.5" />Female {pctFemale}% <span className="text-cream/35">({genderCounts.Female})</span></span>
+          {genderCounts.Unknown > 0 && (
+            <span className="text-cream/70"><span className="inline-block w-2 h-2 rounded-full bg-cream/20 mr-1.5" />Unknown {pctUnknown}% <span className="text-cream/35">({genderCounts.Unknown})</span></span>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <div className="text-cream/60 text-sm font-medium mb-2.5">By Grade</div>
+        <div className="space-y-2.5">
+          {gradeRows.map((r, i) => {
+            const pct = Math.round((r.count / total) * 100);
+            return (
+              <div key={r.label}>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-cream/70">{r.label}</span>
+                  <span className="text-cream/50">{pct}% <span className="text-cream/30">({r.count})</span></span>
+                </div>
+                <div className="h-2 bg-navy rounded-full overflow-hidden">
+                  <div className={`h-full rounded-full ${gradeColors[i % gradeColors.length]}`} style={{ width: `${pct}%` }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RosterPage({ me }) {
   const [members, setMembers] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -5787,7 +5862,7 @@ function RosterPage({ me }) {
   ];
 
   return (
-    <div className="max-w-4xl">
+    <div className="max-w-6xl">
       {confirmEl}
       <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
         <h1 className="font-display text-4xl sm:text-5xl text-cream">Roster</h1>
@@ -5797,70 +5872,82 @@ function RosterPage({ me }) {
       </div>
       <p className="text-cream/50 mb-6">Club America recruitment pipeline and member directory.</p>
 
-      <ReferralLeaderboard me={me} />
+      <div className="max-w-4xl">
+        <ReferralLeaderboard me={me} />
 
-      {canManage && <RosterInviteLink pendingCount={counts.pending} />}
+        {canManage && <RosterInviteLink pendingCount={counts.pending} />}
 
-      {error && <div className="mb-4"><ErrorState message={error} onRetry={load} /></div>}
+        {error && <div className="mb-4"><ErrorState message={error} onRetry={load} /></div>}
 
-      <div className="flex flex-wrap gap-3 mb-4">
-        {isPrivileged ? (
-          <Field label="Filter by Grade">
-            <select className="bg-navy border border-cream/20 rounded-md px-3 py-2 text-sm text-cream"
-              value={gradeFilter} onChange={(e) => setGradeFilter(e.target.value)}>
-              <option value="">All Grades</option>
-              {[9,10,11,12].map((g) => <option key={g} value={g}>{g}th Grade</option>)}
-            </select>
-          </Field>
-        ) : (
-          <Field label="Grade">
-            <select className="bg-navy border border-cream/20 rounded-md px-3 py-2 text-sm text-cream"
-              value={gradeFilter} onChange={(e) => setGradeFilter(e.target.value)}>
-              <option value="">All Grades</option>
-              {[9,10,11,12].map((g) => <option key={g} value={g}>{g}th Grade</option>)}
-            </select>
-          </Field>
-        )}
+        <div className="flex flex-wrap gap-3 mb-4">
+          {isPrivileged ? (
+            <Field label="Filter by Grade">
+              <select className="bg-navy border border-cream/20 rounded-md px-3 py-2 text-sm text-cream"
+                value={gradeFilter} onChange={(e) => setGradeFilter(e.target.value)}>
+                <option value="">All Grades</option>
+                {[9,10,11,12].map((g) => <option key={g} value={g}>{g}th Grade</option>)}
+              </select>
+            </Field>
+          ) : (
+            <Field label="Grade">
+              <select className="bg-navy border border-cream/20 rounded-md px-3 py-2 text-sm text-cream"
+                value={gradeFilter} onChange={(e) => setGradeFilter(e.target.value)}>
+                <option value="">All Grades</option>
+                {[9,10,11,12].map((g) => <option key={g} value={g}>{g}th Grade</option>)}
+              </select>
+            </Field>
+          )}
+        </div>
+
+        <div className="flex gap-1 mb-5 flex-wrap">
+          {tabs.map((t) => (
+            <button key={t.key} onClick={() => setTab(t.key)}
+              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-150 active:scale-95 ${tab === t.key ? 'bg-red text-cream shadow-md shadow-red/20' : 'bg-navy2 border border-cream/15 text-cream/70 hover:border-cream/30'}`}>
+              {t.label} <span className="text-xs opacity-60">({counts[t.key]})</span>
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className="flex gap-1 mb-5 flex-wrap">
-        {tabs.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-150 active:scale-95 ${tab === t.key ? 'bg-red text-cream shadow-md shadow-red/20' : 'bg-navy2 border border-cream/15 text-cream/70 hover:border-cream/30'}`}>
-            {t.label} <span className="text-xs opacity-60">({counts[t.key]})</span>
-          </button>
-        ))}
-      </div>
+      <div className="flex flex-col lg:flex-row gap-6 items-start">
+        <div className="flex-1 min-w-0 max-w-4xl w-full">
+          <div className="space-y-3 mb-6">
+            {!loaded && <Loading label="Loading roster…" />}
+            {loaded && tabFilteredMembers.length === 0 && (
+              <EmptyState
+                icon="team"
+                title={tab === 'all' ? 'No one on the roster yet' : 'Nothing in this view'}
+                hint={(isPrivileged || !!me.canManageRoster)
+                  ? 'Add a prospect with “+ Add Member” below to start building the pipeline.'
+                  : 'Prospects you add or claim will show up here.'}
+              />
+            )}
+            {tabFilteredMembers.slice(0, visible).map((m) => (
+              <RosterMemberRow key={m.id} member={m} me={me}
+                onAction={handleAction}
+                onEdit={isPrivileged ? (m) => setEditing(m) : null}
+                canDelete={isPrivileged} />
+            ))}
+            {tabFilteredMembers.length > visible && (
+              <div className="text-center pt-2">
+                <Button variant="ghost" onClick={() => setVisible((v) => v + PAGE)}>
+                  Show more ({tabFilteredMembers.length - visible} remaining)
+                </Button>
+              </div>
+            )}
+          </div>
 
-      <div className="space-y-3 mb-6">
-        {!loaded && <Loading label="Loading roster…" />}
-        {loaded && tabFilteredMembers.length === 0 && (
-          <EmptyState
-            icon="team"
-            title={tab === 'all' ? 'No one on the roster yet' : 'Nothing in this view'}
-            hint={(isPrivileged || !!me.canManageRoster)
-              ? 'Add a prospect with “+ Add Member” below to start building the pipeline.'
-              : 'Prospects you add or claim will show up here.'}
-          />
-        )}
-        {tabFilteredMembers.slice(0, visible).map((m) => (
-          <RosterMemberRow key={m.id} member={m} me={me}
-            onAction={handleAction}
-            onEdit={isPrivileged ? (m) => setEditing(m) : null}
-            canDelete={isPrivileged} />
-        ))}
-        {tabFilteredMembers.length > visible && (
-          <div className="text-center pt-2">
-            <Button variant="ghost" onClick={() => setVisible((v) => v + PAGE)}>
-              Show more ({tabFilteredMembers.length - visible} remaining)
-            </Button>
+          {(isPrivileged || !!me.canManageRoster) && (
+            <AddRosterMemberForm me={me} onCreated={load} />
+          )}
+        </div>
+
+        {loaded && (
+          <div className="w-full lg:w-72 shrink-0 lg:sticky lg:top-6">
+            <RosterDemographics members={members} />
           </div>
         )}
       </div>
-
-      {(isPrivileged || !!me.canManageRoster) && (
-        <AddRosterMemberForm me={me} onCreated={load} />
-      )}
 
       {editing && (
         <EditRosterMemberModal member={editing} onSaved={load} onClose={() => setEditing(null)} />
