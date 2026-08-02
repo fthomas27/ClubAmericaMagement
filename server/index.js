@@ -1,3 +1,15 @@
+// The MCP SDK's Streamable HTTP transport (server/mcp.js) calls the Web
+// Crypto API as a bare global (`crypto.randomUUID()`), not `require('crypto')`.
+// That global is auto-populated on newer Node runtimes but NOT on older ones
+// (e.g. Node 18 without --experimental-global-webcrypto) — on those it throws
+// `ReferenceError: crypto is not defined`, which broke every MCP tool call in
+// production. Polyfill it from Node's own crypto module before anything else
+// loads, so it's always defined regardless of the exact Node version the host
+// runs. Guarded so it's a no-op where the global already exists.
+if (!globalThis.crypto) {
+  globalThis.crypto = require('node:crypto').webcrypto;
+}
+
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
