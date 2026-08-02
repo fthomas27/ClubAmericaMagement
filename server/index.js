@@ -3669,15 +3669,78 @@ app.post('/api/ai/chat', requireAdmin, rateLimit({ windowMs: 60 * 60 * 1000, max
     'SELECT role, content FROM ai_chat_messages WHERE sessionId = ? ORDER BY createdAt ASC LIMIT 40'
   ).all(sid);
   try {
-    const reply = await chatWithAI(db, history, req.user.id);
-    db.prepare(
-      'INSERT INTO ai_chat_messages (sessionId, role, content, userId) VALUES (?, ?, ?, ?)'
-    ).run(sid, 'assistant', reply, req.user.id);
-    res.json({ reply, sessionId: sid });
+    const { reply, proposal } = await chatWithAI(db, history, req.user.id);
+    const info = db.prepare(
+      'INSERT INTO ai_chat_messages (sessionId, role, content, userId, taskProposal) VALUES (?, ?, ?, ?, ?)'
+    ).run(sid, 'assistant', reply, req.user.id, proposal ? JSON.stringify(proposal) : '');
+    res.json({ reply, sessionId: sid, proposal: proposal || null, messageId: info.lastInsertRowid });
   } catch (err) {
     console.error('[AI chat error]', err);
     res.status(500).json({ error: 'AI request failed' });
   }
+});
+
+// POST /api/ai/chat/proposal/:messageId/create — admin only. Creates the tasks
+// from an AI-drafted proposal after the admin reviewed it. Body:
+// { items: [{ index, userId? }] } — index into the stored proposal's tasks,
+// userId only to fill in / override an assignee. Task content always comes
+// from the stored proposal, never the client.
+app.post('/api/ai/chat/proposal/:messageId/create', requireAdmin, rateLimit({ windowMs: 60 * 60 * 1000, max: 20, name: 'ai-proposal-create' }), (req, res) => {
+  const msg = db.prepare(
+    "SELECT * FROM ai_chat_messages WHERE id = ? AND userId = ? AND role = 'assistant'"
+  ).get(Number(req.params.messageId), req.user.id);
+  if (!msg || !msg.taskProposal) return res.status(404).json({ error: 'Proposal not found' });
+
+  let proposal;
+  try { proposal = JSON.parse(msg.taskProposal); } catch { return res.status(500).json({ error: 'Stored proposal is corrupted' }); }
+  if (proposal.status === 'created') return res.status(409).json({ error: 'These tasks were already created' });
+
+  const { items } = req.body || {};
+  if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'No tasks selected' });
+
+  // Resolve every selected item before inserting anything, so a bad row fails
+  // the whole batch instead of half-creating it.
+  const toCreate = [];
+  for (const item of items) {
+    const idx = Number(item && item.index);
+    const task = Number.isInteger(idx) ? proposal.tasks[idx] : null;
+    if (!task) return res.status(400).json({ error: `Invalid task index: ${item && item.index}` });
+    const ownerId = Number(item.userId) || task.assigneeUserId;
+    const owner = ownerId ? getUser(ownerId) : null;
+    if (!owner) return res.status(400).json({ error: `No assignee for task "${task.title}" — pick a person for it first` });
+    toCreate.push({ task, owner });
+  }
+
+  const insert = db.prepare(`INSERT INTO tasks (userId, name, description, dueDate, status, assignedById, approvalStatus)
+                             VALUES (?, ?, ?, ?, 'Not Started', ?, 'approved')`);
+  const createdIds = [];
+  const byOwner = new Map();
+  const createAll = db.transaction(() => {
+    for (const { task, owner } of toCreate) {
+      const info = insert.run(owner.id, task.title.slice(0, 300), (task.description || '').slice(0, 5000), task.dueDate || null, req.user.id);
+      createdIds.push(info.lastInsertRowid);
+      if (!byOwner.has(owner.id)) byOwner.set(owner.id, { owner, titles: [] });
+      byOwner.get(owner.id).titles.push(task.title);
+    }
+    proposal.status = 'created';
+    proposal.createdTaskIds = createdIds;
+    proposal.createdAt = new Date().toISOString();
+    db.prepare('UPDATE ai_chat_messages SET taskProposal = ? WHERE id = ?').run(JSON.stringify(proposal), msg.id);
+  });
+  createAll();
+
+  // One notification per assignee, not per task — nine tasks shouldn't mean
+  // nine pings.
+  for (const { owner, titles } of byOwner.values()) {
+    if (owner.id === req.user.id) continue;
+    const preview = titles.slice(0, 3).map((t) => `"${t}"`).join(', ') + (titles.length > 3 ? ` and ${titles.length - 3} more` : '');
+    notify(owner.email, `${titles.length === 1 ? 'New task' : `${titles.length} new tasks`} assigned to you`,
+      'You have new tasks',
+      `<b>${escHtml(req.user.displayName)}</b> assigned you ${titles.length === 1 ? 'a task' : `${titles.length} tasks`}: ${escHtml(preview)}.`);
+    pushNotification(owner.id, `${req.user.displayName} assigned you ${titles.length === 1 ? `a task: ${preview}` : `${titles.length} tasks: ${preview}`}`, 'tasks', 'task');
+  }
+
+  res.status(201).json({ ok: true, created: createdIds.length, proposal });
 });
 
 // GET /api/ai/chat/history — admin only; returns most recent session or ?sessionId=...

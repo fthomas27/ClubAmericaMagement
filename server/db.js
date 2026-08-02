@@ -746,6 +746,11 @@ function init() {
   const vsCols = db.prepare("PRAGMA table_info(volunteer_signups)").all().map((c) => c.name);
   if (!vsCols.includes('needsReview')) db.exec("ALTER TABLE volunteer_signups ADD COLUMN needsReview INTEGER NOT NULL DEFAULT 0");
 
+  // ai_chat_messages migration: taskProposal holds the JSON of an AI-drafted
+  // bulk task-assignment proposal attached to an assistant message ('' = none).
+  const aiChatCols = db.prepare("PRAGMA table_info(ai_chat_messages)").all().map((c) => c.name);
+  if (!aiChatCols.includes('taskProposal')) db.exec("ALTER TABLE ai_chat_messages ADD COLUMN taskProposal TEXT NOT NULL DEFAULT ''");
+
   // attendance_events column migrations: type + auto-import source tracking.
   const aeCols = db.prepare("PRAGMA table_info(attendance_events)").all().map((c) => c.name);
   if (!aeCols.includes('eventType'))  db.exec("ALTER TABLE attendance_events ADD COLUMN eventType TEXT NOT NULL DEFAULT 'club'");
@@ -906,8 +911,8 @@ const SEED_USERS = [
   { username: 'lmoffat',     firstName: 'Ledger',   lastName: 'Moffat',     role: 'member',  title: 'Public Engagement',        manager: 'mflachsmann' },
   { username: 'whaladin',    firstName: 'Will',     lastName: 'Haladin',    role: 'member',  title: 'Fundraising & Volunteer',  manager: 'hfossey' },
   { username: 'jkindt',      firstName: 'Jacob',    lastName: 'Kindt',      role: 'member',  title: 'Content Editor',           manager: 'dhays' },
-  { username: 'sgavin',      firstName: 'Sosie',    lastName: 'Gavin',      role: 'member',  title: 'Historian',                manager: 'dhays' },
-  { username: 'ssosie',      firstName: 'Sosie',    lastName: '',           role: 'member',  title: 'Historian',                manager: 'dhays' },
+  { username: 'gbergan',     firstName: 'Gavin',    lastName: 'Bergan',     role: 'member',  title: 'Historian',                manager: 'dhays' },
+  { username: 'ssheffert',   firstName: 'Sosie',    lastName: 'Sheffert',   role: 'member',  title: 'Historian',                manager: 'dhays' },
 
   { username: 'dhuges',      firstName: 'Davis',    lastName: 'Hughes',     role: 'member',  title: 'Grade Rep',                manager: 'deddy' },
   { username: 'lmcnalley',   firstName: 'Liam',     lastName: 'McNalley',   role: 'member',  title: 'Grade Rep',                manager: 'deddy' },
