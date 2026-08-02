@@ -9094,7 +9094,13 @@ function VolunteerManagerPage({ me }) {
                 {managed ? (
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-2 py-0.5">Active</span>
-                    <button onClick={() => { setExpandedId(managed.id); loadSignups(managed.id); }}
+                    <button onClick={() => {
+                      setExpandedId(managed.id);
+                      loadSignups(managed.id);
+                      // The signup panel lives in the "Active Volunteer Events"
+                      // section below — jump there so the click has a visible effect.
+                      document.getElementById(`volunteer-event-${managed.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }}
                       className="text-xs text-gold/60 hover:text-gold border border-gold/30 hover:border-gold/60 rounded px-2 py-1 transition-colors">
                       Manage
                     </button>
@@ -9117,7 +9123,7 @@ function VolunteerManagerPage({ me }) {
           <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide mb-3">Active Volunteer Events</div>
           <div className="space-y-4">
             {managedEvents.map((ev) => (
-              <div key={ev.id} className="bg-navy2 border border-cream/10 rounded-xl overflow-hidden">
+              <div key={ev.id} id={`volunteer-event-${ev.id}`} className="bg-navy2 border border-cream/10 rounded-xl overflow-hidden">
                 <div className="p-4 flex items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
