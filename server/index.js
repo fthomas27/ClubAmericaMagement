@@ -594,7 +594,10 @@ app.get('/api/join/referral-settings', (req, res) => {
 // Public self-service member sign-up (shown at /join) — no auth required. The
 // secretary shares one link and members fill in their own details; the entry
 // lands as 'Pending' so nothing reaches the live roster until it's approved.
-app.post('/api/roster/self-submit', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name: 'self-submit' }), (req, res) => {
+// Limit is generous because this also powers a shared club-day sign-up kiosk,
+// where many real submissions come from one device/IP in a short window —
+// each still lands as Pending, so abuse just means more to review, not risk.
+app.post('/api/roster/self-submit', rateLimit({ windowMs: 60 * 60 * 1000, max: 300, name: 'self-submit' }), (req, res) => {
   const { firstName, lastName, phone, email, grade, gender, notes, referredByUserId } = req.body || {};
   if (!firstName || !String(firstName).trim()) return res.status(400).json({ error: 'First name required' });
   if (grade != null && grade !== '' && !GRADES.includes(String(grade))) {
