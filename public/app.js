@@ -936,7 +936,7 @@ function DelegateSubtask({ parentTask, reports }) {
   );
 }
 
-function TaskCard({ task, canEdit, onChange, onDelete, me, users }) {
+function TaskCard({ task, canEdit, onChange, onDelete, me, users, onOpenDetail }) {
   const [saving, setSaving] = useState(false);
   const recurringDays = task.isRecurring && task.recurringDays
     ? String(task.recurringDays).split(',').map(Number).filter((d) => d >= 0 && d <= 6).map((d) => DAY_LABELS[d]).join(', ')
@@ -946,7 +946,14 @@ function TaskCard({ task, canEdit, onChange, onDelete, me, users }) {
     <div className="bg-navy2 border border-cream/10 rounded-lg p-4 hover:border-cream/25 hover:-translate-y-0.5 hover:shadow-md hover:shadow-black/25 transition-all duration-200">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="font-medium text-cream truncate">{task.name}</div>
+          <button
+            type="button"
+            onClick={() => onOpenDetail && onOpenDetail(task)}
+            title={task.name}
+            className="font-medium text-cream truncate text-left block w-full hover:text-gold hover:underline transition-colors"
+          >
+            {task.name}
+          </button>
           {task.description && <div className="text-sm text-cream/60 mt-1 whitespace-pre-wrap">{task.description}</div>}
           {safeDocUrl && (
             <a href={safeDocUrl} target="_blank" rel="noopener noreferrer"
@@ -1001,6 +1008,82 @@ function TaskCard({ task, canEdit, onChange, onDelete, me, users }) {
         return <DelegateSubtask parentTask={task} reports={reports} />;
       })()}
       {me && <TaskComments taskId={task.id} me={me} />}
+    </div>
+  );
+}
+
+function TaskDetailModal({ task, onClose, canEdit, onChange, onDelete, me, users }) {
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    const fn = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', fn);
+    return () => document.removeEventListener('keydown', fn);
+  }, [onClose]);
+  if (!task) return null;
+  const recurringDays = task.isRecurring && task.recurringDays
+    ? String(task.recurringDays).split(',').map(Number).filter((d) => d >= 0 && d <= 6).map((d) => DAY_LABELS[d]).join(', ')
+    : null;
+  const safeDocUrl = task.docUrl ? (task.docUrl.startsWith('http://') || task.docUrl.startsWith('https://') ? task.docUrl : 'https://' + task.docUrl) : '';
+  const reports = (users || []).filter((u) => u.managerId === me?.id);
+  return (
+    <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+      <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-lg w-full p-6 relative max-h-[85vh] overflow-y-auto ca-scale-in">
+        <button onClick={onClose} aria-label="Close" className="absolute top-2 right-4 text-cream/60 hover:text-cream text-3xl leading-none">×</button>
+        <div className="flex items-start justify-between gap-3 pr-6">
+          <h2 className="font-display text-2xl text-cream leading-tight">{task.name}</h2>
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            <Badge tone={statusTone(task.status)}>{task.status}</Badge>
+            {recurringDays && <span className="text-[10px] text-gold/70">↻ {recurringDays}</span>}
+          </div>
+        </div>
+        {task.description && <div className="text-sm text-cream/70 mt-3 whitespace-pre-wrap leading-relaxed">{task.description}</div>}
+        {safeDocUrl && (
+          <a href={safeDocUrl} target="_blank" rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 mt-3 text-xs text-sky-300 hover:text-sky-200 transition-colors">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>
+            Open Document
+          </a>
+        )}
+        <div className="flex items-center flex-wrap gap-x-4 gap-y-1 mt-4 text-xs text-cream/50">
+          {task.dueDate && <span>Due {fmtShortDate(task.dueDate)}</span>}
+          <span>Assigned by <span className="text-gold/80">{task.assignedByName}</span></span>
+          {task.approvalStatus === 'pending' && <Badge tone="red">Pending approval</Badge>}
+        </div>
+        {canEdit && task.approvalStatus === 'approved' && (
+          <div className="flex items-center gap-2 mt-4">
+            <select
+              className="bg-navy border border-cream/20 rounded px-2 py-1 text-sm disabled:opacity-50"
+              value={task.status}
+              disabled={saving}
+              onChange={async (e) => {
+                setSaving(true);
+                try { await onChange(task, { status: e.target.value }); } catch (_) {}
+                finally { setSaving(false); }
+              }}
+            >
+              <option>Not Started</option>
+              <option>In Progress</option>
+              <option>Complete</option>
+            </select>
+            {saving && <span className="flex items-center gap-1 text-xs text-cream/40"><Spinner className="w-3 h-3" /> Saving…</span>}
+            {onDelete && (
+              <button onClick={() => onDelete(task)} className="text-xs text-red/80 hover:text-red ml-auto">
+                Delete
+              </button>
+            )}
+          </div>
+        )}
+        {me && task.userId === me.id && task.approvalStatus === 'approved' && reports.length > 0 && (
+          <div className="mt-4">
+            <DelegateSubtask parentTask={task} reports={reports} />
+          </div>
+        )}
+        {me && (
+          <div className="mt-4">
+            <TaskComments taskId={task.id} me={me} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1545,6 +1628,8 @@ function TaskPage({ me, userId, users, refreshSignal, onNavigate }) {
   const [pageSettings, setPageSettings] = useState(null);
   const [teamAnnouncements, setTeamAnnouncements] = useState([]);
   const [confirmEl, confirm] = useConfirm();
+  const [viewMode, setViewMode] = useState('cards');
+  const [detailTask, setDetailTask] = useState(null);
   const isSelf = userId === me.id;
   const canManagePage = !isSelf && (me.role === 'admin' || me.role === 'manager');
 
@@ -1571,11 +1656,12 @@ function TaskPage({ me, userId, users, refreshSignal, onNavigate }) {
     } catch (err) { setError(err.message); }
   }
   async function deleteTask(task) {
-    if (!(await confirm({ title: 'Delete task?', message: `“${task.name}” will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return;
+    if (!(await confirm({ title: 'Delete task?', message: `“${task.name}” will be permanently removed.`, confirmLabel: 'Delete', danger: true }))) return false;
     try {
       await api(`/tasks/${task.id}`, { method: 'DELETE' });
       load();
-    } catch (err) { setError(err.message); }
+      return true;
+    } catch (err) { setError(err.message); return false; }
   }
 
   function reloadSettings(newSettings) {
@@ -1615,7 +1701,27 @@ function TaskPage({ me, userId, users, refreshSignal, onNavigate }) {
           </h1>
           <div className="text-cream/50 mt-1">{user.title || roleLabel(user.role)} · @{user.username}</div>
         </div>
-        <Badge tone="gold">{tasks.length} task{tasks.length === 1 ? '' : 's'}</Badge>
+        <div className="flex items-center gap-3">
+          <Badge tone="gold">{tasks.length} task{tasks.length === 1 ? '' : 's'}</Badge>
+          {tasks.length > 0 && (
+            <div className="flex items-center bg-navy2 border border-cream/15 rounded-md overflow-hidden text-xs">
+              <button
+                type="button"
+                onClick={() => setViewMode('cards')}
+                className={`px-2.5 py-1.5 transition-colors ${viewMode === 'cards' ? 'bg-gold/20 text-gold' : 'text-cream/50 hover:text-cream'}`}
+              >
+                Cards
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('table')}
+                className={`px-2.5 py-1.5 transition-colors border-l border-cream/15 ${viewMode === 'table' ? 'bg-gold/20 text-gold' : 'text-cream/50 hover:text-cream'}`}
+              >
+                Table
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {user.positionDescription && (
@@ -1649,24 +1755,100 @@ function TaskPage({ me, userId, users, refreshSignal, onNavigate }) {
         />
       )}
 
-      {tasks.length > 0 && <div className="grid md:grid-cols-3 gap-4">
+      {tasks.length > 0 && viewMode === 'cards' && <div className="grid md:grid-cols-3 gap-4">
         {['Not Started', 'In Progress', 'Complete'].map((col) => (
           <div key={col}>
             <div className="font-display text-xl text-gold mb-2">{col} <span className="text-cream/30 text-base">({grouped[col].length})</span></div>
             <div className="space-y-3">
               {grouped[col].map((t) => (
-                <TaskCard key={t.id} task={t} canEdit={true} onChange={changeTask} onDelete={deleteTask} me={me} users={users} />
+                <TaskCard key={t.id} task={t} canEdit={true} onChange={changeTask} onDelete={deleteTask} me={me} users={users} onOpenDetail={setDetailTask} />
               ))}
             </div>
           </div>
         ))}
       </div>}
 
+      {tasks.length > 0 && viewMode === 'table' && (
+        <TaskTable tasks={tasks} onOpenDetail={setDetailTask} onChange={changeTask} canEdit={true} />
+      )}
+
+      {detailTask && (
+        <TaskDetailModal
+          task={tasks.find((t) => t.id === detailTask.id) || detailTask}
+          onClose={() => setDetailTask(null)}
+          canEdit={true}
+          onChange={changeTask}
+          onDelete={async (t) => { if (await deleteTask(t)) setDetailTask(null); }}
+          me={me}
+          users={users}
+        />
+      )}
+
       {isSelf && (
         <div className="mt-10">
           <MeetTheBoard me={me} onNavigate={onNavigate} />
         </div>
       )}
+    </div>
+  );
+}
+
+function TaskTable({ tasks, onOpenDetail, onChange, canEdit }) {
+  const [savingId, setSavingId] = useState(null);
+  return (
+    <div className="overflow-x-auto border border-cream/10 rounded-lg">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-cream/40 text-xs text-left border-b border-cream/10">
+            <th className="py-2 px-3 font-medium">Task</th>
+            <th className="py-2 px-3 font-medium">Status</th>
+            <th className="py-2 px-3 font-medium">Due</th>
+            <th className="py-2 px-3 font-medium">Assigned By</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tasks.map((t) => (
+            <tr key={t.id} className="border-b border-cream/5 hover:bg-cream/5 transition-colors">
+              <td className="py-2.5 px-3 max-w-xs">
+                <button
+                  type="button"
+                  onClick={() => onOpenDetail(t)}
+                  title={t.name}
+                  className="text-left text-cream hover:text-gold hover:underline truncate block max-w-xs"
+                >
+                  {t.name}
+                </button>
+                {t.approvalStatus === 'pending' && <div className="mt-1"><Badge tone="red">Pending approval</Badge></div>}
+              </td>
+              <td className="py-2.5 px-3">
+                {canEdit && t.approvalStatus === 'approved' ? (
+                  <select
+                    className="bg-navy border border-cream/20 rounded px-2 py-1 text-xs disabled:opacity-50"
+                    value={t.status}
+                    disabled={savingId === t.id}
+                    onChange={async (e) => {
+                      setSavingId(t.id);
+                      try { await onChange(t, { status: e.target.value }); } catch (_) {}
+                      finally { setSavingId(null); }
+                    }}
+                  >
+                    <option>Not Started</option>
+                    <option>In Progress</option>
+                    <option>Complete</option>
+                  </select>
+                ) : (
+                  <Badge tone={statusTone(t.status)}>{t.status}</Badge>
+                )}
+              </td>
+              <td className="py-2.5 px-3 text-cream/60 whitespace-nowrap">{t.dueDate ? fmtShortDate(t.dueDate) : '—'}</td>
+              <td className="py-2.5 px-3 text-cream/60 whitespace-nowrap">{t.assignedByName}</td>
+            </tr>
+          ))}
+          {tasks.length === 0 && (
+            <tr><td colSpan={4} className="py-8 text-center text-cream/25 text-sm">No tasks.</td></tr>
+          )}
+        </tbody>
+      </table>
     </div>
   );
 }
