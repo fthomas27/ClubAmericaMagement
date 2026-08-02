@@ -90,9 +90,18 @@
     }
 
     .ca-fade-in  { animation: ca-fade-in  0.22s ease-out both; }
-    .ca-slide-up { animation: ca-slide-up 0.22s ease-out both; }
-    .ca-scale-in { animation: ca-scale-in 0.2s cubic-bezier(0.34, 1.15, 0.64, 1) both; }
-    .ca-slide-down { animation: ca-slide-down 0.16s ease-out both; }
+    /* backwards (not "both"): once these entrance animations finish, they must not
+       leave a lingering `transform` on the element. Any transform value — even the
+       resting translateY(0)/scale(1) the "to" keyframe ends on — makes the browser
+       treat this element as the containing block for `position: fixed` descendants,
+       so every modal opened from inside it (confirm dialogs, task detail, etc.) gets
+       centered relative to this box instead of the viewport, which is what made
+       modals appear off-screen and need scrolling to reach. "backwards" keeps the
+       pre-animation state applied during any animation-delay (no flash-in), while
+       still releasing the transform the instant the animation completes. */
+    .ca-slide-up { animation: ca-slide-up 0.22s ease-out backwards; }
+    .ca-scale-in { animation: ca-scale-in 0.2s cubic-bezier(0.34, 1.15, 0.64, 1) backwards; }
+    .ca-slide-down { animation: ca-slide-down 0.16s ease-out backwards; }
     .ca-pulse { animation: ca-pulse-badge 1.2s ease-in-out 3; }
 
     /* ── Immersive homepage ──
