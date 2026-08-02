@@ -580,26 +580,12 @@ app.post('/api/roster/survey', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, na
   res.status(201).json({ ok: true, id: info.lastInsertRowid });
 });
 
-// Whether personal referral links (/join/:username) currently credit anyone.
-// The president/admin can flip this off to pause referral crediting — the
-// sign-up form still works, the submission just isn't attributed.
-function getJoinReferralEnabled() {
-  const row = db.prepare('SELECT joinReferralEnabled FROM site_settings WHERE id=1').get();
-  return !!row?.joinReferralEnabled;
-}
-
-app.get('/api/join/referral-settings', (req, res) => {
-  res.json({ enabled: getJoinReferralEnabled() });
-});
-
 // Resolves the board member behind a personal referral link (/join/:username)
 // so the public sign-up page can show "Referred by …". No auth: the same
-// names and titles are already public on /api/board. Returns 404 when the
-// username isn't a real member or referral crediting is paused, which lets
-// the page fall back to the plain form instead of promising a credit that
-// self-submit would then drop.
+// names and titles are already public on /api/board. Returns 404 only when
+// the username isn't a real member, so a working link never silently stops
+// crediting — there is no site-wide switch in front of this any more.
 app.get('/api/join/referrer/:username', (req, res) => {
-  if (!getJoinReferralEnabled()) return res.status(404).json({ error: 'Referrals are paused' });
   const member = findReferrerByUsername(req.params.username);
   if (!member) return res.status(404).json({ error: 'Unknown referral link' });
   res.json({ member });
@@ -633,10 +619,10 @@ app.post('/api/roster/self-submit', rateLimit({ windowMs: 60 * 60 * 1000, max: 3
   }
   // Credit comes from the personal referral link the member arrived through
   // (/join/:username) — the plain /join form has no referral field at all.
-  // Only credited if the username names a real member and referrals are
-  // currently enabled. Approving the submission later awards the point.
+  // Only credited if the username names a real member. Approving the
+  // submission later awards the point.
   let referrer = null;
-  if (referredByUsername && getJoinReferralEnabled()) {
+  if (referredByUsername) {
     referrer = findReferrerByUsername(referredByUsername);
   }
   const info = db.prepare(`INSERT INTO roster_members (firstName, lastName, phone, email, grade, gender, notes, status, referredByUserId, referralStatus)
@@ -2203,11 +2189,14 @@ app.get('/api/roster/leaderboard', (req, res) => {
     GROUP BY u.id
     ORDER BY count DESC, u.displayName ASC
   `).all();
-  // Pending referrals the current user is waiting on (not yet counted).
-  const myPending = db.prepare(
-    "SELECT COUNT(*) AS n FROM roster_members WHERE referredByUserId = ? AND referralStatus = 'pending'"
-  ).get(req.user.id).n;
-  res.json({ leaderboard: rows, myPending });
+  // Pending referrals the current user is waiting on (not yet counted). The
+  // names come back too, so someone who shared their link can see the sign-up
+  // landed instead of wondering why their count hasn't moved.
+  const myPendingRows = db.prepare(
+    "SELECT id, firstName, lastName FROM roster_members WHERE referredByUserId = ? AND referralStatus = 'pending' ORDER BY createdAt DESC"
+  ).all(req.user.id);
+  const myPendingNames = myPendingRows.map((r) => `${r.firstName} ${r.lastName || ''}`.trim());
+  res.json({ leaderboard: rows, myPending: myPendingRows.length, myPendingNames });
 });
 
 // ---- Weekly Check-Ins -------------------------------------------------------
@@ -2224,13 +2213,6 @@ app.put('/api/checkins/settings', (req, res) => {
   if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Managers and admins only' });
   const enabled = !!(req.body || {}).enabled;
   db.prepare("UPDATE site_settings SET weeklyCheckinEnabled=?, updatedAt=datetime('now') WHERE id=1").run(enabled ? 1 : 0);
-  res.json({ enabled });
-});
-
-app.put('/api/join/referral-settings', (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
-  const enabled = !!(req.body || {}).enabled;
-  db.prepare("UPDATE site_settings SET joinReferralEnabled=?, updatedAt=datetime('now') WHERE id=1").run(enabled ? 1 : 0);
   res.json({ enabled });
 });
 
