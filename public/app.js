@@ -2100,52 +2100,46 @@ function PodcastToggle() {
   );
 }
 
-function JoinReferralToggle() {
-  const [enabled, setEnabled] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+// Every board member's referral link in one place, so the President can hand
+// someone their own link without making them go find it. The link is simply
+// /join/<username> — nothing to generate or switch on.
+function BoardReferralLinks({ users }) {
+  const [copiedId, setCopiedId] = useState(null);
+  const list = (users || []).filter((u) => u.username && u.username !== 'logistics');
 
-  useEffect(() => {
-    setError('');
-    api('/join/referral-settings')
-      .then((d) => setEnabled(!!d.enabled))
-      .catch((err) => setError(err.message || 'Failed to load settings'));
-  }, []);
-
-  async function toggle() {
-    if (enabled === null || busy) return;
-    setBusy(true);
-    setError('');
+  async function copy(u) {
+    const link = `${window.location.origin}/join/${u.username}`;
     try {
-      const d = await api('/join/referral-settings', { method: 'PUT', body: { enabled: !enabled } });
-      setEnabled(!!d.enabled);
-    } catch (err) {
-      setError(err.message || 'Failed to save toggle');
-    } finally { setBusy(false); }
+      await navigator.clipboard.writeText(link);
+      setCopiedId(u.id);
+      setTimeout(() => setCopiedId((id) => (id === u.id ? null : id)), 2000);
+    } catch (_) {
+      window.prompt(`${u.displayName}'s referral link:`, link);
+    }
   }
 
   return (
     <div className="bg-navy2 border border-cream/10 rounded-xl p-5 mb-8">
-      <div className="font-display text-2xl text-gold mb-1">Join Page</div>
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <div className="text-cream">Personal referral links</div>
-          <div className="text-cream/50 text-sm">
-            {enabled === null ? 'Loading…'
-              : enabled ? 'Active — sign-ups through /join/username credit that board member.'
-              : 'Paused — /join/username still opens the form, but nobody gets credit.'}
+      <div className="font-display text-2xl text-gold mb-1">Referral Links</div>
+      <p className="text-cream/50 text-sm mb-3">
+        Every board member has one: <span className="text-cream/70">/join/username</span>. Anyone who signs up
+        through it is credited to them as soon as the submission is approved in the roster.
+      </p>
+      <div className="max-h-72 overflow-y-auto divide-y divide-cream/5">
+        {list.map((u) => (
+          <div key={u.id} className="flex items-center gap-3 py-2">
+            <div className="min-w-0 flex-1">
+              <div className="text-cream text-sm truncate">{u.displayName}
+                {u.title && <span className="text-cream/40 text-xs ml-2">{u.title}</span>}
+              </div>
+              <code className="text-xs text-cream/50">/join/{u.username}</code>
+            </div>
+            <Button variant="ghost" className="text-xs px-3 py-1 shrink-0" onClick={() => copy(u)}>
+              {copiedId === u.id ? 'Copied ✓' : 'Copy'}
+            </Button>
           </div>
-        </div>
-        <button
-          onClick={toggle}
-          disabled={enabled === null || busy}
-          aria-pressed={!!enabled}
-          className={`relative w-14 h-8 rounded-full transition-colors disabled:opacity-50 ${enabled ? 'bg-emerald-500' : 'bg-cream/20'}`}
-        >
-          <span className={`absolute top-1 left-1 w-6 h-6 rounded-full bg-white transition-transform ${enabled ? 'translate-x-6' : ''}`} />
-        </button>
+        ))}
       </div>
-      {error && <div className="text-red text-sm mt-2">{error}</div>}
     </div>
   );
 }
@@ -2369,7 +2363,7 @@ function AdminPanel({ users, reload }) {
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-6">Admin Panel</h1>
 
       <PodcastToggle />
-      <JoinReferralToggle />
+      <BoardReferralLinks users={users} />
 
       <form onSubmit={addUser} className="bg-navy2 border border-gold/30 rounded-xl p-5 mb-8 grid sm:grid-cols-2 gap-4">
         <div className="sm:col-span-2 font-display text-2xl text-gold">Add a Board Member</div>
@@ -4976,9 +4970,11 @@ function MemberSignUpPage({ referrerUsername }) {
   const blankForm = { firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', notes: '' };
   const [form, setForm] = useState(blankForm);
   // The board member behind /join/:username, once the server confirms the
-  // username is real and referral crediting is on. Null on the plain /join
-  // link, on an unknown username, or while referrals are paused.
+  // username is real. Null on the plain /join link and on an unknown one —
+  // 'unknown' is tracked separately so a mistyped link says so out loud
+  // instead of quietly dropping the credit.
   const [referrer, setReferrer] = useState(null);
+  const [referrerUnknown, setReferrerUnknown] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -4988,11 +4984,14 @@ function MemberSignUpPage({ referrerUsername }) {
   const [formKey, setFormKey] = useState(0);
 
   useEffect(() => {
-    if (!referrerUsername) { setReferrer(null); return; }
+    if (!referrerUsername) { setReferrer(null); setReferrerUnknown(false); return; }
     fetch(`/api/join/referrer/${encodeURIComponent(referrerUsername)}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setReferrer(d?.member || null))
-      .catch(() => {});
+      .then((d) => {
+        setReferrer(d?.member || null);
+        setReferrerUnknown(!d?.member);
+      })
+      .catch(() => setReferrerUnknown(true));
   }, [referrerUsername]);
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -5061,6 +5060,12 @@ function MemberSignUpPage({ referrerUsername }) {
               Invited by <span className="text-gold font-medium">{referrer.displayName}</span>
               {referrer.title ? <span className="text-cream/50"> · {referrer.title}</span> : null}
             </div>
+          </div>
+        )}
+        {referrerUnknown && (
+          <div className="text-xs text-cream/40 bg-navy2 border border-cream/10 rounded-xl px-4 py-2 mb-3">
+            We couldn't match <span className="text-cream/60">{referrerUsername}</span> to a board member, so this
+            sign-up won't be credited to anyone. Your info still goes straight to the secretary.
           </div>
         )}
         <p className="text-cream/60 text-sm mb-6">
@@ -5192,14 +5197,24 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
           {member.claimedByName && (
             <div className="text-xs text-cream/40 mt-1">Managed by {member.claimedByName}</div>
           )}
-          {member.referredByName && (
+          {member.referredByName && member.status === 'Pending' ? (
+            // On a submission waiting to be approved, who gets the point is the
+            // whole decision — say it in full instead of as fine print.
+            <div className="mt-2 inline-flex items-center gap-2 bg-gold/10 border border-gold/40 rounded-lg px-3 py-1.5">
+              <span className="text-gold shrink-0"><AppIcon name="trophy" size={14} /></span>
+              <span className="text-xs text-cream/80">
+                Referred by <span className="text-gold font-medium">{member.referredByName}</span>
+                {member.referralStatus === 'pending' && <span className="text-cream/50"> — approving awards their referral point</span>}
+              </span>
+            </div>
+          ) : member.referredByName ? (
             <div className="text-xs text-cream/40 mt-1">
               Referred by <span className="text-cream/60">{member.referredByName}</span>
               {member.referralStatus === 'pending'  && <span className="text-gold/70"> · pending approval</span>}
               {member.referralStatus === 'approved' && <span className="text-emerald-400/70"> · approved ✓</span>}
               {member.referralStatus === 'removed'  && <span className="text-red/60"> · point removed</span>}
             </div>
-          )}
+          ) : null}
           {member.status === 'Inactive' && (
             <div className="text-xs text-amber-400/80 mt-1">
               Inactive{inactiveDaysLeft != null ? ` — auto-deletes in ${inactiveDaysLeft} day${inactiveDaysLeft !== 1 ? 's' : ''}` : ''}. Marking them present at a meeting reactivates them.
@@ -5508,11 +5523,17 @@ function EditRosterMemberModal({ member, onSaved, onClose }) {
 function ReferralLeaderboard({ me, refreshSignal }) {
   const [board, setBoard] = useState([]);
   const [myPending, setMyPending] = useState(0);
+  const [myPendingNames, setMyPendingNames] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api('/roster/leaderboard')
-      .then((d) => { setBoard(d.leaderboard || []); setMyPending(d.myPending || 0); setLoading(false); })
+      .then((d) => {
+        setBoard(d.leaderboard || []);
+        setMyPending(d.myPending || 0);
+        setMyPendingNames(d.myPendingNames || []);
+        setLoading(false);
+      })
       .catch(() => setLoading(false));
   }, [refreshSignal]);
 
@@ -5582,7 +5603,13 @@ function ReferralLeaderboard({ me, refreshSignal }) {
         {myEntry
           ? <>You have {myEntry.count} approved referral{myEntry.count !== 1 ? 's' : ''}.{' '}</>
           : <>You have no approved referrals yet.{' '}</>}
-        {myPending > 0 && <span className="text-gold/80">{myPending} pending the Secretary's approval.</span>}
+        {myPending > 0 && (
+          <span className="text-gold/80">
+            {myPending} waiting on approval
+            {myPendingNames.length > 0 && <> ({myPendingNames.join(', ')})</>} — they count once a roster
+            manager approves them.
+          </span>
+        )}
       </div>
     </div>
   );
@@ -5661,13 +5688,6 @@ function ReferMemberForm({ onReferred }) {
 function MyReferralLink({ me }) {
   const link = `${window.location.origin}/join/${me.username}`;
   const [copied, setCopied] = useState(false);
-  const [enabled, setEnabled] = useState(true);
-
-  useEffect(() => {
-    api('/join/referral-settings')
-      .then((d) => setEnabled(d.enabled !== false))
-      .catch(() => {});
-  }, []);
 
   async function copy() {
     try {
@@ -5696,8 +5716,8 @@ function MyReferralLink({ me }) {
       </div>
       <p className="text-cream/60 text-sm mb-3">
         Send this to anyone you want to bring in. Everyone who signs up through it is
-        automatically credited to you — you just need the Secretary to approve them.
-        {!enabled && <span className="text-gold/80"> Referral crediting is paused right now, so the link still works but won't award points.</span>}
+        automatically credited to you — the point lands on the leaderboard once a roster
+        manager approves them under <span className="text-cream/70">Roster → Pending Approval</span>.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <code className="flex-1 min-w-0 truncate bg-navy border border-cream/15 rounded-md px-3 py-2 text-sm text-cream/80">{link}</code>
