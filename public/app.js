@@ -4970,12 +4970,17 @@ function InterestSurvey({ onBack }) {
 // secretary approves before it joins the live roster.
 // ---------------------------------------------------------------------------
 function MemberSignUpPage() {
-  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', notes: '', referredByUserId: '' });
+  const blankForm = { firstName: '', lastName: '', phone: '', email: '', grade: '', gender: '', notes: '', referredByUserId: '' };
+  const [form, setForm] = useState(blankForm);
   const [members, setMembers] = useState([]);
   const [referralEnabled, setReferralEnabled] = useState(true);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // Bumped on "Submit Another" to force the form to remount with blank fields
+  // (and re-trigger autoFocus) — lets one device be reused back-to-back at a
+  // club-day sign-up table instead of reloading the page for every person.
+  const [formKey, setFormKey] = useState(0);
 
   // Public board list powers the "who referred you?" dropdown.
   useEffect(() => {
@@ -5013,6 +5018,13 @@ function MemberSignUpPage() {
     finally { setBusy(false); }
   }
 
+  function submitAnother() {
+    setForm(blankForm);
+    setError('');
+    setSubmitted(false);
+    setFormKey((k) => k + 1);
+  }
+
   if (submitted) {
     return (
       <div className="relative min-h-screen flex items-center justify-center p-4">
@@ -5024,6 +5036,7 @@ function MemberSignUpPage() {
             Thanks{form.firstName ? `, ${form.firstName.trim()}` : ''}! Your info has been sent to the
             Club America secretary. Once it's approved you'll be part of the official roster.
           </p>
+          <Button variant="gold" className="w-full" onClick={submitAnother}>Submit Another</Button>
         </div>
       </div>
     );
@@ -5041,7 +5054,7 @@ function MemberSignUpPage() {
           Fill in your info below and you'll be added to the Club America roster once
           the secretary approves it. All fields are required except the last.
         </p>
-        <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-slide-up" style={{ animationDelay: '80ms' }}>
+        <form key={formKey} onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-slide-up" style={{ animationDelay: '80ms' }}>
           <div className="grid grid-cols-2 gap-4">
             <Field label="First Name *">
               <input className={inputCls} value={form.firstName} onChange={set('firstName')} required autoFocus />
