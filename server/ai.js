@@ -130,9 +130,82 @@ If nobody needs a note, return: []`;
   }
 }
 
+// Tool the assistant uses to turn a pasted / dictated task list into a
+// structured draft. The server never creates tasks from this directly — the
+// draft is shown to the admin as an interactive card and only created when
+// they confirm.
+const PROPOSE_TASKS_TOOL = {
+  name: 'propose_tasks',
+  description: 'Draft a batch of tasks to assign to board members. Use this whenever the admin gives you one or more tasks to create or assign — including a big pasted list covering many people. Split each item into a short actionable title and a description carrying all the supporting detail (contacts, phone numbers, emails, deadlines, amounts, context). The admin reviews the draft in the app and confirms before anything is created.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      tasks: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            assigneeUserId: {
+              type: ['integer', 'null'],
+              description: 'The users.id of the board member this task is for, matched from the DATA SNAPSHOT (match first names, nicknames, and partial names). null if no confident match — the admin will pick the person manually.',
+            },
+            assigneeName: {
+              type: 'string',
+              description: 'The person\'s name exactly as the admin wrote it (used as the label when assigneeUserId is null).',
+            },
+            title: {
+              type: 'string',
+              description: 'Short, actionable task title (under ~80 characters). Starts with a verb. No trailing period.',
+            },
+            description: {
+              type: 'string',
+              description: 'Everything else the assignee needs: context, names, emails, phone numbers, dollar amounts, dates, and why it matters. Empty string only if the admin truly gave no detail beyond the title.',
+            },
+            dueDate: {
+              type: ['string', 'null'],
+              description: 'Due date as YYYY-MM-DD, only when the admin gave an explicit date for the task itself. Otherwise null (soft deadlines belong in the description).',
+            },
+          },
+          required: ['assigneeName', 'title', 'description'],
+        },
+      },
+    },
+    required: ['tasks'],
+  },
+};
+
+// Validate + clean a raw tool call from the model into the proposal we store
+// and show. Unknown userIds are nulled so the admin picks the person manually.
+function sanitizeProposal(input, users) {
+  if (!input || !Array.isArray(input.tasks)) return null;
+  const validIds = new Set(users.map((u) => u.id));
+  const tasks = input.tasks
+    .map((t) => {
+      if (!t || typeof t !== 'object') return null;
+      const title = String(t.title || '').trim().slice(0, 300);
+      if (!title) return null;
+      let assigneeUserId = Number.isInteger(t.assigneeUserId) && validIds.has(t.assigneeUserId) ? t.assigneeUserId : null;
+      let dueDate = typeof t.dueDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.dueDate) ? t.dueDate : null;
+      return {
+        assigneeUserId,
+        assigneeName: String(t.assigneeName || '').trim().slice(0, 100),
+        title,
+        description: String(t.description || '').trim().slice(0, 5000),
+        dueDate,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 100);
+  if (tasks.length === 0) return null;
+  return { status: 'proposed', tasks };
+}
+
+// Returns { reply, proposal } — proposal is null for a normal answer, or a
+// { status: 'proposed', tasks: [...] } draft when the admin asked to create
+// or assign tasks.
 async function chatWithAI(db, conversationHistory, userId) {
   if (!anthropic) {
-    return 'AI Assistant is not available — the server administrator needs to set ANTHROPIC_API_KEY.';
+    return { reply: 'AI Assistant is not available — the server administrator needs to set ANTHROPIC_API_KEY.', proposal: null };
   }
 
   const snapshot = buildTeamSnapshot(db);
@@ -140,6 +213,14 @@ async function chatWithAI(db, conversationHistory, userId) {
   const systemPrompt = `You are an AI assistant for the Club America board leadership at Park City High School. Today's date is ${snapshot.today}.
 
 You have access to the full board management data below, including login activity for the last 30 days. Use it to answer questions accurately, naming real people and tasks when relevant. Be concise and focused on the club's management needs.
+
+TASK CREATION:
+When the admin asks you to create or assign tasks — whether it's one task or a giant pasted list covering the whole board — call the propose_tasks tool. Rules:
+- Break the input into individual tasks: one task per distinct action item. A paragraph of bullets under one person's name is usually several tasks, not one.
+- Title vs description: the title is the short "what to do" (verb-first, under ~80 chars). EVERYTHING else the admin wrote for that item — contact names, emails, phone numbers, dollar amounts, deadlines, reasons, warnings — goes in the description, lightly cleaned up. Never lose detail the admin provided.
+- Match each person to a real user in the DATA SNAPSHOT by displayName (first names and partial names count: "Will" matches "Will Haladin"). Use their users.id as assigneeUserId. If nobody matches confidently, set assigneeUserId to null and keep the name they wrote — do NOT guess between two similar names.
+- Only set dueDate when the admin gave an explicit calendar date for that task. Approximate dates ("around Sept 8") stay in the description.
+- After calling the tool, keep your text reply short: a one-line summary (how many tasks, for whom) plus anything that needs the admin's attention, like names you couldn't match. Do not repeat the full task list in text — the app shows it as a card.
 
 DATA SNAPSHOT:
 ${JSON.stringify(snapshot, null, 2)}`;
@@ -152,11 +233,66 @@ ${JSON.stringify(snapshot, null, 2)}`;
   try {
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
+      max_tokens: 8192,
       system: systemPrompt,
+      tools: [PROPOSE_TASKS_TOOL],
       messages,
     });
-    return response.content[0].text;
+
+    const toolUse = response.content.find((b) => b.type === 'tool_use' && b.name === 'propose_tasks');
+    const textSoFar = response.content
+      .filter((b) => b.type === 'text')
+      .map((b) => b.text)
+      .join('\n')
+      .trim();
+
+    if (!toolUse) {
+      return { reply: textSoFar || '(no response)', proposal: null };
+    }
+
+    const proposal = sanitizeProposal(toolUse.input, snapshot.users);
+    if (!proposal) {
+      return {
+        reply: textSoFar || 'I tried to draft those tasks but could not produce a valid list. Try rephrasing or breaking the list into smaller chunks.',
+        proposal: null,
+      };
+    }
+
+    // Close the tool loop so the model can produce its short confirmation text.
+    let closing = '';
+    try {
+      const followUp = await anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1024,
+        system: systemPrompt,
+        tools: [PROPOSE_TASKS_TOOL],
+        messages: [
+          ...messages,
+          { role: 'assistant', content: response.content },
+          {
+            role: 'user',
+            content: [{
+              type: 'tool_result',
+              tool_use_id: toolUse.id,
+              content: `Draft of ${proposal.tasks.length} task(s) recorded. It is now displayed to the admin as an interactive card where they review, adjust assignees, and click Create. Reply with a brief confirmation only.`,
+            }],
+          },
+        ],
+      });
+      closing = followUp.content
+        .filter((b) => b.type === 'text')
+        .map((b) => b.text)
+        .join('\n')
+        .trim();
+    } catch (err) {
+      console.error('[AI] chatWithAI follow-up error:', err.message);
+    }
+
+    const unmatched = proposal.tasks.filter((t) => !t.assigneeUserId).length;
+    const fallback = `Drafted ${proposal.tasks.length} task(s). Review the card below and click Create when it looks right.` +
+      (unmatched ? ` ${unmatched} task(s) need an assignee picked manually.` : '');
+    const reply = [textSoFar, closing].filter(Boolean).join('\n\n') || fallback;
+    return { reply, proposal };
   } catch (err) {
     console.error('[AI] chatWithAI error:', err.message);
     throw err;

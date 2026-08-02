@@ -213,6 +213,15 @@ health, tasks, check-ins, funding, and login activity — and can run a team-hea
 analysis that writes private "Agent Notes" to members. (Different from this How-To
 tab, which only explains how to use the app.)
 
+It can also bulk-create and assign tasks: paste an entire task list into the chat
+(even one covering many people — Shift+Enter adds new lines) and it splits the
+text into individual tasks, writes a short title for each, puts all the details
+(contacts, dates, amounts) in the description, and matches each person's name to
+a real member. The draft appears as a card in the chat where the admin can untick
+tasks, fix any assignee it couldn't match, expand details, and click Create to
+assign everything at once. Assignees get one combined notification each. Nothing
+is created until the admin clicks Create.
+
 ---
 
 ## Common questions

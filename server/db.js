@@ -746,6 +746,11 @@ function init() {
   const vsCols = db.prepare("PRAGMA table_info(volunteer_signups)").all().map((c) => c.name);
   if (!vsCols.includes('needsReview')) db.exec("ALTER TABLE volunteer_signups ADD COLUMN needsReview INTEGER NOT NULL DEFAULT 0");
 
+  // ai_chat_messages migration: taskProposal holds the JSON of an AI-drafted
+  // bulk task-assignment proposal attached to an assistant message ('' = none).
+  const aiChatCols = db.prepare("PRAGMA table_info(ai_chat_messages)").all().map((c) => c.name);
+  if (!aiChatCols.includes('taskProposal')) db.exec("ALTER TABLE ai_chat_messages ADD COLUMN taskProposal TEXT NOT NULL DEFAULT ''");
+
   // attendance_events column migrations: type + auto-import source tracking.
   const aeCols = db.prepare("PRAGMA table_info(attendance_events)").all().map((c) => c.name);
   if (!aeCols.includes('eventType'))  db.exec("ALTER TABLE attendance_events ADD COLUMN eventType TEXT NOT NULL DEFAULT 'club'");

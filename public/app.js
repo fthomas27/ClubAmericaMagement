@@ -7402,6 +7402,125 @@ function AINotesPanel({ onClose, onRead }) {
 // ---------------------------------------------------------------------------
 // AI Chat page (admin only)
 // ---------------------------------------------------------------------------
+
+// Interactive card for an AI-drafted batch of tasks: review each one, fix any
+// assignee the AI couldn't match, untick what you don't want, then create all.
+function TaskProposalCard({ proposal, messageId, users, onCreated }) {
+  const [included, setIncluded] = useState(() => proposal.tasks.map(() => true));
+  const [owners, setOwners] = useState(() => proposal.tasks.map((t) => t.assigneeUserId || ''));
+  const [openDesc, setOpenDesc] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const created = proposal.status === 'created';
+  const selCount = included.filter(Boolean).length;
+  const missingAssignee = proposal.tasks.some((t, i) => included[i] && !owners[i]);
+  const userName = (id) => {
+    const u = users.find((x) => x.id === Number(id));
+    return u ? u.displayName : null;
+  };
+
+  async function createTasks() {
+    if (busy || created) return;
+    setBusy(true);
+    setError('');
+    try {
+      const items = proposal.tasks
+        .map((t, i) => (included[i] ? { index: i, ...(owners[i] ? { userId: Number(owners[i]) } : {}) } : null))
+        .filter(Boolean);
+      const d = await api(`/ai/chat/proposal/${messageId}/create`, { method: 'POST', body: { items } });
+      onCreated(messageId, d.proposal);
+    } catch (err) {
+      setError(err.message || 'Failed to create tasks');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="bg-navy3 border border-gold/30 rounded-xl p-4 mt-2">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <div className="text-gold text-sm font-medium uppercase tracking-wider">
+          Task draft — {proposal.tasks.length} task{proposal.tasks.length === 1 ? '' : 's'}
+        </div>
+        {created ? (
+          <span className="text-xs text-green-400 font-medium">
+            ✓ Created {(proposal.createdTaskIds || []).length} task{(proposal.createdTaskIds || []).length === 1 ? '' : 's'}
+          </span>
+        ) : (
+          <Button variant="gold" className="text-xs" disabled={busy || selCount === 0 || missingAssignee} onClick={createTasks}>
+            {busy ? <Spinner /> : `Create ${selCount} task${selCount === 1 ? '' : 's'}`}
+          </Button>
+        )}
+      </div>
+      {!created && missingAssignee && (
+        <div className="text-amber-400/90 text-xs mb-2">Some tasks need an assignee — pick a person from the dropdown, or untick them.</div>
+      )}
+      {error && <div className="text-red text-xs mb-2">{error}</div>}
+      <div className="space-y-2">
+        {proposal.tasks.map((t, i) => (
+          <div key={i} className={`rounded-lg border px-3 py-2 ${included[i] || created ? 'border-cream/10 bg-navy2' : 'border-cream/5 bg-navy2/40 opacity-50'}`}>
+            <div className="flex items-start gap-2">
+              {!created && (
+                <input
+                  type="checkbox"
+                  className="mt-1 accent-gold"
+                  checked={included[i]}
+                  onChange={() => setIncluded((prev) => prev.map((v, j) => (j === i ? !v : v)))}
+                />
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-cream text-sm font-medium">{t.title}</span>
+                  {t.dueDate && <span className="text-xs text-cream/40">due {t.dueDate}</span>}
+                </div>
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                  {created || t.assigneeUserId ? (
+                    <span className="text-xs text-gold/80">→ {userName(owners[i]) || t.assigneeName || 'Unknown'}</span>
+                  ) : (
+                    <select
+                      className="bg-navy3 border border-cream/20 rounded text-xs text-cream px-2 py-1"
+                      value={owners[i]}
+                      onChange={(e) => setOwners((prev) => prev.map((v, j) => (j === i ? e.target.value : v)))}
+                    >
+                      <option value="">— assign "{t.assigneeName || '?'}" to… —</option>
+                      {users.map((u) => (
+                        <option key={u.id} value={u.id}>{u.displayName}</option>
+                      ))}
+                    </select>
+                  )}
+                  {t.description && (
+                    <button
+                      type="button"
+                      className="text-xs text-cream/40 hover:text-cream/70"
+                      onClick={() => setOpenDesc((prev) => ({ ...prev, [i]: !prev[i] }))}
+                    >
+                      {openDesc[i] ? 'Hide details' : 'Details'}
+                    </button>
+                  )}
+                </div>
+                {openDesc[i] && t.description && (
+                  <div className="text-xs text-cream/60 mt-2 whitespace-pre-wrap border-l-2 border-cream/10 pl-2">{t.description}</div>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function parseProposal(raw) {
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw);
+    return p && Array.isArray(p.tasks) && p.tasks.length ? p : null;
+  } catch {
+    return null;
+  }
+}
+
 function AIChatPage({ me }) {
   const [messages, setMessages] = useState([]);
   const [sessionId, setSessionId] = useState(null);
@@ -7409,16 +7528,20 @@ function AIChatPage({ me }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [analyzeStatus, setAnalyzeStatus] = useState('');
+  const [users, setUsers] = useState([]);
   const bottomRef = useRef(null);
 
   useEffect(() => {
     api('/ai/chat/history')
       .then((d) => {
         if (d.messages && d.messages.length) {
-          setMessages(d.messages);
+          setMessages(d.messages.map((m) => ({ ...m, proposal: parseProposal(m.taskProposal) })));
           setSessionId(d.sessionId);
         }
       })
+      .catch(() => {});
+    api('/users')
+      .then((d) => setUsers(d.users || []))
       .catch(() => {});
   }, []);
 
@@ -7441,7 +7564,7 @@ function AIChatPage({ me }) {
       setMessages((prev) => [
         ...prev.filter((m) => m._tempId !== tempId),
         { role: 'user', content: text },
-        { role: 'assistant', content: d.reply },
+        { role: 'assistant', content: d.reply, id: d.messageId, proposal: d.proposal || null },
       ]);
     } catch (err) {
       setError(err.message || 'Request failed');
@@ -7473,7 +7596,7 @@ function AIChatPage({ me }) {
       <div className="flex items-end justify-between mb-4 flex-wrap gap-2">
         <div>
           <h1 className="font-display text-4xl text-cream leading-none">AI Assistant</h1>
-          <p className="text-cream/50 text-sm mt-1">Ask about team health, tasks, check-ins, login activity, or get a summary.</p>
+          <p className="text-cream/50 text-sm mt-1">Ask about team health, tasks, check-ins, login activity — or paste a whole task list and it will draft and assign everything for your review.</p>
         </div>
         <div className="flex gap-2 items-center flex-wrap">
           {analyzeStatus && <span className="text-xs text-cream/60">{analyzeStatus}</span>}
@@ -7485,20 +7608,32 @@ function AIChatPage({ me }) {
       <div className="flex-1 overflow-y-auto bg-navy2 border border-cream/10 rounded-xl p-4 space-y-4 mb-4">
         {messages.length === 0 && (
           <div className="text-cream/30 text-sm text-center pt-8">
-            Ask something — e.g. "Who has the most overdue tasks?" or "Show me login patterns this week."
+            Ask something — e.g. "Who has the most overdue tasks?" — or paste a big task list ("Assign these tasks to everyone: …") and the AI will split it into titled tasks per person for you to review and create in one click.
           </div>
         )}
         {messages.map((m, i) => (
-          <div key={i} className={`flex ca-slide-up ${m.role === 'user' ? 'justify-end' : 'justify-start'}`} style={{ animationDelay: '0ms' }}>
-            <div className={`max-w-[82%] rounded-xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap
-              ${m.role === 'user'
-                ? 'bg-red/20 text-cream border border-red/30'
-                : 'bg-navy3 text-cream/90 border border-cream/10'}`}>
-              {m.role === 'assistant' && (
-                <div className="text-gold/60 text-xs font-medium mb-1 uppercase tracking-wider">AI</div>
-              )}
-              {m.content}
+          <div key={m.id || i} className="ca-slide-up" style={{ animationDelay: '0ms' }}>
+            <div className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[82%] rounded-xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap
+                ${m.role === 'user'
+                  ? 'bg-red/20 text-cream border border-red/30'
+                  : 'bg-navy3 text-cream/90 border border-cream/10'}`}>
+                {m.role === 'assistant' && (
+                  <div className="text-gold/60 text-xs font-medium mb-1 uppercase tracking-wider">AI</div>
+                )}
+                {m.content}
+              </div>
             </div>
+            {m.role === 'assistant' && m.proposal && m.id && (
+              <TaskProposalCard
+                proposal={m.proposal}
+                messageId={m.id}
+                users={users}
+                onCreated={(msgId, newProposal) =>
+                  setMessages((prev) => prev.map((msg) => (msg.id === msgId ? { ...msg, proposal: newProposal } : msg)))
+                }
+              />
+            )}
           </div>
         ))}
         {busy && (
@@ -7511,12 +7646,19 @@ function AIChatPage({ me }) {
 
       {error && <div className="text-red text-sm mb-2">{error}</div>}
 
-      <form onSubmit={send} className="flex gap-2">
-        <input
-          className={inputCls + ' flex-1'}
+      <form onSubmit={send} className="flex gap-2 items-end">
+        <textarea
+          className={inputCls + ' flex-1 resize-none'}
+          rows={Math.min(8, Math.max(1, input.split('\n').length))}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask about the team…"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              send(e);
+            }
+          }}
+          placeholder="Ask about the team, or paste a whole task list to assign… (Shift+Enter for a new line)"
           disabled={busy}
         />
         <Button type="submit" variant="gold" disabled={busy || !input.trim()}>
