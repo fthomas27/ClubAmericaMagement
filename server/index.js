@@ -540,9 +540,7 @@ app.post('/api/submissions', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name
   let gradeReps = [];
   let recipients;
   if (type === 'club') {
-    gradeReps = grade
-      ? db.prepare("SELECT id, email, role, grade FROM users WHERE grade = ? AND role != 'admin' AND username != 'logistics'").all(grade)
-      : [];
+    gradeReps = gradeRepsFor(grade);
     const seen = new Set();
     recipients = [...secretaryTargets(), ...gradeReps].filter((r) => {
       if (seen.has(r.id)) return false;
@@ -645,10 +643,22 @@ app.post('/api/roster/self-submit', rateLimit({ windowMs: 60 * 60 * 1000, max: 3
   );
   const name = `${String(firstName).trim()} ${String(lastName || '').trim()}`.trim();
   const suffix = referrer ? ` (referred by ${referrer.displayName})` : '';
-  const alerted = notifySecretary(`${name} submitted their info${suffix} — review it in the roster.`, 'roster', 'submission');
+  // One sign-up is one ping to any given person, so each group checks what the
+  // groups before it already covered.
+  const alerted = new Set(notifySecretary(`${name} submitted their info${suffix} — review it in the roster.`, 'roster', 'submission'));
+  // That grade's reps hear about their own students, matching how a Get Involved
+  // request reaches them. Alert only — a /join entry waits in the roster pipeline
+  // for the Secretary to approve, so there's no outreach task to hand out yet.
+  if (grade) {
+    for (const rep of gradeRepsFor(grade)) {
+      if (alerted.has(rep.id)) continue;
+      pushNotification(rep.id, `${name} (grade ${grade}) signed up — that's your grade.`, 'roster', 'submission');
+      alerted.add(rep.id);
+    }
+  }
   // The member whose link they came through hears about it too — that referral
-  // is theirs. Skipped if they're also the secretary, so one sign-up is one ping.
-  if (referrer && !alerted.includes(referrer.id)) {
+  // is theirs.
+  if (referrer && !alerted.has(referrer.id)) {
     pushNotification(referrer.id,
       `${name} signed up through your referral link — it counts once the Secretary approves it.`,
       'referrals', 'info');
@@ -2171,6 +2181,7 @@ app.post('/api/roster/:id/approve', (req, res) => {
   if (awardsReferral) {
     const name = `${m.firstName} ${m.lastName}`.trim();
     pushNotification(m.referredByUserId, `Your referral of ${name} was approved — you earned a referral point!`, 'referrals', 'info');
+    sendReferralStandings(m.referredByUserId);
   }
   res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id) });
 });
@@ -2189,6 +2200,7 @@ app.post('/api/roster/:id/deactivate', (req, res) => {
   if (losesCredit && m.referredByUserId) {
     const name = `${m.firstName} ${m.lastName}`.trim();
     pushNotification(m.referredByUserId, `${name} was removed for missing meetings — the referral point was deducted (it returns if they come back).`, 'referrals', 'info');
+    sendReferralStandings(m.referredByUserId);
   }
   res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id) });
 });
@@ -2204,11 +2216,12 @@ app.post('/api/roster/:id/absence-contacted', (req, res) => {
   res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id) });
 });
 
-// Referral competition leaderboard — open to everyone, ranked by the number of
-// approved referrals each member has (a referral counts once the Secretary
-// approves it, and drops back off if the referred member is later removed).
-app.get('/api/roster/leaderboard', (req, res) => {
-  const rows = db.prepare(`
+// Referral competition standings, ranked by the number of approved referrals each
+// member has (a referral counts once the Secretary approves it, and drops back off
+// if the referred member is later removed). Shared by the leaderboard endpoint and
+// the Telegram standings message so the two can't drift apart.
+function referralStandings() {
+  return db.prepare(`
     SELECT u.id, u.displayName, u.title,
            COUNT(r.id) AS count
     FROM users u
@@ -2216,6 +2229,40 @@ app.get('/api/roster/leaderboard', (req, res) => {
     GROUP BY u.id
     ORDER BY count DESC, u.displayName ASC
   `).all();
+}
+
+function ordinal(n) {
+  const rem100 = n % 100;
+  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+  return `${n}${{ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th'}`;
+}
+
+// Telegram-only nudge sent whenever a member's referral count changes: the top of
+// the board, plus their own line when they rank below it. Deliberately not routed
+// through pushNotification — that mirrors to both channels, and a leaderboard blob
+// in the notification bell would be noise. Silent when Telegram is off or the
+// member never linked their account.
+function sendReferralStandings(userId) {
+  if (!userId || !telegramEnabled()) return;
+  try {
+    const row = db.prepare('SELECT telegramChatId FROM users WHERE id = ?').get(userId);
+    if (!row || !row.telegramChatId) return;
+    const board = referralStandings();
+    const top = board.slice(0, 5).map((r, i) => `${i + 1}. ${r.displayName} — ${r.count}`);
+    const rank = board.findIndex((r) => r.id === userId);
+    // Someone back down to zero drops out of the ranked query entirely, so spell
+    // that out rather than leaving them wondering where they went.
+    const ownLine =
+      rank < 0 ? '\n\nYou: unranked — 0' :
+      rank >= 5 ? `\n\nYou: ${ordinal(rank + 1)} — ${board[rank].count}` : '';
+    sendTelegram(row.telegramChatId, `🏆 Referral standings\n${top.join('\n')}${ownLine}`);
+  } catch (e) {
+    console.warn('[telegram] referral standings failed:', e.message);
+  }
+}
+
+app.get('/api/roster/leaderboard', (req, res) => {
+  const rows = referralStandings();
   // Pending referrals the current user is waiting on (not yet counted). The
   // names come back too, so someone who shared their link can see the sign-up
   // landed instead of wondering why their count hasn't moved.
@@ -2871,6 +2918,7 @@ function restoreReferralCredit(member) {
     db.prepare("UPDATE roster_members SET referralStatus = 'approved', updatedAt = datetime('now') WHERE id = ?").run(member.id);
     const name = `${member.firstName} ${member.lastName}`.trim();
     pushNotification(member.referredByUserId, `${name} returned — your referral point has been restored.`, 'referrals', 'info');
+    sendReferralStandings(member.referredByUserId);
   }
 }
 
@@ -4782,6 +4830,17 @@ function notifySecretary(message, link = '', type = 'info') {
   const targets = secretaryTargets();
   for (const t of targets) pushNotification(t.id, message, link, type);
   return targets.map((t) => t.id);
+}
+
+// The board members who own outreach for a grade. Admins are excluded so the
+// President and VP stay out of the join stream even if they carry a grade.
+function gradeRepsFor(grade) {
+  if (!grade) return [];
+  try {
+    return db.prepare(
+      "SELECT id, email, role, grade FROM users WHERE grade = ? AND role != 'admin' AND username != 'logistics'"
+    ).all(String(grade));
+  } catch (_) { return []; }
 }
 
 // NOTE: public testimonial routes (GET /api/testimonials and the
