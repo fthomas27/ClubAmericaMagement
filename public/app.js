@@ -9999,6 +9999,11 @@ const TAB_DESCRIPTIONS = {
   admin:          { headline: 'Admin Panel',                    body: 'The full control center for the portal. Add and manage users, assign roles, configure permissions, and handle all technical administration of the Club America board management platform.' },
   logistics:      { headline: 'Login Activity Log',             body: 'Review board member login history and portal access logs. Spot inactive members, monitor usage patterns, and maintain security awareness across the platform.' },
   ai:             { headline: 'AI Assistant',                   body: 'A Claude-powered AI interface built for club administration. Ask questions, generate content, analyze data, or get help drafting anything — your AI teammate is ready whenever you need it.' },
+  'money-requests': { headline: 'Money Requests',           body: 'Funding and reimbursements live together now. Use the Funding tab to ask for money up front, and the Reimbursements tab to get paid back for money you already spent. Both route to review and are tracked to the end.' },
+  people:           { headline: 'People',                   body: 'The board in one place: the Directory tab is the contact list, and the Org Chart tab shows how everyone connects. Same members, two views.' },
+  'ask-ai':         { headline: 'Ask AI',                   body: 'Two assistants on one page. How-To answers questions about using this app from the built-in guide. The AI Assistant tab (admins) is the open-ended Claude workspace for club administration.' },
+  'public-subs':    { headline: 'Public Submissions',       body: 'Content the public sent to the website, waiting on a decision: testimonials on one tab, event photos on the other. Approve what should go live and reject the rest.' },
+  activity:         { headline: 'Activity',                 body: 'Who has been using what: the Member Logins tab shows portal login history, and Site Traffic shows what visitors do on the public website.' },
   howto:          { headline: 'How-To / Q&A',                   body: 'Ask in plain language how to do anything in the app — where features live, the steps to complete a task, and who is allowed to do what. It answers from a built-in guide to the portal and never touches private club data.' },
 };
 
@@ -10024,7 +10029,7 @@ function markTabSeen(userId, tab) { const s = getIntroState(userId); s.tabs = { 
 
 function WelcomeIntroModal({ me, navTiles, onDone }) {
   const tileSet = new Set(navTiles.map(t => t.type));
-  const sectionColors = { 'My Club': 'text-gold', 'Leadership': 'text-sky-300', 'Site & Admin': 'text-red/80' };
+  const sectionColors = { 'Tasks': 'text-gold', 'My Club': 'text-gold', 'Events': 'text-sky-300', 'Money': 'text-emerald-300', 'Recruitment': 'text-cream/70', 'Management': 'text-red/80' };
   const sections = Object.entries(INTRO_SECTION_TYPES).map(([title, types]) => ({
     title,
     items: types.filter(t => tileSet.has(t) && TAB_DESCRIPTIONS[t]),
