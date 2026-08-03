@@ -1482,7 +1482,7 @@ function PageAdminControls({ targetUser, onUpdated }) {
             <div className="flex items-start justify-between gap-4 mb-2">
               <div>
                 <div className="text-cream font-medium">Bio / About Section</div>
-                <div className="text-cream/50 text-sm">A short bio or description shown at the top of their My Page.</div>
+                <div className="text-cream/50 text-sm">A short bio or description shown at the top of their Tasks page.</div>
               </div>
               <Toggle enabled={settings.bioEnabled} onChange={() => toggle('bioEnabled')} disabled={busy} />
             </div>
@@ -1566,7 +1566,7 @@ function TeamAnnouncementView({ me, reports }) {
       {confirmEl}
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Team Announcement</h1>
       <p className="text-cream/50 mb-6">
-        Post a message that appears at the top of the My Page for {scope}. One active announcement at a time.
+        Post a message that appears at the top of the Tasks page for {scope}. One active announcement at a time.
       </p>
 
       {!loaded ? <div className="text-cream/40">Loading…</div> : (
@@ -1682,7 +1682,7 @@ function TaskPage({ me, userId, users, refreshSignal, onNavigate }) {
       <div className="flex items-end justify-between mb-6 flex-wrap gap-2">
         <div>
           <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">
-            {isSelf ? 'My Page' : user.displayName}
+            {isSelf ? 'Tasks' : user.displayName}
           </h1>
           <div className="text-cream/50 mt-1">{user.title || roleLabel(user.role)} · @{user.username}</div>
         </div>
@@ -2229,46 +2229,60 @@ function EditMemberModal({ user, onSaved, onClose }) {
   );
 }
 
+// Per-user tab hiding in the Admin Panel, grouped to match the home categories
+// so an admin turning things off sees the same shape the member will. Types stay
+// granular: hiding "Attendance" removes that tab from the merged Meetings page,
+// and hiding every child of a category removes the category from their home.
 const ALL_TABS_BY_SECTION = [
+  { section: 'Tasks', tabs: [
+    { type: 'mytasks',        label: 'Tasks' },
+  ]},
   { section: 'My Club', tabs: [
-    { type: 'mytasks',        label: 'My Page' },
     { type: 'home',           label: 'Club Home' },
     { type: 'checkin',        label: 'Check-In' },
-    { type: 'attendance',     label: 'Attendance' },
     { type: 'polls',          label: 'Polls & Voting' },
-    { type: 'meetings',       label: 'Meetings' },
-    { type: 'funding',        label: 'Funding' },
     { type: 'apply',          label: 'Apply' },
-    { type: 'reimbursements', label: 'Reimbursements' },
+    { type: 'directory',      label: 'People · Directory' },
+    { type: 'org',            label: 'People · Org Chart' },
     { type: 'resources',      label: 'Resources' },
-    { type: 'directory',      label: 'Directory' },
-    { type: 'org',            label: 'Org Chart' },
     { type: 'ainotes',        label: 'Agent Notes' },
   ]},
-  { section: 'Leadership', roles: ['manager','admin'], tabs: [
-    { type: 'howto',       label: 'How-To' },
-    { type: 'announce',    label: 'Announcement' },
-    { type: 'myteam',      label: 'My Team' },
-    { type: 'approvals',   label: 'Approvals' },
-    { type: 'submissions', label: 'Get Involved' },
-    { type: 'roster',      label: 'Roster' },
-    { type: 'shop',        label: 'Shop Manager' },
-    { type: 'dashboard',   label: 'Dashboard' },
-    { type: 'volunteers',  label: 'Volunteers' },
-    { type: 'speaker',     label: 'Speaker Events' },
-    { type: 'grants',      label: 'Grant Tracker' },
-    { type: 'social',      label: 'Social Media' },
-    { type: 'budget',      label: 'Budget Overview' },
-    { type: 'grades',      label: 'Grade Pipeline' },
+  { section: 'Events', tabs: [
+    { type: 'meetings',       label: 'Meetings' },
+    { type: 'attendance',     label: 'Meetings · Attendance' },
+    { type: 'volunteers',     label: 'Volunteers' },
+    { type: 'speaker',        label: 'Speaker Events' },
   ]},
-  { section: 'Site & Admin', roles: ['admin'], tabs: [
-    { type: 'website',      label: 'Edit Website' },
-    { type: 'testimonials', label: 'Testimonials' },
-    { type: 'newsletter',   label: 'Newsletter' },
-    { type: 'admin',        label: 'Admin Panel' },
-    { type: 'logistics',    label: 'Login Activity' },
-    { type: 'siteactivity', label: 'Site Activity' },
-    { type: 'ai',           label: 'AI Assistant' },
+  { section: 'Money', tabs: [
+    { type: 'funding',        label: 'Money Requests · Funding' },
+    { type: 'reimbursements', label: 'Money Requests · Reimbursements' },
+    { type: 'budget',         label: 'Budget Overview' },
+    { type: 'grants',         label: 'Grant Tracker' },
+  ]},
+  { section: 'Recruitment', tabs: [
+    { type: 'roster',         label: 'Roster · Pipeline' },
+    { type: 'grades',         label: 'Roster · By Grade' },
+    { type: 'referrals',      label: 'Referrals' },
+    { type: 'submissions',    label: 'Get Involved' },
+  ]},
+  { section: 'Management', roles: ['manager','admin'], tabs: [
+    { type: 'approvals',      label: 'Approvals' },
+    { type: 'myteam',         label: 'My Team' },
+    { type: 'announce',       label: 'Announcement' },
+    { type: 'dashboard',      label: 'Dashboard' },
+    { type: 'howto',          label: 'Ask AI · How-To' },
+    { type: 'ai',             label: 'Ask AI · AI Assistant' },
+    { type: 'website',        label: 'Edit Website' },
+    { type: 'social',         label: 'Social Media' },
+    { type: 'newsletter',     label: 'Newsletter' },
+    { type: 'testimonials',   label: 'Public Submissions · Testimonials' },
+    { type: 'photos',         label: 'Public Submissions · Photos' },
+    { type: 'logistics',      label: 'Activity · Member Logins' },
+    { type: 'siteactivity',   label: 'Activity · Site Traffic' },
+    { type: 'admin',          label: 'Admin Panel' },
+  ]},
+  { section: 'Shop', tabs: [
+    { type: 'shop',           label: 'Shop' },
   ]},
 ];
 
@@ -4863,7 +4877,7 @@ function PublicFooter({ home, onEnterPortal }) {
 }
 
 // ---------------------------------------------------------------------------
-// Bio section (displayed on My Page when bioEnabled)
+// Bio section (displayed on the Tasks page when bioEnabled)
 // ---------------------------------------------------------------------------
 function BioSection({ text }) {
   if (!text) return null;
@@ -8646,7 +8660,7 @@ function ShopManagerPage({ me }) {
   return (
     <div className="max-w-5xl space-y-6">
       <div>
-        <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Shop Manager</h1>
+        <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Shop</h1>
         <p className="text-cream/50 mt-1">Manage products, inventory, and orders for the merch shop.</p>
       </div>
 
@@ -9445,162 +9459,274 @@ function AppIcon({ name, className, size = 26 }) {
   }
 }
 
-function AppTile({ label, icon, badge, onClick, style, pinned, onTogglePin, pinDisabled }) {
+function AppTile({ label, icon, badge, onClick, style }) {
   const tone = TILE_TONES[icon] || { icon: 'text-cream/60', bg: 'bg-cream/5' };
   return (
-    <div className="ca-fade-in relative group" style={style}>
-      <button onClick={onClick}
-        className="bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/40 rounded-2xl p-5 flex flex-col items-center gap-3 transition-all duration-200 active:scale-95 w-full hover:-translate-y-1 hover:shadow-lg hover:shadow-black/30">
-        <div className="relative">
-          <div className={`w-14 h-14 rounded-2xl ${tone.bg} flex items-center justify-center transition-transform duration-200 group-hover:scale-110`}>
-            <AppIcon name={icon} className={`${tone.icon} transition-colors duration-150`} />
-          </div>
-          {badge > 0 && (
-            <span className="absolute -top-1 -right-1 bg-red text-cream text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 ca-pulse">{badge}</span>
-          )}
+    <button onClick={onClick} style={style}
+      className="ca-fade-in group relative bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/40 rounded-2xl p-5 flex flex-col items-center gap-3 transition-all duration-200 active:scale-95 w-full hover:-translate-y-1 hover:shadow-lg hover:shadow-black/30">
+      <div className="relative">
+        <div className={`w-14 h-14 rounded-2xl ${tone.bg} flex items-center justify-center transition-transform duration-200 group-hover:scale-110`}>
+          <AppIcon name={icon} className={`${tone.icon} transition-colors duration-150`} />
         </div>
-        <span className="text-cream/80 text-xs font-medium text-center leading-tight group-hover:text-cream transition-colors">{label}</span>
-      </button>
-      {onTogglePin && (
-        <button type="button" onClick={onTogglePin} disabled={pinDisabled && !pinned}
-          aria-pressed={!!pinned}
-          aria-label={pinned ? `Unpin ${label} from home` : `Pin ${label} to home`}
-          title={pinned ? 'Unpin from home' : pinDisabled ? 'Home is full — unpin something first' : 'Pin to home'}
-          className={`absolute top-1.5 right-1.5 w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
-            pinned ? 'text-gold/45 hover:text-gold' : pinDisabled ? 'text-cream/15 cursor-not-allowed' : 'text-cream/25 hover:text-cream/80 hover:bg-navy3'}`}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill={pinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="m12 2.5 2.9 5.9 6.5.95-4.7 4.58 1.1 6.47L12 17.35 6.2 20.4l1.1-6.47L2.6 9.35l6.5-.95Z"/>
-          </svg>
-        </button>
-      )}
+        {badge > 0 && (
+          <span className="absolute -top-1 -right-1 bg-red text-cream text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 ca-pulse">{badge}</span>
+        )}
+      </div>
+      <span className="text-cream/80 text-xs font-medium text-center leading-tight group-hover:text-cream transition-colors">{label}</span>
+    </button>
+  );
+}
+
+// One place that answers "can this person open this page right now?". The home
+// categories, the tabs a merged page shows and the search index all read it, so
+// the three can never disagree about who sees what.
+function tabAllowed(type, ctx) {
+  const { me, checkinEnabled, hidden } = ctx;
+  const isManager = me.role === 'manager' || me.role === 'admin';
+  const isAdmin = me.role === 'admin';
+  if (hidden && hidden.has(type)) return false;
+  switch (type) {
+    // Open to every board member.
+    case 'mytasks': case 'home': case 'polls': case 'meetings': case 'funding':
+    case 'apply': case 'reimbursements': case 'resources': case 'directory':
+    case 'org': case 'ainotes': case 'referrals':
+      return true;
+    case 'checkin':      return checkinEnabled || isManager;
+    case 'attendance':   case 'howto':      case 'announce':  case 'myteam':
+    case 'approvals':    case 'dashboard':  case 'volunteers': case 'speaker':
+    case 'grants':       case 'budget':
+      return isManager;
+    case 'submissions':  return isAdmin || isSecretaryTitle(me) || !!me.grade;
+    case 'roster':       return isManager || !!me.canManageRoster;
+    case 'grades':       return isManager || !!me.managedGrade;
+    case 'social':       return isManager || !!me.canManageSocial;
+    case 'shop':         return isAdmin || !!me.canManageRoster;
+    case 'website':      return isAdmin || !!me.canEditHome;
+    case 'photos':       return isAdmin || !!me.canEditHome || !!me.canManageSocial;
+    case 'newsletter':   return isAdmin || !!me.canManageNewsletter;
+    case 'logistics':    case 'siteactivity': return isAdmin || !!me.canViewLogistics;
+    case 'testimonials': case 'admin': case 'ai': return isAdmin;
+    default:             return false;
+  }
+}
+
+// Tools that were separate pages doing near-identical jobs, now one page with
+// tabs. The tab bodies are the original page components, untouched — only the
+// shell around them is new. Tabs are permission-checked one by one, so a member
+// opening Meetings simply has no Attendance tab.
+const MERGED_PAGES = {
+  meetings:         { label: 'Meetings',           icon: 'meetings',    tabs: ['meetings', 'attendance'] },
+  roster:           { label: 'Roster',             icon: 'roster',      tabs: ['roster', 'grades'] },
+  'money-requests': { label: 'Money Requests',     icon: 'funding',     tabs: ['funding', 'reimbursements'] },
+  people:           { label: 'People',             icon: 'directory',   tabs: ['directory', 'org'] },
+  'ask-ai':         { label: 'Ask AI',             icon: 'ai',          tabs: ['howto', 'ai'] },
+  'public-subs':    { label: 'Public Submissions', icon: 'testimonial', tabs: ['testimonials', 'photos'] },
+  activity:         { label: 'Activity',           icon: 'activity',    tabs: ['logistics', 'siteactivity'] },
+};
+
+// Every destination's display name, one entry per granular type. Drives the ⌘K
+// search index; the merged pages keep their halves listed separately here so
+// people can still search for the tool they remember.
+const NAV_LABELS = {
+  mytasks: 'Tasks', home: 'Club Home', checkin: 'Check-In', attendance: 'Attendance',
+  polls: 'Polls & Voting', meetings: 'Meetings', funding: 'Funding', apply: 'Apply',
+  reimbursements: 'Reimbursements', resources: 'Resources', directory: 'Directory',
+  org: 'Org Chart', ainotes: 'Agent Notes', howto: 'How-To', announce: 'Announcement',
+  myteam: 'My Team', approvals: 'Approvals', submissions: 'Get Involved', roster: 'Roster',
+  referrals: 'Referral Competition', shop: 'Shop', dashboard: 'Dashboard',
+  volunteers: 'Volunteers', speaker: 'Speaker Events', grants: 'Grant Tracker',
+  social: 'Social Media', budget: 'Budget Overview', grades: 'Grade Pipeline',
+  photos: 'Photo Approvals', website: 'Edit Website', admin: 'Admin Panel',
+  logistics: 'Login Activity', siteactivity: 'Site Activity', ai: 'AI Assistant',
+  testimonials: 'Testimonials', newsletter: 'Newsletter',
+};
+
+const TAB_LABELS = {
+  meetings: 'Meetings',       attendance: 'Attendance',
+  roster: 'Pipeline',         grades: 'By Grade',
+  funding: 'Funding',         reimbursements: 'Reimbursements',
+  directory: 'Directory',     org: 'Org Chart',
+  howto: 'How-To',            ai: 'AI Assistant',
+  testimonials: 'Testimonials', photos: 'Photo Approvals',
+  logistics: 'Member Logins', siteactivity: 'Site Traffic',
+};
+
+// Old view types keep working. Notification deep links, ⌘K results and the
+// welcome tour all still say "attendance" or "reimbursements"; these send them
+// to the merged page with that tab already open. Derived from MERGED_PAGES so
+// there is no second list to keep in step.
+const MERGED_VIEWS = {};
+for (const [view, def] of Object.entries(MERGED_PAGES)) {
+  for (const tab of def.tabs) if (tab !== view) MERGED_VIEWS[tab] = { type: view, tab };
+}
+
+// A merged view is reachable when any one of its tabs is.
+function viewAllowed(type, ctx) {
+  const merged = MERGED_PAGES[type];
+  return merged ? merged.tabs.some((t) => tabAllowed(t, ctx)) : tabAllowed(type, ctx);
+}
+function visibleTabs(type, ctx) {
+  const merged = MERGED_PAGES[type];
+  return merged ? merged.tabs.filter((t) => tabAllowed(t, ctx)) : [];
+}
+
+// Home is a small fixed grid of overarching categories rather than a wall of
+// every tool. Each opens its own page. A category the user can only reach one
+// thing in collapses to a direct link to that thing, and one they can reach
+// nothing in disappears — so a plain member lands on a handful of tiles while an
+// admin sees all seven, without either of them seeing an empty room.
+function buildCategories(ctx) {
+  const it = (type, label, icon, badge) => ({ type, label, icon, badge });
+  return [
+    { key: 'tasks',       label: 'Tasks',       icon: 'person',    items: [
+      it('mytasks', 'Tasks', 'person'),
+    ] },
+    { key: 'myclub',      label: 'My Club',     icon: 'home',      items: [
+      it('home', 'Club Home', 'home'),
+      it('checkin', ctx.checkinEnabled ? 'Check-In' : 'Check-In Settings', 'calendar'),
+      it('polls', 'Polls & Voting', 'poll'),
+      it('apply', 'Apply', 'apply'),
+      it('people', 'People', 'directory'),
+      it('resources', 'Resources', 'resources'),
+      { ...it('ainotes', 'Agent Notes', 'bell', ctx.aiNotesCount), onClick: ctx.onAiNotes },
+    ] },
+    { key: 'events',      label: 'Events',      icon: 'calendar',  items: [
+      it('meetings', 'Meetings', 'meetings'),
+      it('volunteers', 'Volunteers', 'volunteer'),
+      it('speaker', 'Speaker Events', 'speaker'),
+    ] },
+    { key: 'money',       label: 'Money',       icon: 'funding',   items: [
+      it('money-requests', 'Money Requests', 'funding'),
+      it('budget', 'Budget Overview', 'budget'),
+      it('grants', 'Grant Tracker', 'grants'),
+    ] },
+    { key: 'recruitment', label: 'Recruitment', icon: 'roster',    items: [
+      it('roster', 'Roster', 'roster'),
+      it('referrals', 'Referrals', 'trophy'),
+      it('submissions', 'Get Involved', 'inbox', ctx.submissionsCount),
+    ] },
+    { key: 'management',  label: 'Management',  icon: 'dashboard', items: [
+      it('approvals', 'Approvals', 'check', ctx.approvalsCount),
+      it('myteam', 'My Team', 'team'),
+      it('announce', 'Announcement', 'megaphone'),
+      it('dashboard', 'Dashboard', 'dashboard'),
+      it('ask-ai', 'Ask AI', 'ai'),
+      it('website', 'Edit Website', 'edit'),
+      it('social', 'Social Media', 'social'),
+      it('newsletter', 'Newsletter', 'newsletter'),
+      it('public-subs', 'Public Submissions', 'testimonial', ctx.pendingTestimonialsCount),
+      it('activity', 'Activity', 'activity'),
+      it('admin', 'Admin Panel', 'admin'),
+    ] },
+    { key: 'shop',        label: 'Shop',        icon: 'shop',      items: [
+      it('shop', 'Shop', 'shop'),
+    ] },
+  ]
+    .map((c) => ({ ...c, items: c.items.filter((i) => viewAllowed(i.type, ctx)) }))
+    .filter((c) => c.items.length > 0);
+}
+
+// Everything waiting on this person inside a category, summed onto its tile, so
+// folding tools away behind a door can never hide that something needs them.
+const categoryBadge = (cat) => cat.items.reduce((n, i) => n + (i.badge > 0 ? i.badge : 0), 0);
+
+function homeContext({ me, checkinEnabled, approvalsCount, submissionsCount, aiNotesCount, pendingTestimonialsCount, onAiNotes }) {
+  return {
+    me, checkinEnabled, approvalsCount, submissionsCount, aiNotesCount, pendingTestimonialsCount, onAiNotes,
+    hidden: parseHiddenTabs(me.hiddenTabs),
+  };
+}
+
+function TileGrid({ items, onNavigate }) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+      {items.map((t, i) => (
+        <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge}
+          onClick={t.onClick || (() => onNavigate({ type: t.type }))}
+          style={{ animationDelay: `${i * 28}ms` }} />
+      ))}
     </div>
   );
 }
 
-// The home grid used to render every tile the user could reach — north of
-// thirty of them — which reads as a wall. Now only a handful show by default
-// and the rest live behind "All tools". Users pin/unpin to taste; the cap
-// keeps the top of home from creeping back into a wall.
-const HOME_PIN_LIMIT = 8;
-// Ordered fallbacks for someone who has never pinned anything. Only types the
-// user can actually see survive the filter, so a short list is safe.
-const DEFAULT_PINNED = {
-  admin:   ['mytasks', 'approvals', 'dashboard', 'myteam', 'meetings', 'admin'],
-  manager: ['mytasks', 'approvals', 'myteam', 'meetings', 'checkin', 'dashboard'],
-  member:  ['mytasks', 'checkin', 'meetings', 'polls', 'home', 'resources'],
-};
+// The shell for a merged page. Renders a tab bar over the original page
+// components — nothing inside them changed, they just no longer each own a
+// top-level tile. With one permitted tab the bar is dropped entirely, so a
+// member sees plain Meetings rather than a pointless one-tab page.
+function MergedPage({ viewType, activeTab, ctx, me, users, reports, refreshSignal, onNavigate, onChanged }) {
+  const tabs = visibleTabs(viewType, ctx);
+  const [tab, setTab] = useState(() => (activeTab && tabs.includes(activeTab) ? activeTab : tabs[0]));
+  // A deep link into a different tab of the page you're already on has to move
+  // the tab, not just the route.
+  useEffect(() => {
+    if (activeTab && tabs.includes(activeTab)) setTab(activeTab);
+  }, [activeTab]);
 
-function getHomeLayout(userId) {
-  try { return JSON.parse(localStorage.getItem('ca_home_v1_' + userId) || '{}'); } catch (_) { return {}; }
+  const current = tabs.includes(tab) ? tab : tabs[0];
+  if (!current) return <div className="text-cream/50 text-sm">Nothing here for you.</div>;
+
+  const body = {
+    meetings:       () => <MeetingsPage me={me} />,
+    attendance:     () => <AttendancePage me={me} />,
+    roster:         () => <RosterPage me={me} />,
+    grades:         () => <GradePipelinePage me={me} />,
+    funding:        () => <FundingRequestPage me={me} />,
+    reimbursements: () => <ReimbursementsPage me={me} />,
+    directory:      () => <DirectoryPage me={me} />,
+    org:            () => <OrgChart />,
+    howto:          () => <HowToPage me={me} />,
+    ai:             () => <AIChatPage me={me} />,
+    testimonials:   () => <TestimonialsAdminPage me={me} />,
+    photos:         () => <PhotoModerationPage me={me} />,
+    logistics:      () => <LogisticsPage />,
+    siteactivity:   () => <SiteActivityPage isAdmin={me.role === 'admin'} />,
+  }[current];
+
+  return (
+    <div>
+      {tabs.length > 1 && (
+        <div className="flex gap-1 mb-5 border-b border-cream/10" role="tablist">
+          {tabs.map((t) => (
+            <button key={t} role="tab" aria-selected={t === current} onClick={() => setTab(t)}
+              className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                t === current
+                  ? 'border-gold text-gold'
+                  : 'border-transparent text-cream/50 hover:text-cream/80 hover:border-cream/20'}`}>
+              {TAB_LABELS[t] || t}
+            </button>
+          ))}
+        </div>
+      )}
+      {body ? body() : null}
+    </div>
+  );
 }
-function saveHomeLayout(userId, s) {
-  try { localStorage.setItem('ca_home_v1_' + userId, JSON.stringify(s)); } catch (_) {}
+
+// The inside of a category: the same tile grid as home, one level down.
+function CategoryPage({ categoryKey, ctx, onNavigate }) {
+  const cat = buildCategories(ctx).find((c) => c.key === categoryKey);
+  if (!cat) return <div className="text-cream/50 text-sm">Nothing here for you.</div>;
+  return <TileGrid items={cat.items} onNavigate={onNavigate} />;
 }
 
 function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, aiNotesCount, pendingTestimonialsCount, onAiNotes, onNavigate, onLogout, onSearch }) {
-  const isManager = me.role === 'manager' || me.role === 'admin';
-  const canEditSite = me.role === 'admin' || !!me.canEditHome;
-  const canSeeSubmissions = me.role === 'admin' || isSecretaryTitle(me) || !!me.grade;
-  const canRoster = isManager || !!me.canManageRoster;
-  const appHiddenTabs = parseHiddenTabs(me.hiddenTabs);
-  const visible = (type) => !appHiddenTabs.has(type);
+  const ctx = homeContext({ me, checkinEnabled, approvalsCount, submissionsCount, aiNotesCount, pendingTestimonialsCount, onAiNotes });
+  const categories = buildCategories(ctx);
 
-  const [layout, setLayout] = useState(() => getHomeLayout(me.id));
-  const patchLayout = (patch) => {
-    const next = { ...layout, ...patch };
-    setLayout(next);
-    saveHomeLayout(me.id, next);
-  };
-
-  // The full catalog, grouped into labeled sections. Only the pinned few are
-  // shown up front; the rest stay folded away under "All tools".
-  const sections = [
-    {
-      title: 'My Club',
-      tiles: [
-        ...(visible('mytasks')    ? [{ type: 'mytasks',    label: 'My Page',        icon: 'person'     }] : []),
-        ...(visible('home')       ? [{ type: 'home',       label: 'Club Home',      icon: 'home'       }] : []),
-        ...((checkinEnabled || isManager) && visible('checkin') ? [{ type: 'checkin', label: checkinEnabled ? 'Check-In' : 'Check-In Settings', icon: 'calendar' }] : []),
-        ...(isManager && visible('attendance') ? [{ type: 'attendance', label: 'Attendance', icon: 'attendance' }] : []),
-        ...(visible('polls')      ? [{ type: 'polls',      label: 'Polls & Voting', icon: 'poll'       }] : []),
-        ...(visible('meetings')   ? [{ type: 'meetings',   label: 'Meetings',       icon: 'meetings'   }] : []),
-        ...(visible('funding')    ? [{ type: 'funding',    label: 'Funding',        icon: 'funding'    }] : []),
-        ...(visible('apply')      ? [{ type: 'apply',      label: 'Apply',          icon: 'apply'      }] : []),
-        ...(visible('reimbursements') ? [{ type: 'reimbursements', label: 'Reimbursements', icon: 'reimbursements' }] : []),
-        ...(visible('resources')  ? [{ type: 'resources',  label: 'Resources',      icon: 'resources'  }] : []),
-        ...(visible('directory')  ? [{ type: 'directory',  label: 'Directory',      icon: 'directory'  }] : []),
-        ...(visible('org')        ? [{ type: 'org',        label: 'Org Chart',      icon: 'org'        }] : []),
-        ...(visible('ainotes')    ? [{ type: 'ainotes',    label: 'Agent Notes',    icon: 'bell', badge: aiNotesCount || undefined, onClick: onAiNotes }] : []),
-      ],
-    },
-    {
-      title: 'Leadership',
-      tiles: [
-        ...(isManager && visible('howto')       ? [{ type: 'howto',       label: 'How-To',          icon: 'ai'         }] : []),
-        ...(isManager && visible('announce')    ? [{ type: 'announce',    label: 'Announcement',    icon: 'megaphone'  }] : []),
-        ...(isManager && visible('myteam')      ? [{ type: 'myteam',      label: 'My Team',         icon: 'team'       }] : []),
-        ...(isManager && visible('approvals')   ? [{ type: 'approvals',   label: 'Approvals',       icon: 'check',     badge: approvalsCount   }] : []),
-        ...(canSeeSubmissions && visible('submissions') ? [{ type: 'submissions', label: 'Get Involved', icon: 'inbox', badge: submissionsCount }] : []),
-        ...(canRoster && visible('roster')      ? [{ type: 'roster',      label: 'Roster',          icon: 'roster'     }] : []),
-        ...(visible('referrals')                ? [{ type: 'referrals',   label: 'Referrals',       icon: 'trophy'     }] : []),
-        ...((me.role === 'admin' || !!me.canManageRoster) && visible('shop') ? [{ type: 'shop', label: 'Shop Manager', icon: 'shop' }] : []),
-        ...(isManager && visible('dashboard')   ? [{ type: 'dashboard',   label: 'Dashboard',       icon: 'dashboard'  }] : []),
-        ...(isManager && visible('volunteers')  ? [{ type: 'volunteers',  label: 'Volunteers',      icon: 'volunteer'  }] : []),
-        ...(isManager && visible('speaker')     ? [{ type: 'speaker',     label: 'Speaker Events',  icon: 'speaker'    }] : []),
-        ...(isManager && visible('grants')      ? [{ type: 'grants',      label: 'Grant Tracker',   icon: 'grants'     }] : []),
-        ...((isManager || !!me.canManageSocial) && visible('social') ? [{ type: 'social', label: 'Social Media', icon: 'social' }] : []),
-        ...(isManager && visible('budget')      ? [{ type: 'budget',      label: 'Budget Overview', icon: 'budget'     }] : []),
-        ...((isManager || !!me.managedGrade) && visible('grades') ? [{ type: 'grades', label: 'Grade Pipeline', icon: 'grades' }] : []),
-      ],
-    },
-    {
-      title: 'Site & Admin',
-      tiles: [
-        ...(canEditSite && visible('website')              ? [{ type: 'website',      label: 'Edit Website',   icon: 'edit'        }] : []),
-        ...(me.role === 'admin' && visible('testimonials') ? [{ type: 'testimonials', label: 'Testimonials', icon: 'testimonial', badge: pendingTestimonialsCount || undefined }] : []),
-        ...((me.role === 'admin' || !!me.canManageNewsletter) && visible('newsletter') ? [{ type: 'newsletter', label: 'Newsletter', icon: 'newsletter' }] : []),
-        ...(me.role === 'admin' && visible('admin')        ? [{ type: 'admin',        label: 'Admin Panel',    icon: 'admin'       }] : []),
-        ...((me.role === 'admin' || !!me.canViewLogistics) && visible('logistics') ? [{ type: 'logistics', label: 'Login Activity', icon: 'activity' }] : []),
-        ...((me.role === 'admin' || !!me.canViewLogistics) && visible('siteactivity') ? [{ type: 'siteactivity', label: 'Site Activity', icon: 'globe' }] : []),
-        ...(me.role === 'admin' && visible('ai')           ? [{ type: 'ai',           label: 'AI Assistant',   icon: 'ai'          }] : []),
-      ],
-    },
-  ].filter((s) => s.tiles.length > 0);
+  // A category holding one reachable thing is a door to a room with one door —
+  // show that thing directly instead.
+  const tiles = categories.map((c) => {
+    if (c.items.length === 1) {
+      const only = c.items[0];
+      return { ...only, badge: only.badge };
+    }
+    return { type: 'category:' + c.key, label: c.label, icon: c.icon, badge: categoryBadge(c),
+             onClick: () => onNavigate({ type: 'category', key: c.key }) };
+  });
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const dateLine = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-
-  const allTiles = sections.flatMap((s) => s.tiles);
-  const byType = new Map(allTiles.map((t) => [t.type, t]));
-  const exists = (type) => byType.has(type);
-  const defaultPins = (DEFAULT_PINNED[me.role] || DEFAULT_PINNED.member).filter(exists);
-  // No saved choice yet → role defaults. Once someone pins anything we respect
-  // their list exactly, including an empty one.
-  const pinnedTypes = (Array.isArray(layout.pinned) ? layout.pinned.filter(exists) : defaultPins).slice(0, HOME_PIN_LIMIT);
-  const pinnedSet = new Set(pinnedTypes);
-  // Anything waiting on this person surfaces even when unpinned, so folding the
-  // catalog away can never bury an approval queue or an unread note.
-  const needsAttention = allTiles.filter((t) => t.badge > 0 && !pinnedSet.has(t.type));
-  const quickTiles = [...pinnedTypes.map((t) => byType.get(t)), ...needsAttention];
-  const atPinLimit = pinnedTypes.length >= HOME_PIN_LIMIT;
-  const drawerOpen = !!layout.allOpen;
-
-  const togglePin = (type) => {
-    const base = Array.isArray(layout.pinned) ? layout.pinned.filter(exists) : defaultPins;
-    if (base.includes(type)) patchLayout({ pinned: base.filter((t) => t !== type) });
-    else if (base.length < HOME_PIN_LIMIT) patchLayout({ pinned: [...base, type] });
-  };
-
-  const sectionHeader = (title) => (
-    <div className="flex items-center gap-3 mb-3">
-      <span className="text-gold/50 text-[10px]" aria-hidden="true">★</span>
-      <span className="text-xs font-semibold text-cream/40 uppercase tracking-widest">{title}</span>
-      <div className="flex-1 h-px bg-cream/10" />
-    </div>
-  );
-
-  let tileIndex = 0;
 
   return (
     <div className="relative min-h-screen flex flex-col ca-fade-in" style={{ background: '#0d1b2e' }}>
@@ -9632,50 +9758,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
           <FlagUnderline className="mt-3" />
         </div>
         <HomeSummaryCard me={me} onNavigate={onNavigate} />
-
-        {quickTiles.length > 0 && (
-          <div className="mb-6">
-            {sectionHeader('Your Shortcuts')}
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-              {quickTiles.map((t) => (
-                <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge}
-                  onClick={t.onClick || (() => onNavigate({ type: t.type }))}
-                  pinned={pinnedSet.has(t.type)} onTogglePin={() => togglePin(t.type)} pinDisabled={atPinLimit}
-                  style={{ animationDelay: `${tileIndex++ * 28}ms` }} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        <button onClick={() => patchLayout({ allOpen: !drawerOpen })} aria-expanded={drawerOpen}
-          className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-cream/10 bg-navy2/60 hover:bg-navy2 hover:border-gold/30 text-cream/60 hover:text-cream text-sm font-medium transition-colors">
-          <span>{drawerOpen ? 'Hide all tools' : `All tools (${allTiles.length})`}</span>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
-            className={`transition-transform duration-200 ${drawerOpen ? 'rotate-180' : ''}`}>
-            <path d="m6 9 6 6 6-6" />
-          </svg>
-        </button>
-
-        {drawerOpen && (
-          <div className="space-y-8 mt-6 ca-fade-in">
-            <p className="text-xs text-cream/35 text-center">
-              Tap ★ on any tool to keep it on your home screen{atPinLimit ? ` — ${HOME_PIN_LIMIT} shortcuts max, unpin one to add another` : ''}.
-            </p>
-            {sections.map((section) => (
-              <div key={section.title}>
-                {sectionHeader(section.title)}
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                  {section.tiles.map((t) => (
-                    <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge}
-                      onClick={t.onClick || (() => onNavigate({ type: t.type }))}
-                      pinned={pinnedSet.has(t.type)} onTogglePin={() => togglePin(t.type)} pinDisabled={atPinLimit}
-                      style={{ animationDelay: `${tileIndex++ * 28}ms` }} />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        <TileGrid items={tiles} onNavigate={onNavigate} />
       </div>
     </div>
   );
@@ -9887,7 +9970,7 @@ function NotificationBell({ onNavigate, refreshSignal }) {
 // ---------------------------------------------------------------------------
 
 const TAB_DESCRIPTIONS = {
-  mytasks:        { headline: 'Your Personal Task Board',       body: 'Everything assigned to you lives here, organized by Not Started, In Progress, and Complete. This is your home base for staying on top of your responsibilities as a board member.' },
+  mytasks:        { headline: 'Your Task Board',                body: 'Everything assigned to you lives here, organized by Not Started, In Progress, and Complete. This is your home base for staying on top of your responsibilities as a board member.' },
   home:           { headline: 'The Public Club Homepage',       body: 'See the Club America website exactly the way visitors and prospective members see it — right from inside your portal. Great for sharing links or reviewing how we present ourselves to the public.' },
   checkin:        { headline: 'Weekly Check-In',                body: 'Submit your weekly progress update so leadership can see what you\'ve accomplished, what\'s in progress, and if anything is blocking you. Consistent check-ins keep the entire board aligned.' },
   attendance:     { headline: 'Attendance Tracker',             body: 'Create events and record who was present, absent, or excused at each club meeting and event. Use Roll Call mode to mark the whole board quickly during a meeting.' },
@@ -9920,9 +10003,12 @@ const TAB_DESCRIPTIONS = {
 };
 
 const INTRO_SECTION_TYPES = {
-  'My Club':      ['mytasks','home','checkin','attendance','polls','meetings','funding','apply','reimbursements','resources','directory','org','ainotes'],
-  'Leadership':   ['howto','announce','myteam','approvals','submissions','roster','dashboard','volunteers','speaker','grants','social','budget','grades'],
-  'Site & Admin': ['website','admin','logistics','ai'],
+  'Tasks':       ['mytasks'],
+  'My Club':     ['home','checkin','polls','apply','directory','org','resources','ainotes'],
+  'Events':      ['meetings','attendance','volunteers','speaker'],
+  'Money':       ['funding','reimbursements','budget','grants'],
+  'Recruitment': ['roster','grades','referrals','submissions'],
+  'Management':  ['approvals','myteam','announce','dashboard','howto','ai','website','social','admin','logistics'],
 };
 
 function getIntroState(userId) {
@@ -10190,47 +10276,28 @@ function App() {
 
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
   const isMgrOrAdmin = me.role === 'admin' || me.role === 'manager';
-  const meHiddenTabs = parseHiddenTabs(me.hiddenTabs);
-  const navTiles = [
-    { type: 'mytasks',        label: 'My Page' },
-    { type: 'home',           label: 'Club Home' },
-    { type: 'checkin',        label: 'Check-In' },
-    ...(isMgrOrAdmin                          ? [{ type: 'attendance', label: 'Attendance' }] : []),
-    { type: 'polls',          label: 'Polls & Voting' },
-    { type: 'meetings',       label: 'Meetings' },
-    { type: 'funding',        label: 'Funding' },
-    { type: 'apply',          label: 'Apply' },
-    { type: 'reimbursements', label: 'Reimbursements' },
-    { type: 'resources',      label: 'Resources' },
-    { type: 'directory',      label: 'Directory' },
-    { type: 'org',            label: 'Org Chart' },
-    { type: 'ainotes',        label: 'Agent Notes' },
-    ...(isMgrOrAdmin                          ? [{ type: 'howto',       label: 'How-To' }] : []),
-    ...(isMgrOrAdmin                          ? [{ type: 'announce',    label: 'Announcement' }] : []),
-    ...(isMgrOrAdmin                          ? [{ type: 'myteam',      label: 'My Team' }] : []),
-    ...(isMgrOrAdmin                          ? [{ type: 'approvals',   label: 'Approvals' }] : []),
-    ...(me.role === 'admin' || isSecretaryTitle(me) || !!me.grade ? [{ type: 'submissions', label: 'Get Involved' }] : []),
-    ...(isMgrOrAdmin || !!me.canManageRoster  ? [{ type: 'roster',      label: 'Roster' }] : []),
-    { type: 'referrals',      label: 'Referral Competition' },
-    ...(me.role === 'admin' || !!me.canManageRoster ? [{ type: 'shop',  label: 'Shop Manager' }] : []),
-    ...(isMgrOrAdmin                          ? [{ type: 'dashboard',   label: 'Dashboard' }] : []),
-    ...(isMgrOrAdmin                          ? [{ type: 'volunteers',  label: 'Volunteers' }] : []),
-    ...(isMgrOrAdmin                          ? [{ type: 'speaker',     label: 'Speaker Events' }] : []),
-    ...(isMgrOrAdmin                          ? [{ type: 'grants',      label: 'Grant Tracker' }] : []),
-    ...(isMgrOrAdmin || !!me.canManageSocial  ? [{ type: 'social',      label: 'Social Media' }] : []),
-    ...(isMgrOrAdmin                          ? [{ type: 'budget',      label: 'Budget Overview' }] : []),
-    ...(isMgrOrAdmin || !!me.managedGrade     ? [{ type: 'grades',      label: 'Grade Pipeline' }] : []),
-    ...(canEditSite || !!me.canManageSocial   ? [{ type: 'photos',      label: 'Photo Approvals' }] : []),
-    ...(canEditSite                           ? [{ type: 'website',     label: 'Edit Website' }] : []),
-    ...(me.role === 'admin'                   ? [{ type: 'admin',       label: 'Admin Panel' }] : []),
-    ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'logistics', label: 'Login Activity' }] : []),
-    ...(me.role === 'admin' || !!me.canViewLogistics ? [{ type: 'siteactivity', label: 'Site Activity' }] : []),
-    ...(me.role === 'admin'                   ? [{ type: 'ai',          label: 'AI Assistant' }] : []),
-  ].filter(t => !meHiddenTabs.has(t.type));
+  // Shared by the home grid, the category pages and the merged pages' tab bars,
+  // so all three agree on what this person is allowed to open.
+  const homeCtx = homeContext({
+    me, checkinEnabled, approvalsCount, submissionsCount, aiNotesCount, pendingTestimonialsCount,
+    onAiNotes: () => setAiNotesOpen(true),
+  });
+  // Flat index of every destination under its own name, so ⌘K still finds
+  // "Attendance" or "Org Chart" even though they now live inside a merged page —
+  // navigate() rewrites the type and opens the right tab. Permissions and
+  // admin-hidden tabs both come from the same tabAllowed() the home grid uses.
+  const navTiles = Object.entries(NAV_LABELS)
+    .filter(([type]) => tabAllowed(type, homeCtx))
+    .map(([type, label]) => ({ type, label }));
   // "Agent Notes" is a modal, not a routed view — open it instead of navigating
   // to a blank page (it's reachable from search and the welcome intro).
-  const navigate = (v) => {
-    if (!v) return;
+  const navigate = (raw) => {
+    if (!raw) return;
+    // Old view types still arrive from notification deep links, search results
+    // and the welcome tour. Rewrite them here — the one place every caller goes
+    // through — so they land on the merged page with the right tab open.
+    const alias = MERGED_VIEWS[raw.type];
+    const v = alias ? { ...raw, ...alias } : raw;
     if (v.type === 'ainotes') { setAiNotesOpen(true); return; }
     if (v.type === 'apphome') {
       // Returning home consumes the back-trap entry so the history stack stays
@@ -10257,10 +10324,13 @@ function App() {
   );
 
   const PAGE_TITLES = {
-    home: 'Club Home', website: 'Edit Website', mytasks: 'My Page',
+    home: 'Club Home', website: 'Edit Website', mytasks: 'Tasks',
+    category: (buildCategories(homeCtx).find((c) => c.key === view.key) || {}).label || '',
+    'money-requests': 'Money Requests', people: 'People', 'ask-ai': 'Ask AI',
+    'public-subs': 'Public Submissions', activity: 'Activity',
     person: (reports.find(r => r.id === view.userId) || {}).displayName || 'Team Member',
     myteam: 'My Team', announce: 'Team Announcement', approvals: 'Pending Approvals',
-    submissions: 'Get Involved', roster: 'Roster', shop: 'Shop Manager', checkin: 'Weekly Check-In',
+    submissions: 'Get Involved', roster: 'Roster', shop: 'Shop', checkin: 'Weekly Check-In',
     funding: 'Funding Requests', apply: 'Apply for Position', dashboard: 'Dashboard',
     attendance: 'Attendance', polls: 'Polls & Voting', budget: 'Budget Overview',
     meetings: 'Meetings', speaker: 'Speaker Events', grants: 'Grant Tracker', social: 'Social Media',
@@ -10273,43 +10343,31 @@ function App() {
   };
 
   let content;
-  if (view.type === 'home') content = <Home mode="portal" me={me} />;
+  if (view.type === 'category') content = <CategoryPage categoryKey={view.key} ctx={homeCtx} onNavigate={navigate} />;
+  else if (MERGED_PAGES[view.type]) content = <MergedPage viewType={view.type} activeTab={view.tab} ctx={homeCtx} me={me} onNavigate={navigate} />;
+  else if (view.type === 'home') content = <Home mode="portal" me={me} />;
   else if (view.type === 'website') content = canEditSite ? <Home mode="editor" me={me} editable={true} /> : <Home mode="portal" me={me} />;
-  else if (view.type === 'photos') content = (me.role === 'admin' || me.canEditHome || me.canManageSocial) ? <PhotoModerationPage me={me} /> : null;
   else if (view.type === 'mytasks') content = <TaskPage me={me} userId={me.id} users={users} refreshSignal={refreshSignal} onNavigate={navigate} />;
   else if (view.type === 'person') content = <TaskPage me={me} userId={view.userId} users={users} refreshSignal={refreshSignal} onNavigate={navigate} />;
   else if (view.type === 'myteam') content = <MyTeamView me={me} reports={reports} onNavigate={navigate} />;
   else if (view.type === 'announce') content = (me.role === 'admin' || me.role === 'manager') ? <TeamAnnouncementView me={me} reports={reports} /> : null;
   else if (view.type === 'approvals') content = <Approvals onChanged={bump} refreshSignal={refreshSignal} />;
   else if (view.type === 'submissions') content = <SubmissionsInbox onChanged={bump} refreshSignal={refreshSignal} />;
-  else if (view.type === 'roster') content = <RosterPage me={me} />;
   else if (view.type === 'referrals') content = <ReferralsPage me={me} />;
   else if (view.type === 'shop') content = (me.role === 'admin' || !!me.canManageRoster) ? <ShopManagerPage me={me} /> : null;
   else if (view.type === 'checkin') content = <WeeklyCheckinPage me={me} />;
-  else if (view.type === 'funding') content = <FundingRequestPage me={me} />;
   else if (view.type === 'apply') content = <BoardApplicationsPage me={me} />;
   else if (view.type === 'dashboard') content = (me.role === 'admin' || me.role === 'manager') ? <AdminDashboardPage me={me} /> : null;
-  else if (view.type === 'org') content = <OrgChart />;
   else if (view.type === 'admin') content = me.role === 'admin' ? <AdminPanel users={users} reload={bump} /> : null;
-  else if (view.type === 'logistics') content = (me.role === 'admin' || me.canViewLogistics) ? <LogisticsPage /> : null;
-  else if (view.type === 'siteactivity') content = (me.role === 'admin' || me.canViewLogistics) ? <SiteActivityPage isAdmin={me.role === 'admin'} /> : null;
-  else if (view.type === 'ai') content = me.role === 'admin' ? <AIChatPage me={me} /> : null;
-  else if (view.type === 'howto') content = isMgrOrAdmin ? <HowToPage me={me} /> : null;
   else if (view.type === 'password') content = <ChangePassword user={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;
   else if (view.type === 'profile') content = <ProfileSetup me={me} onDone={(u) => { setMe(u); navigate({ type: 'apphome' }); }} />;
-  else if (view.type === 'attendance') content = <AttendancePage me={me} />;
   else if (view.type === 'polls') content = <PollsPage me={me} />;
   else if (view.type === 'budget') content = (me.role === 'admin' || me.role === 'manager') ? <BudgetDashboardPage me={me} /> : null;
-  else if (view.type === 'meetings') content = <MeetingsPage me={me} />;
   else if (view.type === 'speaker') content = (me.role === 'admin' || me.role === 'manager') ? <SpeakerEventsPage me={me} /> : null;
   else if (view.type === 'grants') content = (me.role === 'admin' || me.role === 'manager') ? <GrantsPage me={me} /> : null;
   else if (view.type === 'social') content = (me.role === 'admin' || me.role === 'manager' || !!me.canManageSocial) ? <SocialTrackerPage me={me} /> : null;
-  else if (view.type === 'grades') content = (me.role === 'admin' || me.role === 'manager' || !!me.managedGrade) ? <GradePipelinePage me={me} /> : null;
-  else if (view.type === 'reimbursements') content = <ReimbursementsPage me={me} />;
-  else if (view.type === 'directory') content = <DirectoryPage me={me} />;
   else if (view.type === 'resources') content = <ResourceHubPage me={me} />;
   else if (view.type === 'volunteers') content = (me.role === 'admin' || me.role === 'manager') ? <VolunteerManagerPage me={me} /> : null;
-  else if (view.type === 'testimonials') content = me.role === 'admin' ? <TestimonialsAdminPage me={me} /> : null;
   else if (view.type === 'newsletter') content = (me.role === 'admin' || me.canManageNewsletter) ? <NewsletterAdminPage me={me} /> : null;
 
   return (
