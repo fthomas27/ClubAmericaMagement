@@ -531,13 +531,26 @@ app.post('/api/submissions', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name
     .run(type, name, email, grade, message);
 
   // Notify the board members this submission is routed to:
-  //  - club-join → that grade's grade reps + admins (President/VP)
-  //  - board application → admins only
+  //  - club-join → the Secretary + that grade's grade reps (the people who
+  //    review it and do the outreach). The President and VP are deliberately
+  //    left out: nobody is alerted that someone joined unless it's their job
+  //    to act on it or they referred them.
+  //  - board application → admins only (an application isn't a club join)
+  const adminRows = () => db.prepare("SELECT id, email, role, grade FROM users WHERE role = 'admin'").all();
+  let gradeReps = [];
   let recipients;
-  if (type === 'club' && grade) {
-    recipients = db.prepare("SELECT id, email, role, grade FROM users WHERE role = 'admin' OR grade = ?").all(grade);
+  if (type === 'club') {
+    gradeReps = grade
+      ? db.prepare("SELECT id, email, role, grade FROM users WHERE grade = ? AND role != 'admin' AND username != 'logistics'").all(grade)
+      : [];
+    const seen = new Set();
+    recipients = [...secretaryTargets(), ...gradeReps].filter((r) => {
+      if (seen.has(r.id)) return false;
+      seen.add(r.id);
+      return true;
+    });
   } else {
-    recipients = db.prepare("SELECT id, email, role, grade FROM users WHERE role = 'admin'").all();
+    recipients = adminRows();
   }
   const label = type === 'board' ? 'board application' : 'club-join request';
   for (const r of recipients) {
@@ -551,10 +564,7 @@ app.post('/api/submissions', rateLimit({ windowMs: 60 * 60 * 1000, max: 25, name
   //  - club-join → that grade's grade reps get "Reach out to new member ___"
   //    (falls back to admins if that grade has no rep, so nothing is dropped)
   //  - board application → admins get "Review board application from ___"
-  const gradeReps = recipients.filter((r) => r.role !== 'admin' && grade && r.grade === grade);
-  const taskOwners = type === 'club' && gradeReps.length
-    ? gradeReps
-    : recipients.filter((r) => r.role === 'admin');
+  const taskOwners = type === 'club' && gradeReps.length ? gradeReps : adminRows();
   const taskName = type === 'board'
     ? `Review board application from ${name}`
     : `Reach out to new member ${name}`;
@@ -635,7 +645,14 @@ app.post('/api/roster/self-submit', rateLimit({ windowMs: 60 * 60 * 1000, max: 3
   );
   const name = `${String(firstName).trim()} ${String(lastName || '').trim()}`.trim();
   const suffix = referrer ? ` (referred by ${referrer.displayName})` : '';
-  notifyRosterManagers(`${name} submitted their info${suffix} — review it in the roster.`, 'roster', 'submission');
+  const alerted = notifySecretary(`${name} submitted their info${suffix} — review it in the roster.`, 'roster', 'submission');
+  // The member whose link they came through hears about it too — that referral
+  // is theirs. Skipped if they're also the secretary, so one sign-up is one ping.
+  if (referrer && !alerted.includes(referrer.id)) {
+    pushNotification(referrer.id,
+      `${name} signed up through your referral link — it counts once the Secretary approves it.`,
+      'referrals', 'info');
+  }
   res.status(201).json({ ok: true, id: info.lastInsertRowid });
 });
 
@@ -2051,7 +2068,9 @@ app.post('/api/roster', (req, res) => {
   );
   if (asReferral) {
     const name = `${String(firstName).trim()} ${String(lastName||'').trim()}`.trim();
-    notifyRosterManagers(`${req.user.displayName} referred ${name} — approve it in the roster to award the referral.`, 'roster', 'submission');
+    // Only the secretary is told: the referrer is the one submitting the form,
+    // so they already know, and nobody else needs a ping about a new sign-up.
+    notifySecretary(`${req.user.displayName} referred ${name} — approve it in the roster to award the referral.`, 'roster', 'submission');
   }
   res.status(201).json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(info.lastInsertRowid) });
 });
@@ -4713,12 +4732,41 @@ function notifyAdmins(message, link = '', type = 'info') {
 }
 
 // Notify everyone who can act on the roster (admins + the secretary / anyone
-// granted canManageRoster) — used for self-service sign-ups awaiting approval.
+// granted canManageRoster) — used for roster follow-ups such as absence alerts.
+// New sign-ups deliberately do NOT use this; see notifySecretary below.
 function notifyRosterManagers(message, link = '', type = 'info') {
   try {
     const managers = db.prepare("SELECT id FROM users WHERE role = 'admin' OR canManageRoster = 1").all();
     for (const m of managers) pushNotification(m.id, message, link, type);
   } catch (_) {}
+}
+
+// Everyone who should hear "someone joined the club" — the Secretary, and by
+// design nobody else. The President and VP asked to be left out of the
+// day-to-day sign-up stream; the only other people alerted about a join are
+// the referrer (their own referral) and that grade's rep (their outreach).
+//
+// Matched on title, the same way db.js grants the Secretary's permissions, so a
+// co-secretary or a renamed "Club Secretary" still counts. The fallbacks only
+// matter when the club has no secretary at all: a sign-up announced to nobody
+// would sit in the Pending queue unreviewed forever, which is worse than the
+// President seeing it.
+function secretaryTargets() {
+  try {
+    const pick = (cond) => db.prepare(`SELECT id, email FROM users WHERE username != 'logistics' AND (${cond})`).all();
+    let rows = pick("lower(title) LIKE '%secretary%'");
+    if (!rows.length) rows = pick('canManageRoster = 1');
+    if (!rows.length) rows = pick("role = 'admin'");
+    return rows;
+  } catch (_) { return []; }
+}
+
+// Returns the ids actually notified, so callers can avoid double-pinging
+// someone who is both the secretary and the referrer.
+function notifySecretary(message, link = '', type = 'info') {
+  const targets = secretaryTargets();
+  for (const t of targets) pushNotification(t.id, message, link, type);
+  return targets.map((t) => t.id);
 }
 
 // NOTE: public testimonial routes (GET /api/testimonials and the

@@ -140,6 +140,12 @@ New submissions also land on the recipient's task page automatically: a club-joi
 request gives that grade's reps a "Reach out to new member ___" to-do, and a board
 application gives the admins a "Review board application" to-do.
 
+Who gets alerted when someone joins: the Secretary, plus that grade's rep for a
+club-join request. The President and VP are deliberately not notified about
+sign-ups. The only other person alerted is the member who referred them — once
+when their referral signs up, and again when the Secretary approves it. Board
+applications are not club joins and still go to the admins.
+
 ### Roster
 The recruiting pipeline. Track prospective members through stages
 (Prospect → Contacted → Onboarded), record contact info, and convert them. Requires
