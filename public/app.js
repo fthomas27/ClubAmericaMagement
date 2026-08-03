@@ -9630,6 +9630,26 @@ function buildCategories(ctx) {
 // folding tools away behind a door can never hide that something needs them.
 const categoryBadge = (cat) => cat.items.reduce((n, i) => n + (i.badge > 0 ? i.badge : 0), 0);
 
+const categoryLabel = (key, ctx) => (buildCategories(ctx).find((c) => c.key === key) || {}).label || '';
+
+// The view one level up from a given view — so "back" returns to the group a
+// tool lives in, not straight past it to the full home grid. Computed
+// structurally from the category taxonomy (which category a view's type
+// belongs to, and whether that category collapsed to a direct home tile for
+// this user) rather than from browser history, so it gives the same answer
+// whether the tool was reached by tapping through its group, from search, or
+// from a notification link.
+function parentView(view, ctx) {
+  if (!view || view.type === 'apphome' || !ctx) return { type: 'apphome' };
+  if (view.type === 'category') return { type: 'apphome' };
+  const cat = buildCategories(ctx).find((c) => c.items.some((i) => i.type === view.type));
+  // No owning category (e.g. a profile/password page), or the category only
+  // has this one item for this user, meaning home already links to it
+  // directly with no group page in between.
+  if (!cat || cat.items.length === 1) return { type: 'apphome' };
+  return { type: 'category', key: cat.key };
+}
+
 function homeContext({ me, checkinEnabled, approvalsCount, submissionsCount, aiNotesCount, pendingTestimonialsCount, onAiNotes }) {
   return {
     me, checkinEnabled, approvalsCount, submissionsCount, aiNotesCount, pendingTestimonialsCount, onAiNotes,
@@ -10149,6 +10169,9 @@ function App() {
   // True only when the in-app portal (with search) is actually on screen, so the
   // global keyboard shortcut never hijacks browser shortcuts on public/login pages.
   const portalActiveRef = useRef(false);
+  // Mirrors the ctx the (deps-less) popstate listener below needs to resolve
+  // "back" targets, so it can read fresh permissions/counts without going stale.
+  const homeCtxRef = useRef(null);
 
   const isSurveyPath = window.location.pathname === '/survey';
   // /join is the plain sign-up form; /join/:username is a board member's
@@ -10219,14 +10242,27 @@ function App() {
     return () => window.removeEventListener('ca:session-expired', handler);
   }, []);
 
-  // Device/browser Back button: when on a sub-page, return to the home grid
-  // (and close any open overlay) rather than dropping the user out of the app.
+  // Device/browser Back button: step up exactly one level in the same group ->
+  // home structure the in-app back arrow uses, rather than always dropping
+  // straight to the home grid. A single "trap" history entry is enough no
+  // matter how many levels deep the portal goes — each pop recomputes the
+  // structural parent of wherever the user actually is and, if that parent
+  // isn't home yet, re-pushes a new trap entry so the NEXT Back press is
+  // caught here too instead of leaving the app.
   useEffect(() => {
     const onPop = () => {
-      portalHistRef.current = false;
       setSearchOpen(false);
       setAiNotesOpen(false);
-      setView({ type: 'apphome' });
+      setView((cur) => {
+        const parent = parentView(cur, homeCtxRef.current);
+        if (parent.type === 'apphome') {
+          portalHistRef.current = false;
+        } else {
+          try { window.history.pushState({ caPortal: true }, ''); } catch (_) {}
+          portalHistRef.current = true;
+        }
+        return parent;
+      });
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
@@ -10257,6 +10293,14 @@ function App() {
   // listener can read without going stale.
   useEffect(() => {
     portalActiveRef.current = !!(enterPortal && me && !me.firstLogin && me.profileComplete);
+  });
+
+  // Same idea for the popstate handler above: it needs fresh permissions/counts
+  // to compute a back target, but its own listener effect only runs once.
+  useEffect(() => {
+    homeCtxRef.current = me
+      ? homeContext({ me, checkinEnabled, approvalsCount, submissionsCount, aiNotesCount, pendingTestimonialsCount, onAiNotes: () => setAiNotesOpen(true) })
+      : null;
   });
 
   function logout() {
@@ -10330,7 +10374,7 @@ function App() {
 
   const PAGE_TITLES = {
     home: 'Club Home', website: 'Edit Website', mytasks: 'Tasks',
-    category: (buildCategories(homeCtx).find((c) => c.key === view.key) || {}).label || '',
+    category: categoryLabel(view.key, homeCtx),
     'money-requests': 'Money Requests', people: 'People', 'ask-ai': 'Ask AI',
     'public-subs': 'Public Submissions', activity: 'Activity',
     person: (reports.find(r => r.id === view.userId) || {}).displayName || 'Team Member',
@@ -10346,6 +10390,11 @@ function App() {
     ai: 'AI Assistant', howto: 'How-To / Q&A', password: 'Change Password', profile: 'Edit Profile',
     testimonials: 'Testimonials', newsletter: 'Newsletter',
   };
+
+  // The back arrow goes to the group a tool lives in, not straight past it to
+  // the full home grid — same target the device Back button resolves to.
+  const backTarget = parentView(view, homeCtx);
+  const backLabel = backTarget.type === 'apphome' ? 'Back to home' : `Back to ${categoryLabel(backTarget.key, homeCtx)}`;
 
   let content;
   if (view.type === 'category') content = <CategoryPage categoryKey={view.key} ctx={homeCtx} onNavigate={navigate} />;
@@ -10385,7 +10434,7 @@ function App() {
         <header className="sticky top-0 z-20 bg-navy2/95 backdrop-blur border-b border-cream/10">
           <TricolorBar />
           <div className="flex items-center gap-3 px-4 py-3">
-          <button onClick={() => navigate({ type: 'apphome' })} aria-label="Back to home"
+          <button onClick={() => navigate(backTarget)} aria-label={backLabel} title={backLabel}
             className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-cream hover:bg-navy3 transition-colors">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M19 12H5M12 5l-7 7 7 7"/>
