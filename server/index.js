@@ -1614,11 +1614,17 @@ app.get('/api/approval-log', (req, res) => {
 // ---- Get Involved submissions inbox -----------------------------------------
 // Routing/visibility:
 //  - Admins (President/VP) see ALL submissions.
+//  - The Secretary sees every CLUB-join submission. Get Involved runs
+//    alongside the /join form as the club's other intake path, and the
+//    Secretary owns both — they're also the one alerted about them.
 //  - A grade rep (user.grade set) sees CLUB-join submissions for their grade.
 //  - Board applications go to admins only.
 function visibleSubmissionsFor(user) {
   if (user.role === 'admin') {
     return db.prepare('SELECT * FROM submissions ORDER BY handled ASC, createdAt DESC').all();
+  }
+  if (isSecretary(user)) {
+    return db.prepare("SELECT * FROM submissions WHERE type = 'club' ORDER BY handled ASC, createdAt DESC").all();
   }
   if (user.grade) {
     return db
@@ -1630,10 +1636,12 @@ function visibleSubmissionsFor(user) {
 function canSeeSubmission(user, row) {
   if (!row) return false;
   if (user.role === 'admin') return true;
-  return row.type === 'club' && !!user.grade && row.grade === user.grade;
+  if (row.type !== 'club') return false;
+  if (isSecretary(user)) return true;
+  return !!user.grade && row.grade === user.grade;
 }
 function canAccessSubmissions(user) {
-  return user.role === 'admin' || !!user.grade;
+  return user.role === 'admin' || isSecretary(user) || !!user.grade;
 }
 
 app.get('/api/submissions', (req, res) => {
@@ -4751,6 +4759,13 @@ function notifyRosterManagers(message, link = '', type = 'info') {
 // matter when the club has no secretary at all: a sign-up announced to nobody
 // would sit in the Pending queue unreviewed forever, which is worse than the
 // President seeing it.
+// Title match only, deliberately without the fallbacks below: this also gates
+// what the Secretary can *see* in the Get Involved inbox, and access shouldn't
+// silently spread to every grade rep just because the title is vacant.
+function isSecretary(user) {
+  return !!user && /secretary/i.test(String(user.title || ''));
+}
+
 function secretaryTargets() {
   try {
     const pick = (cond) => db.prepare(`SELECT id, email FROM users WHERE username != 'logistics' AND (${cond})`).all();

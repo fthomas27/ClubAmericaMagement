@@ -115,6 +115,13 @@ function roleLabel(role) {
   return { admin: 'Admin', manager: 'Manager', member: 'Member' }[role] || role;
 }
 
+// Matched by title, the same way the server gates the Get Involved inbox. The
+// Secretary handles club-join intake from both the /join form and Get Involved,
+// so they see that inbox even without a grade of their own.
+function isSecretaryTitle(u) {
+  return /secretary/i.test(String((u && u.title) || ''));
+}
+
 // ---------------------------------------------------------------------------
 // Americana accents — small, reusable flag motifs so every page carries the
 // red / white / blue identity without each one inventing its own.
@@ -9493,7 +9500,7 @@ function saveHomeLayout(userId, s) {
 function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, aiNotesCount, pendingTestimonialsCount, onAiNotes, onNavigate, onLogout, onSearch }) {
   const isManager = me.role === 'manager' || me.role === 'admin';
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
-  const canSeeSubmissions = me.role === 'admin' || !!me.grade;
+  const canSeeSubmissions = me.role === 'admin' || isSecretaryTitle(me) || !!me.grade;
   const canRoster = isManager || !!me.canManageRoster;
   const appHiddenTabs = parseHiddenTabs(me.hiddenTabs);
   const visible = (type) => !appHiddenTabs.has(type);
@@ -10074,7 +10081,7 @@ function App() {
       } else {
         setApprovalsCount(0);
       }
-      if (user.role === 'admin' || user.grade) {
+      if (user.role === 'admin' || isSecretaryTitle(user) || user.grade) {
         const s = await api('/submissions');
         setSubmissionsCount(s.submissions.filter((x) => !x.handled).length);
       } else {
@@ -10202,7 +10209,7 @@ function App() {
     ...(isMgrOrAdmin                          ? [{ type: 'announce',    label: 'Announcement' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'myteam',      label: 'My Team' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'approvals',   label: 'Approvals' }] : []),
-    ...(me.role === 'admin' || !!me.grade     ? [{ type: 'submissions', label: 'Get Involved' }] : []),
+    ...(me.role === 'admin' || isSecretaryTitle(me) || !!me.grade ? [{ type: 'submissions', label: 'Get Involved' }] : []),
     ...(isMgrOrAdmin || !!me.canManageRoster  ? [{ type: 'roster',      label: 'Roster' }] : []),
     { type: 'referrals',      label: 'Referral Competition' },
     ...(me.role === 'admin' || !!me.canManageRoster ? [{ type: 'shop',  label: 'Shop Manager' }] : []),
