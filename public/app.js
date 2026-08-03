@@ -115,6 +115,13 @@ function roleLabel(role) {
   return { admin: 'Admin', manager: 'Manager', member: 'Member' }[role] || role;
 }
 
+// Matched by title, the same way the server gates the Get Involved inbox. The
+// Secretary handles club-join intake from both the /join form and Get Involved,
+// so they see that inbox even without a grade of their own.
+function isSecretaryTitle(u) {
+  return /secretary/i.test(String((u && u.title) || ''));
+}
+
 // ---------------------------------------------------------------------------
 // Americana accents — small, reusable flag motifs so every page carries the
 // red / white / blue identity without each one inventing its own.
@@ -9438,34 +9445,75 @@ function AppIcon({ name, className, size = 26 }) {
   }
 }
 
-function AppTile({ label, icon, badge, onClick, style }) {
+function AppTile({ label, icon, badge, onClick, style, pinned, onTogglePin, pinDisabled }) {
   const tone = TILE_TONES[icon] || { icon: 'text-cream/60', bg: 'bg-cream/5' };
   return (
-    <button onClick={onClick} style={style}
-      className="ca-fade-in group relative bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/40 rounded-2xl p-5 flex flex-col items-center gap-3 transition-all duration-200 active:scale-95 w-full hover:-translate-y-1 hover:shadow-lg hover:shadow-black/30">
-      <div className="relative">
-        <div className={`w-14 h-14 rounded-2xl ${tone.bg} flex items-center justify-center transition-transform duration-200 group-hover:scale-110`}>
-          <AppIcon name={icon} className={`${tone.icon} transition-colors duration-150`} />
+    <div className="ca-fade-in relative group" style={style}>
+      <button onClick={onClick}
+        className="bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/40 rounded-2xl p-5 flex flex-col items-center gap-3 transition-all duration-200 active:scale-95 w-full hover:-translate-y-1 hover:shadow-lg hover:shadow-black/30">
+        <div className="relative">
+          <div className={`w-14 h-14 rounded-2xl ${tone.bg} flex items-center justify-center transition-transform duration-200 group-hover:scale-110`}>
+            <AppIcon name={icon} className={`${tone.icon} transition-colors duration-150`} />
+          </div>
+          {badge > 0 && (
+            <span className="absolute -top-1 -right-1 bg-red text-cream text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 ca-pulse">{badge}</span>
+          )}
         </div>
-        {badge > 0 && (
-          <span className="absolute -top-1 -right-1 bg-red text-cream text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 ca-pulse">{badge}</span>
-        )}
-      </div>
-      <span className="text-cream/80 text-xs font-medium text-center leading-tight group-hover:text-cream transition-colors">{label}</span>
-    </button>
+        <span className="text-cream/80 text-xs font-medium text-center leading-tight group-hover:text-cream transition-colors">{label}</span>
+      </button>
+      {onTogglePin && (
+        <button type="button" onClick={onTogglePin} disabled={pinDisabled && !pinned}
+          aria-pressed={!!pinned}
+          aria-label={pinned ? `Unpin ${label} from home` : `Pin ${label} to home`}
+          title={pinned ? 'Unpin from home' : pinDisabled ? 'Home is full — unpin something first' : 'Pin to home'}
+          className={`absolute top-1.5 right-1.5 w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
+            pinned ? 'text-gold/45 hover:text-gold' : pinDisabled ? 'text-cream/15 cursor-not-allowed' : 'text-cream/25 hover:text-cream/80 hover:bg-navy3'}`}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill={pinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m12 2.5 2.9 5.9 6.5.95-4.7 4.58 1.1 6.47L12 17.35 6.2 20.4l1.1-6.47L2.6 9.35l6.5-.95Z"/>
+          </svg>
+        </button>
+      )}
+    </div>
   );
+}
+
+// The home grid used to render every tile the user could reach — north of
+// thirty of them — which reads as a wall. Now only a handful show by default
+// and the rest live behind "All tools". Users pin/unpin to taste; the cap
+// keeps the top of home from creeping back into a wall.
+const HOME_PIN_LIMIT = 8;
+// Ordered fallbacks for someone who has never pinned anything. Only types the
+// user can actually see survive the filter, so a short list is safe.
+const DEFAULT_PINNED = {
+  admin:   ['mytasks', 'approvals', 'dashboard', 'myteam', 'meetings', 'admin'],
+  manager: ['mytasks', 'approvals', 'myteam', 'meetings', 'checkin', 'dashboard'],
+  member:  ['mytasks', 'checkin', 'meetings', 'polls', 'home', 'resources'],
+};
+
+function getHomeLayout(userId) {
+  try { return JSON.parse(localStorage.getItem('ca_home_v1_' + userId) || '{}'); } catch (_) { return {}; }
+}
+function saveHomeLayout(userId, s) {
+  try { localStorage.setItem('ca_home_v1_' + userId, JSON.stringify(s)); } catch (_) {}
 }
 
 function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, aiNotesCount, pendingTestimonialsCount, onAiNotes, onNavigate, onLogout, onSearch }) {
   const isManager = me.role === 'manager' || me.role === 'admin';
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
-  const canSeeSubmissions = me.role === 'admin' || !!me.grade;
+  const canSeeSubmissions = me.role === 'admin' || isSecretaryTitle(me) || !!me.grade;
   const canRoster = isManager || !!me.canManageRoster;
   const appHiddenTabs = parseHiddenTabs(me.hiddenTabs);
   const visible = (type) => !appHiddenTabs.has(type);
 
-  // Tiles grouped into labeled sections so the home screen reads as a few
-  // small clusters instead of one undifferentiated wall.
+  const [layout, setLayout] = useState(() => getHomeLayout(me.id));
+  const patchLayout = (patch) => {
+    const next = { ...layout, ...patch };
+    setLayout(next);
+    saveHomeLayout(me.id, next);
+  };
+
+  // The full catalog, grouped into labeled sections. Only the pinned few are
+  // shown up front; the rest stay folded away under "All tools".
   const sections = [
     {
       title: 'My Club',
@@ -9522,6 +9570,36 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   const dateLine = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+
+  const allTiles = sections.flatMap((s) => s.tiles);
+  const byType = new Map(allTiles.map((t) => [t.type, t]));
+  const exists = (type) => byType.has(type);
+  const defaultPins = (DEFAULT_PINNED[me.role] || DEFAULT_PINNED.member).filter(exists);
+  // No saved choice yet → role defaults. Once someone pins anything we respect
+  // their list exactly, including an empty one.
+  const pinnedTypes = (Array.isArray(layout.pinned) ? layout.pinned.filter(exists) : defaultPins).slice(0, HOME_PIN_LIMIT);
+  const pinnedSet = new Set(pinnedTypes);
+  // Anything waiting on this person surfaces even when unpinned, so folding the
+  // catalog away can never bury an approval queue or an unread note.
+  const needsAttention = allTiles.filter((t) => t.badge > 0 && !pinnedSet.has(t.type));
+  const quickTiles = [...pinnedTypes.map((t) => byType.get(t)), ...needsAttention];
+  const atPinLimit = pinnedTypes.length >= HOME_PIN_LIMIT;
+  const drawerOpen = !!layout.allOpen;
+
+  const togglePin = (type) => {
+    const base = Array.isArray(layout.pinned) ? layout.pinned.filter(exists) : defaultPins;
+    if (base.includes(type)) patchLayout({ pinned: base.filter((t) => t !== type) });
+    else if (base.length < HOME_PIN_LIMIT) patchLayout({ pinned: [...base, type] });
+  };
+
+  const sectionHeader = (title) => (
+    <div className="flex items-center gap-3 mb-3">
+      <span className="text-gold/50 text-[10px]" aria-hidden="true">★</span>
+      <span className="text-xs font-semibold text-cream/40 uppercase tracking-widest">{title}</span>
+      <div className="flex-1 h-px bg-cream/10" />
+    </div>
+  );
+
   let tileIndex = 0;
 
   return (
@@ -9554,24 +9632,50 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
           <FlagUnderline className="mt-3" />
         </div>
         <HomeSummaryCard me={me} onNavigate={onNavigate} />
-        <div className="space-y-8">
-          {sections.map((section) => (
-            <div key={section.title}>
-              <div className="flex items-center gap-3 mb-3">
-                <span className="text-gold/50 text-[10px]" aria-hidden="true">★</span>
-                <span className="text-xs font-semibold text-cream/40 uppercase tracking-widest">{section.title}</span>
-                <div className="flex-1 h-px bg-cream/10" />
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                {section.tiles.map((t) => (
-                  <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge}
-                    onClick={t.onClick || (() => onNavigate({ type: t.type }))}
-                    style={{ animationDelay: `${tileIndex++ * 28}ms` }} />
-                ))}
-              </div>
+
+        {quickTiles.length > 0 && (
+          <div className="mb-6">
+            {sectionHeader('Your Shortcuts')}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+              {quickTiles.map((t) => (
+                <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge}
+                  onClick={t.onClick || (() => onNavigate({ type: t.type }))}
+                  pinned={pinnedSet.has(t.type)} onTogglePin={() => togglePin(t.type)} pinDisabled={atPinLimit}
+                  style={{ animationDelay: `${tileIndex++ * 28}ms` }} />
+              ))}
             </div>
-          ))}
-        </div>
+          </div>
+        )}
+
+        <button onClick={() => patchLayout({ allOpen: !drawerOpen })} aria-expanded={drawerOpen}
+          className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-cream/10 bg-navy2/60 hover:bg-navy2 hover:border-gold/30 text-cream/60 hover:text-cream text-sm font-medium transition-colors">
+          <span>{drawerOpen ? 'Hide all tools' : `All tools (${allTiles.length})`}</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+            className={`transition-transform duration-200 ${drawerOpen ? 'rotate-180' : ''}`}>
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </button>
+
+        {drawerOpen && (
+          <div className="space-y-8 mt-6 ca-fade-in">
+            <p className="text-xs text-cream/35 text-center">
+              Tap ★ on any tool to keep it on your home screen{atPinLimit ? ` — ${HOME_PIN_LIMIT} shortcuts max, unpin one to add another` : ''}.
+            </p>
+            {sections.map((section) => (
+              <div key={section.title}>
+                {sectionHeader(section.title)}
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                  {section.tiles.map((t) => (
+                    <AppTile key={t.type} label={t.label} icon={t.icon} badge={t.badge}
+                      onClick={t.onClick || (() => onNavigate({ type: t.type }))}
+                      pinned={pinnedSet.has(t.type)} onTogglePin={() => togglePin(t.type)} pinDisabled={atPinLimit}
+                      style={{ animationDelay: `${tileIndex++ * 28}ms` }} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -9977,7 +10081,7 @@ function App() {
       } else {
         setApprovalsCount(0);
       }
-      if (user.role === 'admin' || user.grade) {
+      if (user.role === 'admin' || isSecretaryTitle(user) || user.grade) {
         const s = await api('/submissions');
         setSubmissionsCount(s.submissions.filter((x) => !x.handled).length);
       } else {
@@ -10105,7 +10209,7 @@ function App() {
     ...(isMgrOrAdmin                          ? [{ type: 'announce',    label: 'Announcement' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'myteam',      label: 'My Team' }] : []),
     ...(isMgrOrAdmin                          ? [{ type: 'approvals',   label: 'Approvals' }] : []),
-    ...(me.role === 'admin' || !!me.grade     ? [{ type: 'submissions', label: 'Get Involved' }] : []),
+    ...(me.role === 'admin' || isSecretaryTitle(me) || !!me.grade ? [{ type: 'submissions', label: 'Get Involved' }] : []),
     ...(isMgrOrAdmin || !!me.canManageRoster  ? [{ type: 'roster',      label: 'Roster' }] : []),
     { type: 'referrals',      label: 'Referral Competition' },
     ...(me.role === 'admin' || !!me.canManageRoster ? [{ type: 'shop',  label: 'Shop Manager' }] : []),
