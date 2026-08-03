@@ -4530,6 +4530,17 @@ function requireNewsletterAccess(req, res, next) {
   res.status(403).json({ error: 'Not allowed' });
 }
 
+// Alert every portal user when a volunteer opportunity goes live, with a direct
+// link to the public sign-up page — no separate in-app RSVP flow needed since
+// the public page already collects the yes/name/phone/email/role.
+function notifyVolunteerOpportunityPosted(req, eventId, title) {
+  const base = (process.env.APP_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+  const link = `${base}/volunteer/${eventId}`;
+  const message = `${req.user.displayName} posted a new volunteer opportunity: "${title}" — sign up: ${link}`;
+  const allUsers = db.prepare("SELECT id FROM users WHERE username != 'logistics' AND id != ?").all(req.user.id);
+  for (const u of allUsers) pushNotification(u.id, message, '', 'info');
+}
+
 app.get('/api/volunteer-events', requireManagerOrAdmin, (req, res) => {
   const events = db.prepare(`
     SELECT ve.id, ve.icalUid, ve.title, ve.location, ve.startDate, ve.volunteersEnabled, ve.createdAt
@@ -4572,6 +4583,7 @@ app.post('/api/volunteer-events', requireManagerOrAdmin, (req, res) => {
     const info = db.prepare(
       'INSERT INTO volunteer_events (icalUid, title, location, startDate, createdById) VALUES (?, ?, ?, ?, ?)'
     ).run(icalUid, title, location, startDate, req.user.id);
+    notifyVolunteerOpportunityPosted(req, info.lastInsertRowid, title);
     res.status(201).json({ ok: true, id: info.lastInsertRowid });
   } catch (e) {
     if (e.message && e.message.includes('UNIQUE')) {
@@ -4585,11 +4597,15 @@ app.post('/api/volunteer-events', requireManagerOrAdmin, (req, res) => {
 
 app.patch('/api/volunteer-events/:id', requireManagerOrAdmin, (req, res) => {
   const id = Number(req.params.id);
-  const ev = db.prepare('SELECT id FROM volunteer_events WHERE id = ?').get(id);
+  const ev = db.prepare('SELECT id, title, volunteersEnabled FROM volunteer_events WHERE id = ?').get(id);
   if (!ev) return res.status(404).json({ error: 'Not found' });
   const { volunteersEnabled, title } = req.body || {};
   if (volunteersEnabled !== undefined) {
     db.prepare('UPDATE volunteer_events SET volunteersEnabled = ? WHERE id = ?').run(volunteersEnabled ? 1 : 0, id);
+    // Reopening is effectively re-posting the opportunity, so alert members again.
+    if (volunteersEnabled && !ev.volunteersEnabled) {
+      notifyVolunteerOpportunityPosted(req, id, title !== undefined ? String(title).trim().slice(0, 200) : ev.title);
+    }
   }
   if (title !== undefined) {
     db.prepare('UPDATE volunteer_events SET title = ? WHERE id = ?').run(String(title).trim().slice(0, 200), id);
