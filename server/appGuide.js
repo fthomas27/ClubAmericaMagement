@@ -39,17 +39,29 @@ admin hid it for your account in the Admin Panel.
 
 ## Navigating the app
 
-After logging in you land on the **home grid** of tiles. Tap any tile to open that
-tab. Use the **back arrow** in the header to return, the **search** icon to jump to
-anything, and the **notification bell** for alerts. First-time login asks you to
-change your password and complete your profile.
+After logging in you land on a **home grid of category tiles** — Tasks, My Club,
+Events, Money, Recruitment, Management and Shop. Tapping a category opens a page
+of the tools inside it; tapping a tool opens it. You only see categories you have
+tools in, and if you can reach just one tool in a category the home screen links
+straight to that tool instead of the category.
+
+Several tools that did similar jobs are now tabs on one page: Meetings holds
+Attendance, Money Requests holds Funding and Reimbursements, Roster holds the
+pipeline and the by-grade view, People holds the Directory and Org Chart, Ask AI
+holds How-To and the AI Assistant, Public Submissions holds Testimonials and
+Photo Approvals, and Activity holds Member Logins and Site Traffic. You only see
+the tabs you have access to.
+
+Use the **back arrow** in the header to return, the **search** icon to jump
+straight to any tool by its own name, and the **notification bell** for alerts.
+First-time login asks you to change your password and complete your profile.
 
 ---
 
-## Tabs everyone sees (My Club)
+## Tabs everyone sees
 
-### My Page
-Your personal task list. See tasks assigned to you, update each task's status
+### Tasks
+Your personal task list (its own tile on the home screen; it was called "My Page"). See tasks assigned to you, update each task's status
 (Not Started → In Progress → Complete), open attached docs, and comment. When a
 task needs approval, completing it sends it to your manager for review.
 
@@ -140,9 +152,9 @@ New submissions also land on the recipient's task page automatically: a club-joi
 request gives that grade's reps a "Reach out to new member ___" to-do, and a board
 application gives the admins a "Review board application" to-do.
 
-Who gets alerted when someone joins: the Secretary, plus that grade's rep for a
-club-join request. The President and VP are deliberately not notified about
-sign-ups. The only other person alerted is the member who referred them — once
+Who gets alerted when someone joins: the Secretary, plus that student's grade rep
+— for both the Get Involved form and the /join sign-up form. The President and VP
+are deliberately not notified about sign-ups. The only other person alerted is the member who referred them — once
 when their referral signs up, and again when the Secretary approves it. Board
 applications are not club joins and still go to the admins.
 
