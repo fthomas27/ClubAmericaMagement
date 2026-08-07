@@ -392,7 +392,7 @@ function LogoMark({ big }) {
   );
 }
 
-function Logo({ size = 'sidebar' }) {
+function Logo({ size = 'sidebar', onClick }) {
   const [failed, setFailed] = useState(false);
   const big = size === 'login';
   const nav = size === 'nav';
@@ -400,22 +400,32 @@ function Logo({ size = 'sidebar' }) {
   // The artwork uses navy lettering, so it sits on a white rounded panel to
   // stay legible against the dark navy app background.
   const imgHeight = big ? 'max-h-40' : nav ? 'max-h-12' : 'max-h-16';
-  return (
-    <div className={big ? 'flex justify-center' : ''}>
-      <div className={`bg-white rounded-xl inline-block shadow-lg ${nav ? 'p-2' : 'p-3'}`}>
-        {failed ? (
-          <LogoMark big={big} />
-        ) : (
-          <img
-            src={LOGO_SRC}
-            alt="Club America at Park City High School"
-            onError={() => setFailed(true)}
-            className={`object-contain w-auto ${imgHeight}`}
-          />
-        )}
-      </div>
+  const mark = (
+    <div className={`bg-white rounded-xl inline-block shadow-lg ${nav ? 'p-2' : 'p-3'}`}>
+      {failed ? (
+        <LogoMark big={big} />
+      ) : (
+        <img
+          src={LOGO_SRC}
+          alt="Club America at Park City High School"
+          onError={() => setFailed(true)}
+          className={`object-contain w-auto ${imgHeight}`}
+        />
+      )}
     </div>
   );
+
+  if (onClick) {
+    return (
+      <div className={big ? 'flex justify-center' : ''}>
+        <button type="button" onClick={onClick} aria-label="Club America home" className="inline-flex">
+          {mark}
+        </button>
+      </div>
+    );
+  }
+
+  return <div className={big ? 'flex justify-center' : ''}>{mark}</div>;
 }
 
 // ---------------------------------------------------------------------------
@@ -456,7 +466,7 @@ function Login({ onLogin, onBack }) {
       <PatriotBackdrop stripes />
       <div className="relative w-full max-w-md">
         <div className="mb-8 ca-slide-up">
-          <Logo size="login" />
+          <Logo size="login" onClick={onBack} />
         </div>
         <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-slide-up" style={{ animationDelay: '60ms' }}>
           <div className="text-center">
@@ -497,7 +507,7 @@ function Login({ onLogin, onBack }) {
   );
 }
 
-function ChangePassword({ user, onDone, forced }) {
+function ChangePassword({ user, onDone, forced, onExitPortal }) {
   const [pw, setPw] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
@@ -523,27 +533,30 @@ function ChangePassword({ user, onDone, forced }) {
   return (
     <div className="relative min-h-screen flex items-center justify-center p-4 ca-fade-in">
       <PatriotBackdrop />
-      <form onSubmit={submit} className="relative w-full max-w-md bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-scale-in">
-        <div className="font-display text-3xl text-gold">{forced ? 'Set Your Password' : 'Change Password'}</div>
-        {forced && (
-          <p className="text-sm text-cream/60">
-            Welcome, {user.displayName}. For security you must replace your default
-            password before continuing.
-          </p>
-        )}
-        <Field label="New Password">
-          <input className={inputCls} type="password" value={pw} autoFocus
-            onChange={(e) => setPw(e.target.value)} />
-        </Field>
-        <Field label="Confirm Password">
-          <input className={inputCls} type="password" value={confirm}
-            onChange={(e) => setConfirm(e.target.value)} />
-        </Field>
-        {error && <div className="text-red text-sm">{error}</div>}
-        <Button type="submit" variant="gold" className="w-full" disabled={loading}>
-          {loading ? 'Saving…' : 'Save Password'}
-        </Button>
-      </form>
+      <div className="relative w-full max-w-md">
+        {forced && <div className="mb-6"><Logo size="login" onClick={onExitPortal} /></div>}
+        <form onSubmit={submit} className="bg-navy2 border border-cream/10 rounded-xl p-6 space-y-4 ca-scale-in">
+          <div className="font-display text-3xl text-gold">{forced ? 'Set Your Password' : 'Change Password'}</div>
+          {forced && (
+            <p className="text-sm text-cream/60">
+              Welcome, {user.displayName}. For security you must replace your default
+              password before continuing.
+            </p>
+          )}
+          <Field label="New Password">
+            <input className={inputCls} type="password" value={pw} autoFocus
+              onChange={(e) => setPw(e.target.value)} />
+          </Field>
+          <Field label="Confirm Password">
+            <input className={inputCls} type="password" value={confirm}
+              onChange={(e) => setConfirm(e.target.value)} />
+          </Field>
+          {error && <div className="text-red text-sm">{error}</div>}
+          <Button type="submit" variant="gold" className="w-full" disabled={loading}>
+            {loading ? 'Saving…' : 'Save Password'}
+          </Button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -736,7 +749,7 @@ function TelegramConnect() {
   );
 }
 
-function ProfileSetup({ me, forced, onDone, onSkip }) {
+function ProfileSetup({ me, forced, onDone, onSkip, onExitPortal }) {
   const [photo, setPhoto] = useState('');
   const [rawSrc, setRawSrc] = useState(''); // original file src for re-cropping
   const [bio, setBio] = useState('');
@@ -842,9 +855,9 @@ function ProfileSetup({ me, forced, onDone, onSkip }) {
   );
 
   if (forced) {
-    return <>{cropModal}<form onSubmit={submit} className="relative min-h-screen flex items-center justify-center p-4 ca-fade-in"><PatriotBackdrop /><div className="relative w-full flex justify-center">{card}</div></form></>;
+    return <>{cropModal}<form onSubmit={submit} className="relative min-h-screen flex items-center justify-center p-4 ca-fade-in"><PatriotBackdrop /><div className="relative w-full flex flex-col items-center gap-6"><Logo size="login" onClick={onExitPortal} />{card}</div></form></>;
   }
-  return <>{cropModal}<form onSubmit={submit} className="max-w-lg">{card}</form></>;
+  return <>{cropModal}<form onSubmit={submit} className="min-h-[75vh] flex items-center justify-center">{card}</form></>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1562,7 +1575,7 @@ function TeamAnnouncementView({ me, reports }) {
       : 'your direct reports';
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-2xl mx-auto">
       {confirmEl}
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Team Announcement</h1>
       <p className="text-cream/50 mb-6">
@@ -1671,7 +1684,7 @@ function TaskPage({ me, userId, users, refreshSignal, onNavigate }) {
   };
 
   return (
-    <div className="max-w-5xl">
+    <div className="max-w-5xl mx-auto">
       {confirmEl}
       {error && (
         <div className="mb-4 flex items-center justify-between gap-3 bg-red/10 border border-red/30 rounded-md px-3 py-2 text-sm text-red">
@@ -1864,7 +1877,7 @@ function Approvals({ onChanged, refreshSignal }) {
   }
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl mx-auto">
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-6">Pending Approvals</h1>
       {error && <div className="mb-4"><ErrorState message={error} onRetry={load} /></div>}
       {items === null && !error && <Loading label="Loading approvals…" />}
@@ -1923,7 +1936,7 @@ function SubmissionsInbox({ onChanged, refreshSignal }) {
   }
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl mx-auto">
       {confirmEl}
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Get Involved</h1>
       <p className="text-cream/50 mb-6">Club-join and board applications submitted from the public homepage.</p>
@@ -2379,7 +2392,7 @@ function AdminPanel({ users, reload }) {
     : users;
 
   return (
-    <div className="max-w-5xl">
+    <div className="max-w-5xl mx-auto">
       {confirmEl}
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-6">Admin Panel</h1>
 
@@ -3919,7 +3932,7 @@ function PhotoModerationPage({ me }) {
   if (pending === null) return <Loading label="Loading photos…" />;
 
   return (
-    <div className="max-w-5xl space-y-8">
+    <div className="max-w-5xl mx-auto space-y-8">
       <div>
         <h2 className="font-display text-2xl text-gold">Awaiting Approval ({pending.length})</h2>
         <p className="text-cream/50 text-sm">Photos visitors shared from the homepage. Approve to publish them to the public gallery.</p>
@@ -4356,7 +4369,7 @@ function Home({ mode = 'public', me = null, editable = false, onEnterPortal, onB
   // Dedicated "Edit Website" tab: editor first, then a live preview.
   if (mode === 'editor') {
     return (
-      <div className="max-w-5xl space-y-8">
+      <div className="max-w-5xl mx-auto space-y-8">
         <div>
           <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Edit Website</h1>
           <p className="text-cream/50 mt-1">Update what visitors see on the public homepage at <span className="text-gold/80">/home</span>.</p>
@@ -4922,6 +4935,7 @@ function InterestSurvey({ onBack }) {
       <div className="relative min-h-screen flex items-center justify-center p-4">
         <PatriotBackdrop />
         <div className="relative w-full max-w-md text-center">
+          <div className="mb-6"><Logo size="login" onClick={onBack} /></div>
           <SuccessMark className="mb-4" />
           <div className="font-display text-4xl text-gold mb-3">Thanks for your interest!</div>
           <p className="text-cream/70 mb-6">
@@ -4938,7 +4952,7 @@ function InterestSurvey({ onBack }) {
       <PatriotBackdrop stripes />
       <div className="relative w-full max-w-md">
         <div className="mb-6">
-          <Logo size="login" />
+          <Logo size="login" onClick={onBack} />
         </div>
         <div className="font-display text-3xl text-gold mb-1">Interest Survey</div>
         <p className="text-cream/60 text-sm mb-6">
@@ -5053,6 +5067,7 @@ function MemberSignUpPage({ referrerUsername }) {
       <div className="relative min-h-screen flex items-center justify-center p-4">
         <PatriotBackdrop stripes />
         <div className="relative w-full max-w-md text-center">
+          <div className="mb-6"><Logo size="login" onClick={() => { window.location.href = '/'; }} /></div>
           <SuccessMark className="mb-4" />
           <div className="font-display text-4xl text-gold mb-3">You're on the list!</div>
           <p className="text-cream/70 mb-6">
@@ -5071,7 +5086,7 @@ function MemberSignUpPage({ referrerUsername }) {
       <PatriotBackdrop stripes />
       <div className="relative w-full max-w-md">
         <div className="mb-6">
-          <Logo size="login" />
+          <Logo size="login" onClick={() => { window.location.href = '/'; }} />
         </div>
         <div className="font-display text-3xl text-gold mb-1">Join the Roster</div>
         {referrer && (
@@ -5877,7 +5892,7 @@ function MyReferralLink({ me }) {
 function ReferralsPage({ me }) {
   const [refresh, setRefresh] = useState(0);
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl mx-auto">
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Referral Competition</h1>
       <p className="text-cream/50 mb-6">Share your link, refer new members, and climb the leaderboard.</p>
       <MyReferralLink me={me} />
@@ -6102,7 +6117,7 @@ function RosterPage({ me }) {
   ];
 
   return (
-    <div className="max-w-6xl">
+    <div className="max-w-6xl mx-auto">
       {confirmEl}
       <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
         <h1 className="font-display text-4xl sm:text-5xl text-cream">Roster</h1>
@@ -6254,7 +6269,7 @@ function WeeklyCheckinPage({ me }) {
   }, [weekOf]);
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-2xl mx-auto">
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Weekly Check-In</h1>
       <p className="text-cream/50 mb-6">
         Every board member submits a check-in by <span className="text-gold/80">Friday</span> each week. You can edit yours any time before the deadline.
@@ -6360,7 +6375,7 @@ function FundingRequestPage({ me }) {
   const statusColors = { pending: 'slate', approved: 'green', denied: 'red', purchased: 'blue' };
 
   return (
-    <div className="max-w-4xl">
+    <div className="max-w-4xl mx-auto">
       {confirmEl}
       <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
         <h1 className="font-display text-4xl sm:text-5xl text-cream">Funding Requests</h1>
@@ -6481,7 +6496,7 @@ function BoardApplicationsPage({ me }) {
   const statusColors = { pending: 'slate', accepted: 'green', declined: 'red' };
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl mx-auto">
       {confirmEl}
       <div className="flex items-end justify-between flex-wrap gap-3 mb-2">
         <h1 className="font-display text-4xl sm:text-5xl text-cream">Board Applications</h1>
@@ -6644,7 +6659,7 @@ function AdminDashboardPage({ me }) {
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
 
-  if (error && !data) return <div className="max-w-5xl"><ErrorState message={error} onRetry={load} /></div>;
+  if (error && !data) return <div className="max-w-5xl mx-auto"><ErrorState message={error} onRetry={load} /></div>;
   if (!data) return <Loading label="Loading dashboard…" />;
 
   const { pendingFunding, pendingApps, recentCheckins, pendingTasks, counts, missingCheckins = [], checkinWeekOf, recentActivity = [] } = data;
@@ -6656,7 +6671,7 @@ function AdminDashboardPage({ me }) {
   }
 
   return (
-    <div className="max-w-5xl space-y-8">
+    <div className="max-w-5xl mx-auto space-y-8">
       {confirmEl}
       <div>
         <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Dashboard</h1>
@@ -6967,7 +6982,7 @@ function LogisticsPage() {
   }
 
   if (loading) return <Loading label="Loading login activity…" />;
-  if (error) return <div className="p-6 max-w-6xl"><ErrorState message={error} onRetry={load} /></div>;
+  if (error) return <div className="p-6 max-w-6xl mx-auto"><ErrorState message={error} onRetry={load} /></div>;
   if (!data) return null;
 
   const { stats, perUserDaily = [], teamDaily = [], recentLogins, demographics, engagementSummary = [], recentEvents = [] } = data;
@@ -7012,7 +7027,7 @@ function LogisticsPage() {
   );
 
   return (
-    <div className="p-6 max-w-6xl space-y-6">
+    <div className="p-6 max-w-6xl mx-auto space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-cream">Login Activity Dashboard</h1>
@@ -7478,7 +7493,7 @@ function SiteActivityPage({ isAdmin = false }) {
   );
 
   if (loading && !data) return <Loading label="Loading site activity…" />;
-  if (error && !data) return <div className="p-6 max-w-6xl"><ErrorState message={error} onRetry={load} /></div>;
+  if (error && !data) return <div className="p-6 max-w-6xl mx-auto"><ErrorState message={error} onRetry={load} /></div>;
   if (!data) return null;
 
   const {
@@ -7542,7 +7557,7 @@ function SiteActivityPage({ isAdmin = false }) {
   ];
 
   return (
-    <div className="p-6 max-w-6xl space-y-6">
+    <div className="p-6 max-w-6xl mx-auto space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-cream flex items-center gap-3">
@@ -8326,7 +8341,7 @@ function HomeSummaryCard({ me, onNavigate }) {
         </div>
       )}
 
-      {/* Two-column content feed */}
+      {/* Two-column content feed: personal to-dos first, then club-wide info */}
       <div className="grid sm:grid-cols-2 gap-4">
         {/* My active tasks */}
         {myTasks.length > 0 && (
@@ -8345,6 +8360,30 @@ function HomeSummaryCard({ me, onNavigate }) {
                       <span className={`text-sm truncate ${overdue ? 'text-red/80' : 'text-cream/80'}`}>{t.name}</span>
                     </div>
                     {t.dueDate && <span className={`text-xs shrink-0 ${overdue ? 'text-red/60' : 'text-cream/35'}`}>{overdue ? 'Overdue' : fmtShortDate(t.dueDate)}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* My action items from meetings */}
+        {actionItems.length > 0 && (
+          <div className="bg-navy2 border border-cream/10 rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide">My Meeting Tasks</div>
+              <button onClick={() => onNavigate({ type: 'meetings' })} className="text-xs text-gold/60 hover:text-gold">View meetings</button>
+            </div>
+            <div className="space-y-2">
+              {actionItems.slice(0, 4).map((a) => {
+                const overdue = a.dueDate && a.dueDate < today;
+                return (
+                  <div key={a.id} className="flex items-start gap-2">
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${overdue ? 'bg-red/70' : 'bg-cream/30'}`} />
+                    <div className="min-w-0">
+                      <div className={`text-sm truncate ${overdue ? 'text-red/80' : 'text-cream/80'}`}>{a.text}</div>
+                      <div className="text-xs text-cream/35">{a.meetingTitle}{a.dueDate ? ' · ' + (overdue ? 'Overdue' : fmtShortDate(a.dueDate)) : ''}</div>
+                    </div>
                   </div>
                 );
               })}
@@ -8387,57 +8426,33 @@ function HomeSummaryCard({ me, onNavigate }) {
             </div>
           </div>
         )}
-
-        {/* My action items from meetings */}
-        {actionItems.length > 0 && (
-          <div className="bg-navy2 border border-cream/10 rounded-xl p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide">My Meeting Tasks</div>
-              <button onClick={() => onNavigate({ type: 'meetings' })} className="text-xs text-gold/60 hover:text-gold">View meetings</button>
-            </div>
-            <div className="space-y-2">
-              {actionItems.slice(0, 4).map((a) => {
-                const overdue = a.dueDate && a.dueDate < today;
-                return (
-                  <div key={a.id} className="flex items-start gap-2">
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${overdue ? 'bg-red/70' : 'bg-cream/30'}`} />
-                    <div className="min-w-0">
-                      <div className={`text-sm truncate ${overdue ? 'text-red/80' : 'text-cream/80'}`}>{a.text}</div>
-                      <div className="text-xs text-cream/35">{a.meetingTitle}{a.dueDate ? ' · ' + (overdue ? 'Overdue' : fmtShortDate(a.dueDate)) : ''}</div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Upcoming volunteer events */}
-        {volunteerEvents.length > 0 && (
-          <div className="bg-navy2 border border-emerald-500/20 rounded-xl p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-xs font-semibold text-emerald-400/70 uppercase tracking-wide">Volunteers Needed</div>
-              <button onClick={() => onNavigate({ type: 'home' })} className="text-xs text-gold/60 hover:text-gold">Club Home</button>
-            </div>
-            <div className="space-y-3">
-              {volunteerEvents.slice(0, 3).map((v) => {
-                const spotsLeft = v.totalCap === 0 ? null : v.totalCap - v.confirmedCount;
-                const full = spotsLeft !== null && spotsLeft <= 0;
-                return (
-                  <div key={v.id}>
-                    <div className="text-sm text-cream/80 font-medium leading-tight">{v.title}</div>
-                    <div className="text-xs text-cream/40 mt-0.5">{fmtEvent(v.startDate)}</div>
-                    {spotsLeft !== null && <div className={`text-xs mt-0.5 ${full ? 'text-amber-400/70' : 'text-emerald-400/70'}`}>{full ? 'Waitlist open' : spotsLeft + ' spot' + (spotsLeft !== 1 ? 's' : '') + ' left'}</div>}
-                    <a href={'/volunteer/' + v.id} className="text-xs text-teal-400 hover:text-teal-300 underline underline-offset-1 mt-0.5 inline-block">
-                      {full ? 'Join waitlist →' : 'Sign up →'}
-                    </a>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
       </div>
+
+      {/* Volunteers Needed: full-width call-to-action, one card per event */}
+      {volunteerEvents.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-xs font-semibold text-emerald-400/70 uppercase tracking-wide">Volunteers Needed</div>
+            <button onClick={() => onNavigate({ type: 'home' })} className="text-xs text-gold/60 hover:text-gold">Club Home</button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {volunteerEvents.slice(0, 3).map((v) => {
+              const spotsLeft = v.totalCap === 0 ? null : v.totalCap - v.confirmedCount;
+              const full = spotsLeft !== null && spotsLeft <= 0;
+              return (
+                <div key={v.id} className="bg-navy2 border border-emerald-500/20 rounded-xl p-4">
+                  <div className="text-sm text-cream/80 font-medium leading-tight">{v.title}</div>
+                  <div className="text-xs text-cream/40 mt-0.5">{fmtEvent(v.startDate)}</div>
+                  {spotsLeft !== null && <div className={`text-xs mt-0.5 ${full ? 'text-amber-400/70' : 'text-emerald-400/70'}`}>{full ? 'Waitlist open' : spotsLeft + ' spot' + (spotsLeft !== 1 ? 's' : '') + ' left'}</div>}
+                  <a href={'/volunteer/' + v.id} className="text-xs text-teal-400 hover:text-teal-300 underline underline-offset-1 mt-1 inline-block">
+                    {full ? 'Join waitlist →' : 'Sign up →'}
+                  </a>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -8504,7 +8519,7 @@ function ResourceHubPage({ me }) {
   }, {});
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl mx-auto">
       <div className="flex items-center justify-between mb-2">
         <h1 className="font-display text-4xl sm:text-5xl text-cream">Resource Hub</h1>
         {isManager && !showForm && <Button variant="gold" onClick={openCreate}>+ Add Resource</Button>}
@@ -8641,6 +8656,7 @@ function VolunteerSignUpPage({ eventId }) {
   if (error && !event) return (
     <div className="min-h-screen flex items-center justify-center p-8" style={{ background: '#0d1b2e' }}>
       <div className="text-center max-w-sm">
+        <div className="mb-6"><Logo size="login" onClick={() => { window.location.href = '/'; }} /></div>
         <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-red/10 border border-red/30 flex items-center justify-center">
           <AppIcon name="warning" size={24} className="text-red/80" />
         </div>
@@ -8655,6 +8671,7 @@ function VolunteerSignUpPage({ eventId }) {
     <div className="relative min-h-screen flex items-center justify-center p-8" style={{ background: '#0d1b2e' }}>
       <PatriotBackdrop stripes />
       <div className="relative text-center max-w-sm">
+        <div className="mb-6"><Logo size="login" onClick={() => { window.location.href = '/'; }} /></div>
         {submitted === 'waitlisted' ? (
           <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-cream/5 border border-cream/20 flex items-center justify-center">
             <AppIcon name="clock" size={24} className="text-cream/60" />
@@ -8681,6 +8698,7 @@ function VolunteerSignUpPage({ eventId }) {
     <div className="relative min-h-screen py-10 px-4" style={{ background: '#0d1b2e' }}>
       <PatriotBackdrop />
       <div className="relative max-w-lg mx-auto">
+        <div className="mb-4"><Logo size="nav" onClick={() => { window.location.href = '/'; }} /></div>
         <a href="/" className="text-sm text-cream/40 hover:text-cream/70 mb-6 inline-block">← Back to home</a>
         <div className="bg-navy2 border border-cream/10 rounded-2xl p-6 mb-6">
           <div className="text-xs text-gold/60 uppercase tracking-wider mb-1">Volunteer Sign-Up</div>
@@ -8780,7 +8798,7 @@ function ShopManagerPage({ me }) {
   const [tab, setTab] = useState('products');
 
   return (
-    <div className="max-w-5xl space-y-6">
+    <div className="max-w-5xl mx-auto space-y-6">
       <div>
         <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Shop</h1>
         <p className="text-cream/50 mt-1">Manage products, inventory, and orders for the merch shop.</p>
@@ -9831,7 +9849,7 @@ function CategoryPage({ categoryKey, ctx, onNavigate }) {
   return <TileGrid items={cat.items} onNavigate={onNavigate} />;
 }
 
-function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, aiNotesCount, pendingTestimonialsCount, onAiNotes, onNavigate, onLogout, onSearch }) {
+function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled, aiNotesCount, pendingTestimonialsCount, onAiNotes, onNavigate, onLogout, onSearch, onExitPortal }) {
   const ctx = homeContext({ me, checkinEnabled, approvalsCount, submissionsCount, aiNotesCount, pendingTestimonialsCount, onAiNotes });
   const categories = buildCategories(ctx);
 
@@ -9855,7 +9873,7 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
       <PatriotBackdrop stars={16} stripes />
       <TricolorBar className="relative" />
       <header className="relative px-6 py-5 flex items-center justify-between border-b border-cream/10">
-        <Logo size="sidebar" />
+        <Logo size="sidebar" onClick={onExitPortal} />
         <div className="flex items-center gap-4">
           <button onClick={onSearch} aria-label="Search" title="Search (⌘K or /)"
             className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-gold hover:bg-navy3 transition-colors">
@@ -10271,6 +10289,9 @@ function App() {
   // True only when the in-app portal (with search) is actually on screen, so the
   // global keyboard shortcut never hijacks browser shortcuts on public/login pages.
   const portalActiveRef = useRef(false);
+  // Stack of sub-page views visited so the header back button can return to
+  // wherever the user actually came from, not always the home grid.
+  const viewHistoryRef = useRef([]);
 
   const isSurveyPath = window.location.pathname === '/survey';
   // /join is the plain sign-up form; /join/:username is a board member's
@@ -10396,10 +10417,11 @@ function App() {
   if (testimonialSubmitMatch) return <TestimonialSubmitPage token={testimonialSubmitMatch[1] || null} />;
   if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;
   if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); }} onBack={() => setEnterPortal(false)} />;
-  if (me.firstLogin) return <ChangePassword user={me} forced onDone={(u) => { setMe(u); loadShared(u); }} />;
+  if (me.firstLogin) return <ChangePassword user={me} forced onDone={(u) => { setMe(u); loadShared(u); }} onExitPortal={() => setEnterPortal(false)} />;
   if (!me.profileComplete) return <ProfileSetup me={me} forced
     onDone={(u) => { setMe(u); loadShared(u); }}
-    onSkip={() => setMe({ ...me, profileComplete: true })} />;
+    onSkip={() => setMe({ ...me, profileComplete: true })}
+    onExitPortal={() => setEnterPortal(false)} />;
 
   const canEditSite = me.role === 'admin' || !!me.canEditHome;
   const isMgrOrAdmin = me.role === 'admin' || me.role === 'manager';
@@ -10429,13 +10451,27 @@ function App() {
     if (v.type === 'apphome') {
       // Returning home consumes the back-trap entry so the history stack stays
       // clean (one device-Back press from a sub-page lands here, not earlier).
+      viewHistoryRef.current = [];
       if (portalHistRef.current) { portalHistRef.current = false; window.history.back(); return; }
     } else if (!portalHistRef.current) {
       portalHistRef.current = true;
       try { window.history.pushState({ caPortal: true }, ''); } catch (_) {}
     }
+    // Remember where we came from (skipping apphome and no-op same-type
+    // transitions) so the header back button can retrace real navigation.
+    if (view.type !== 'apphome' && view.type !== v.type) {
+      viewHistoryRef.current.push(view);
+    }
     setView(v);
   };
+
+  // Header back chevron: return to whatever sub-page the user was actually on,
+  // falling back to the home grid once the trail runs out.
+  function goBack() {
+    const prev = viewHistoryRef.current.pop();
+    if (prev) setView(prev);
+    else navigate({ type: 'apphome' });
+  }
 
   const introDismiss = () => { markWelcomeSeen(me.id); setShowWelcomeIntro(false); };
 
@@ -10446,7 +10482,8 @@ function App() {
       {searchOpen && <SearchModal me={me} reports={reports} tiles={navTiles} onNavigate={(v) => { setSearchOpen(false); navigate(v); }} onClose={() => setSearchOpen(false)} />}
       <AppHome me={me} reports={reports} approvalsCount={approvalsCount} submissionsCount={submissionsCount}
         checkinEnabled={checkinEnabled} aiNotesCount={aiNotesCount} pendingTestimonialsCount={pendingTestimonialsCount}
-        onAiNotes={() => setAiNotesOpen(true)} onNavigate={navigate} onLogout={logout} onSearch={() => setSearchOpen(true)} />
+        onAiNotes={() => setAiNotesOpen(true)} onNavigate={navigate} onLogout={logout} onSearch={() => setSearchOpen(true)}
+        onExitPortal={() => setEnterPortal(false)} />
     </>
   );
 
@@ -10507,12 +10544,13 @@ function App() {
         <header className="sticky top-0 z-20 bg-navy2/95 backdrop-blur border-b border-cream/10">
           <TricolorBar />
           <div className="flex items-center gap-3 px-4 py-3">
-          <button onClick={() => navigate({ type: 'apphome' })} aria-label="Back to home"
+          <button onClick={goBack} aria-label="Back"
             className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-cream hover:bg-navy3 transition-colors">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M19 12H5M12 5l-7 7 7 7"/>
             </svg>
           </button>
+          <Logo size="nav" onClick={() => setEnterPortal(false)} />
           <span className="text-cream font-semibold text-base flex-1">{PAGE_TITLES[view.type] || ''}</span>
           <button onClick={() => setSearchOpen(true)} aria-label="Search" title="Search (⌘K or /)"
             className="flex items-center justify-center w-8 h-8 rounded-lg text-cream/60 hover:text-gold hover:bg-navy3 transition-colors">
@@ -10704,7 +10742,7 @@ function MeetingsPage({ me }) {
   const tabCls = (t) => `px-4 py-2 text-sm font-medium rounded-lg transition-colors ${tab === t ? 'bg-gold/15 text-gold border border-gold/30' : 'text-cream/50 hover:text-cream hover:bg-cream/5'}`;
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl mx-auto">
       <div className="flex items-center justify-between mb-4">
         <h1 className="font-display text-4xl sm:text-5xl text-cream">Meetings</h1>
         {isManager && tab === 'board' && !showForm && <Button variant="gold" onClick={openCreate}>+ New</Button>}
@@ -10878,7 +10916,7 @@ function GrantsPage({ me }) {
   const total = { requested: grants.reduce((s, g) => s + (g.amountRequested || 0), 0), awarded: grants.filter(g => g.status === 'Approved').reduce((s, g) => s + (g.amountAwarded || 0), 0) };
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl mx-auto">
       <div className="flex items-center justify-between mb-2">
         <h1 className="font-display text-4xl sm:text-5xl text-cream">Grant Applications</h1>
         {isManager && !showForm && <Button variant="gold" onClick={openCreate}>+ New Application</Button>}
@@ -11048,7 +11086,7 @@ function SpeakerEventsPage({ me }) {
   );
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl mx-auto">
       <div className="flex items-center justify-between mb-4">
         <h1 className="font-display text-4xl sm:text-5xl text-cream">Speaker Events</h1>
         {tab === 'events' && isManager && !showForm && <Button variant="gold" onClick={openCreate}>+ New Event</Button>}
@@ -11552,7 +11590,7 @@ function SocialTrackerPage({ me }) {
   const posted  = posts.filter((p) => p.status === 'Posted');
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl mx-auto">
       <div className="flex items-center justify-between mb-2">
         <h1 className="font-display text-4xl sm:text-5xl text-cream">Social Media</h1>
         {canPost && !showForm && <Button variant="gold" onClick={() => setShowForm(true)}>+ Add Post</Button>}
@@ -11981,7 +12019,7 @@ function GradePipelinePage({ me }) {
   const pct = goalForGrade > 0 ? Math.min(100, Math.round((counts.onboarded / goalForGrade) * 100)) : 0;
 
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="max-w-3xl mx-auto space-y-6">
       <div>
         <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">{currentGrade ? `Grade ${currentGrade} Pipeline` : 'Recruitment Pipeline'}</h1>
         <p className="text-cream/50 mt-1">Recruitment funnel and prospect status.</p>
@@ -12143,7 +12181,7 @@ function ReimbursementsPage({ me }) {
   }
 
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="max-w-3xl mx-auto space-y-6">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Reimbursements</h1>
@@ -12270,7 +12308,7 @@ function DirectoryPage({ me }) {
   });
 
   return (
-    <div className="max-w-4xl">
+    <div className="max-w-4xl mx-auto">
       <div className="mb-6">
         <h1 className="font-display text-4xl sm:text-5xl text-cream leading-none">Board Directory</h1>
         <p className="text-cream/50 mt-1">Contact information for all board members.</p>
@@ -12481,7 +12519,7 @@ function AttendancePage({ me }) {
   const totalMembers = eventData ? eventData.members.length : 0;
 
   return (
-    <div className="max-w-5xl">
+    <div className="max-w-5xl mx-auto">
       {confirmEl}
       {rollCallEvent && (
         <RollCallModal
@@ -12656,7 +12694,7 @@ function BudgetDashboardPage({ me }) {
   };
 
   return (
-    <div className="max-w-4xl">
+    <div className="max-w-4xl mx-auto">
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Budget Overview</h1>
       <p className="text-cream/50 mb-6">Financial summary for all funding requests.</p>
 
@@ -12781,7 +12819,7 @@ function PollsPage({ me }) {
   function setOption(i, val) { setOptions((prev) => { const n = [...prev]; n[i] = val; return n; }); }
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-3xl mx-auto">
       {confirmEl}
       <div className="flex items-start justify-between gap-3 mb-6 flex-wrap">
         <div>
@@ -13216,6 +13254,7 @@ function TestimonialSubmitPage({ token }) {
   if (tokenError) return (
     <div className="min-h-screen flex items-center justify-center p-6 text-center" style={{ background: '#0d1b2e' }}>
       <div>
+        <div className="mb-6"><Logo size="login" onClick={() => { window.location.href = '/'; }} /></div>
         <div className="w-14 h-14 mx-auto mb-4 rounded-full bg-red/10 border border-red/30 flex items-center justify-center">
           <AppIcon name="warning" size={24} className="text-red/80" />
         </div>
@@ -13235,6 +13274,7 @@ function TestimonialSubmitPage({ token }) {
     <div className="relative min-h-screen flex items-center justify-center p-6 text-center" style={{ background: '#0d1b2e' }}>
       <PatriotBackdrop stripes />
       <div className="relative">
+        <div className="mb-6"><Logo size="login" onClick={() => { window.location.href = '/'; }} /></div>
         <SuccessMark className="mb-4" />
         <div className="font-display text-3xl text-gold mb-2">Thanks{form.name ? `, ${form.name}` : ''}!</div>
         <p className="text-cream/60 max-w-sm">Your testimonial has been submitted and is under review. We'll publish it once approved.</p>
@@ -13247,7 +13287,7 @@ function TestimonialSubmitPage({ token }) {
       <PatriotBackdrop />
       <div className="relative w-full max-w-lg">
         <div className="text-center mb-8">
-          <Logo size="sidebar" className="mb-4 mx-auto" />
+          <Logo size="sidebar" onClick={() => { window.location.href = '/'; }} />
           <h1 className="font-display text-3xl text-gold">Share Your Story</h1>
           <StarDivider compact className="mt-2" />
           <p className="text-cream/60 text-sm mt-1">
@@ -13401,7 +13441,7 @@ function TestimonialsAdminPage({ me }) {
   const approved           = (items || []).filter((t) => t.status === 'approved').sort((a, b) => (a.sortOrder - b.sortOrder) || (a.id - b.id));
 
   return (
-    <div className="max-w-5xl">
+    <div className="max-w-5xl mx-auto">
       {confirmEl}
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Testimonials</h1>
       <p className="text-cream/50 mb-6">Collect stories from your members and display them on the public homepage.</p>
@@ -13712,7 +13752,7 @@ function NewsletterAdminPage({ me }) {
   }[s.source] || { tone: 'slate', label: s.source });
 
   return (
-    <div className="max-w-5xl">
+    <div className="max-w-5xl mx-auto">
       {confirmEl}
       <h1 className="font-display text-4xl sm:text-5xl text-cream mb-2">Newsletter</h1>
       <p className="text-cream/50 mb-6">Board members with email addresses are automatically enrolled. Public visitors can sign up on the homepage.</p>
