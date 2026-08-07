@@ -2283,7 +2283,31 @@ app.get('/api/roster/leaderboard', (req, res) => {
     "SELECT id, firstName, lastName FROM roster_members WHERE referredByUserId = ? AND referralStatus = 'pending' ORDER BY createdAt DESC"
   ).all(req.user.id);
   const myPendingNames = myPendingRows.map((r) => `${r.firstName} ${r.lastName || ''}`.trim());
-  res.json({ leaderboard: rows, myPending: myPendingRows.length, myPendingNames });
+
+  // Who each member has actually brought in. The leaderboard alone only says how
+  // many, which doesn't tell anyone whether the person they're about to approach
+  // has already been referred by someone else.
+  //
+  // This endpoint is open to every signed-in member, while the roster itself sits
+  // behind canViewRoster — so this deliberately selects names and grade only.
+  // Phone and email stay on the roster page where the permission check is.
+  const referrals = db.prepare(`
+    SELECT r.id, r.firstName, r.lastName, r.grade, r.referralStatus AS status,
+           r.referredByUserId AS referrerId, u.displayName AS referrerName
+    FROM roster_members r
+    JOIN users u ON u.id = r.referredByUserId
+    WHERE r.referralStatus IN ('pending', 'approved', 'removed')
+    ORDER BY r.createdAt DESC
+  `).all().map((r) => ({
+    id: r.id,
+    name: `${r.firstName || ''} ${r.lastName || ''}`.trim() || 'Unnamed',
+    grade: r.grade || null,
+    status: r.status,
+    referrerId: r.referrerId,
+    referrerName: r.referrerName,
+  }));
+
+  res.json({ leaderboard: rows, myPending: myPendingRows.length, myPendingNames, referrals });
 });
 
 // ---- Weekly Check-Ins -------------------------------------------------------
