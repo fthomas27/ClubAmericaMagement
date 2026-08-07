@@ -5636,6 +5636,127 @@ function ReferralLeaderboard({ me, refreshSignal }) {
   );
 }
 
+// Who each member has actually brought in. The leaderboard says how many, which
+// doesn't help you decide who to approach next — this lists the names, so you can
+// check whether someone has already been referred before spending a conversation
+// on them. Names and grade only; contact details stay on the permission-gated
+// roster page.
+const REFERRAL_STATUS_STYLES = {
+  approved: { cls: 'bg-emerald-500/15 text-emerald-400', label: 'Joined' },
+  pending:  { cls: 'bg-gold/15 text-gold',               label: 'Awaiting approval' },
+  removed:  { cls: 'bg-red/10 text-red/60',              label: 'Left the club' },
+};
+
+function ReferralRoll({ me, refreshSignal }) {
+  const [referrals, setReferrals] = useState(null);
+  const [query, setQuery] = useState('');
+  const [expanded, setExpanded] = useState({});
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api('/roster/leaderboard')
+      .then((d) => setReferrals(d.referrals || []))
+      .catch((e) => { setError(e.message); setReferrals([]); });
+  }, [refreshSignal]);
+
+  const q = query.trim().toLowerCase();
+  const matches = useMemo(
+    () => (referrals || []).filter((r) => !q
+      || r.name.toLowerCase().includes(q)
+      || (r.referrerName || '').toLowerCase().includes(q)),
+    [referrals, q]);
+
+  // Group by referrer, with your own referrals pinned to the top — that's the
+  // list you act on — then everyone else by who has brought in the most.
+  const groups = useMemo(() => {
+    const by = new Map();
+    for (const r of matches) {
+      if (!by.has(r.referrerId)) by.set(r.referrerId, { id: r.referrerId, name: r.referrerName, people: [] });
+      by.get(r.referrerId).people.push(r);
+    }
+    return [...by.values()].sort((a, b) =>
+      (b.id === me.id) - (a.id === me.id)
+      || b.people.length - a.people.length
+      || (a.name || '').localeCompare(b.name || ''));
+  }, [matches, me.id]);
+
+  if (referrals === null) return null;
+
+  const total = referrals.length;
+  const mine = referrals.filter((r) => r.referrerId === me.id).length;
+
+  return (
+    <div className="bg-navy2 border border-cream/10 rounded-2xl p-5 mb-8">
+      <div className="flex items-center gap-2 mb-1 flex-wrap">
+        <span className="text-gold"><AppIcon name="person" size={18} /></span>
+        <div className="font-display text-xl text-gold">Who's Been Referred</div>
+      </div>
+      <p className="text-cream/60 text-sm mb-3">
+        Every member referred so far and who brought them in. Search before you refer someone
+        so two people don't chase the same person.
+        {total > 0 && <> You've referred <span className="text-gold font-medium">{mine}</span> of <span className="text-cream/80">{total}</span>.</>}
+      </p>
+
+      {error && <div className="text-red text-sm mb-3">{error}</div>}
+
+      {total > 0 && (
+        <input className={inputCls + ' mb-3'} value={query} onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search a name to see if they're already referred…" />
+      )}
+
+      {total === 0 ? (
+        <EmptyState icon="person" title="No referrals yet"
+          hint="Refer someone above and they'll show up here for everyone to see." />
+      ) : groups.length === 0 ? (
+        <div className="text-cream/50 text-sm bg-navy/40 rounded-xl px-4 py-3 text-center">
+          No one matching "{query}" has been referred yet — they're fair game.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {groups.map((g) => {
+            const isMe = g.id === me.id;
+            // Open by default: seeing who everyone else has already brought in is
+            // the point of this list, and hiding it behind a click defeats that.
+            // Collapsing is still there for anyone who wants to skim the totals,
+            // and a search always opens the groups it matched.
+            const open = q ? true : (expanded[g.id] !== false);
+            return (
+              <div key={g.id} className={`rounded-xl border ${isMe ? 'border-gold/40 bg-navy/60' : 'border-cream/10 bg-navy/40'}`}>
+                <button onClick={() => setExpanded((prev) => ({ ...prev, [g.id]: !open }))}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-cream/5 rounded-xl transition-colors">
+                  <span className={`font-medium flex-1 min-w-0 truncate ${isMe ? 'text-gold' : 'text-cream'}`}>
+                    {g.name}{isMe && <span className="text-xs text-cream/50 ml-1">(you)</span>}
+                  </span>
+                  <span className="text-xs text-cream/40 shrink-0">
+                    {g.people.length} referral{g.people.length !== 1 ? 's' : ''}
+                  </span>
+                  <span className="text-cream/40 text-xs shrink-0">{open ? '▴' : '▾'}</span>
+                </button>
+                {open && (
+                  <div className="px-4 pb-3 pt-0.5 space-y-1">
+                    {g.people.map((p) => {
+                      const s = REFERRAL_STATUS_STYLES[p.status] || REFERRAL_STATUS_STYLES.pending;
+                      return (
+                        <div key={p.id} className="flex items-center justify-between gap-2 text-sm">
+                          <span className="text-cream/75 truncate">
+                            {p.name}
+                            {p.grade && <span className="text-cream/35 text-xs ml-1.5">Grade {p.grade}</span>}
+                          </span>
+                          <span className={`shrink-0 text-xs rounded-full px-2 py-0.5 ${s.cls}`}>{s.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Refer-a-member form, available to every logged-in member. Reuses the roster
 // add fields but always submits as a pending referral (referral: true).
 function ReferMemberForm({ onReferred }) {
@@ -5762,6 +5883,7 @@ function ReferralsPage({ me }) {
       <MyReferralLink me={me} />
       <ReferMemberForm onReferred={() => setRefresh((n) => n + 1)} />
       <ReferralLeaderboard me={me} refreshSignal={refresh} />
+      <ReferralRoll me={me} refreshSignal={refresh} />
     </div>
   );
 }
