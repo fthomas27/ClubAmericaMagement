@@ -782,6 +782,22 @@ function init() {
       CREATE INDEX IF NOT EXISTS idx_attendance_records ON attendance_records(eventId);
     `);
   }
+  // Clean the data BEFORE constraining it. CREATE UNIQUE INDEX is not a no-op on
+  // a legacy database: if it already holds two marks for the same member at the
+  // same event, index creation throws and the process dies on boot — the app
+  // never starts, and the failure looks nothing like its cause. Collapse any such
+  // pairs first, keeping the highest id, which is the most recent mark and so the
+  // one the roll-call screen was last told to record.
+  db.exec(`
+    DELETE FROM attendance_records WHERE userId IS NULL AND rosterId IS NULL;
+    DELETE FROM attendance_records WHERE userId IS NOT NULL AND id NOT IN (
+      SELECT MAX(id) FROM attendance_records WHERE userId IS NOT NULL GROUP BY eventId, userId
+    );
+    DELETE FROM attendance_records WHERE rosterId IS NOT NULL AND id NOT IN (
+      SELECT MAX(id) FROM attendance_records WHERE rosterId IS NOT NULL GROUP BY eventId, rosterId
+    );
+  `);
+
   // Partial unique indexes (created here, after the rebuild above guarantees the
   // rosterId column exists, so they're safe on both fresh and migrated databases).
   db.exec(`
@@ -789,6 +805,55 @@ function init() {
       ON attendance_records(eventId, userId) WHERE userId IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_records_roster
       ON attendance_records(eventId, rosterId) WHERE rosterId IS NOT NULL;
+  `);
+
+  // An attendance record must belong to exactly one person. The partial unique
+  // indexes above can't express that: a row with BOTH ids NULL matches neither,
+  // so unlimited ownerless records could be stored — invisible on every roster
+  // yet still counted in the event's present/marked tallies. Rebuild the table
+  // with a CHECK so no future code path can reintroduce them.
+  const arSql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='attendance_records'").get();
+  if (arSql && !/one_attendee/.test(arSql.sql)) {
+    db.exec(`
+      CREATE TABLE attendance_records_chk (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        eventId    INTEGER NOT NULL REFERENCES attendance_events(id) ON DELETE CASCADE,
+        userId     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        rosterId   INTEGER REFERENCES roster_members(id) ON DELETE CASCADE,
+        status     TEXT NOT NULL DEFAULT 'present',
+        markedById INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        createdAt  TEXT NOT NULL DEFAULT (datetime('now')),
+        CONSTRAINT one_attendee CHECK ((userId IS NULL) <> (rosterId IS NULL)),
+        CONSTRAINT known_status CHECK (status IN ('present', 'absent', 'excused'))
+      );
+      INSERT INTO attendance_records_chk (id, eventId, userId, rosterId, status, markedById, createdAt)
+        SELECT id, eventId, userId, rosterId,
+               -- Keep the row and normalise instead of dropping it: the roster
+               -- already renders anything that isn't present/excused as absent,
+               -- so this preserves what the record has always displayed as.
+               CASE WHEN status IN ('present', 'absent', 'excused') THEN status ELSE 'absent' END,
+               markedById, createdAt
+        FROM attendance_records;
+      DROP TABLE attendance_records;
+      ALTER TABLE attendance_records_chk RENAME TO attendance_records;
+      CREATE INDEX IF NOT EXISTS idx_attendance_records ON attendance_records(eventId);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_records_user
+        ON attendance_records(eventId, userId) WHERE userId IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_records_roster
+        ON attendance_records(eventId, rosterId) WHERE rosterId IS NOT NULL;
+    `);
+  }
+
+  // Auto-imported events dedupe on (sourceType, sourceId), but syncAttendanceEvents
+  // does that check either side of an `await`, so two concurrent syncs can both
+  // miss and both insert — the same meeting twice, splitting its roll call. Only
+  // synced rows are covered; manual events all share an empty sourceId.
+  db.exec(`
+    DELETE FROM attendance_events WHERE sourceType != 'manual' AND id NOT IN (
+      SELECT MIN(id) FROM attendance_events WHERE sourceType != 'manual' GROUP BY sourceType, sourceId
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_events_source
+      ON attendance_events(sourceType, sourceId) WHERE sourceType != 'manual';
   `);
 
   // merch_items migration: cache the matching Stripe Product id so promotion
