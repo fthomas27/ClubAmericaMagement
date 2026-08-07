@@ -8391,11 +8391,11 @@ function HomeSummaryCard({ me, onNavigate }) {
           </div>
         )}
 
-        {/* Upcoming meetings */}
+        {/* Upcoming events (all upcoming meetings) */}
         {upcomingMeetings.length > 0 && (
           <div className="bg-navy2 border border-cream/10 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
-              <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide">Upcoming Meetings</div>
+              <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide">Upcoming Events</div>
               <button onClick={() => onNavigate({ type: 'meetings' })} className="text-xs text-gold/60 hover:text-gold">View all</button>
             </div>
             <div className="space-y-2">

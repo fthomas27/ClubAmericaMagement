@@ -4501,9 +4501,9 @@ app.get('/api/me/summary', (req, res) => {
     checkinSubmitted = !!row;
   }
 
-  // Upcoming meetings (next 3)
+  // All upcoming meetings
   const upcomingMeetings = db.prepare(
-    "SELECT id, title, meetingDate FROM meetings WHERE meetingDate >= ? ORDER BY meetingDate ASC LIMIT 3"
+    "SELECT id, title, meetingDate FROM meetings WHERE meetingDate >= ? ORDER BY meetingDate ASC"
   ).all(today);
 
   // Open polls the user hasn't voted on yet
