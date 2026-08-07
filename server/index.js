@@ -2849,20 +2849,25 @@ function canManageAttendance(user) {
 // updated in place so title/date stay current; they persist in attendance_events
 // even after a calendar event ages out of the upcoming feed.
 async function syncAttendanceEvents() {
-  const findSource = db.prepare('SELECT id FROM attendance_events WHERE sourceType = ? AND sourceId = ?');
+  // Upsert on (sourceType, sourceId) rather than check-then-insert: the check
+  // and the write straddle an `await` below, so two concurrent syncs could both
+  // find nothing and both insert the same meeting, splitting its roll call
+  // across duplicate events. The unique index makes the conflict clause fire.
+  const upsertSource = db.prepare(`
+    INSERT INTO attendance_events (title, eventDate, location, notes, eventType, sourceType, sourceId)
+    VALUES (@title, @eventDate, @location, '', @eventType, @sourceType, @sourceId)
+    ON CONFLICT(sourceType, sourceId) WHERE sourceType != 'manual'
+    DO UPDATE SET title = excluded.title, eventDate = excluded.eventDate, location = excluded.location`);
 
   // Board meetings -> board attendance events (roster = all portal accounts).
   const meetings = db.prepare('SELECT id, title, meetingDate FROM meetings').all();
   for (const m of meetings) {
     const eventDate = String(m.meetingDate || '').slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) continue;
-    const existing = findSource.get('meeting', String(m.id));
-    if (existing) {
-      db.prepare('UPDATE attendance_events SET title = ?, eventDate = ? WHERE id = ?').run(m.title, eventDate, existing.id);
-    } else {
-      db.prepare(`INSERT INTO attendance_events (title, eventDate, location, notes, eventType, sourceType, sourceId)
-        VALUES (?, ?, '', '', 'board', 'meeting', ?)`).run(m.title, eventDate, String(m.id));
-    }
+    if (!isRealDate(eventDate)) continue;
+    upsertSource.run({
+      title: m.title, eventDate, location: '',
+      eventType: 'board', sourceType: 'meeting', sourceId: String(m.id),
+    });
   }
 
   // Club meetings from the calendar feed (roster = portal accounts + onboarded contacts).
@@ -2873,15 +2878,11 @@ async function syncAttendanceEvents() {
     for (const ev of events) {
       if (!ev.uid) continue;
       const eventDate = String(ev.start || '').slice(0, 10);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) continue;
-      const existing = findSource.get('calendar', ev.uid);
-      if (existing) {
-        db.prepare('UPDATE attendance_events SET title = ?, eventDate = ?, location = ? WHERE id = ?')
-          .run(ev.title, eventDate, ev.location || '', existing.id);
-      } else {
-        db.prepare(`INSERT INTO attendance_events (title, eventDate, location, notes, eventType, sourceType, sourceId)
-          VALUES (?, ?, ?, '', 'club', 'calendar', ?)`).run(ev.title, eventDate, ev.location || '', ev.uid);
-      }
+      if (!isRealDate(eventDate)) continue;
+      upsertSource.run({
+        title: ev.title, eventDate, location: ev.location || '',
+        eventType: 'club', sourceType: 'calendar', sourceId: ev.uid,
+      });
     }
   }
 }
@@ -2894,7 +2895,14 @@ function attendanceRoster(eventType) {
   if (eventType !== 'club') return users;
   // Onboarded members, plus Inactive ones still in their 30-day grace window so
   // they can be marked present and reactivated if they show back up.
-  const contacts = db.prepare("SELECT id, firstName, lastName, grade, roleDescription, status FROM roster_members WHERE status IN ('Onboarded', 'Inactive') ORDER BY firstName, lastName").all()
+  // Board members are mirrored into roster_members (see syncBoardRoster) so their
+  // meeting history has somewhere to hang; those mirrors are excluded here or
+  // every board member would appear on the club roll call twice — once as their
+  // account and once as their roster row — and could be given two contradictory
+  // statuses for the same meeting.
+  const contacts = db.prepare(`SELECT id, firstName, lastName, grade, roleDescription, status
+    FROM roster_members WHERE status IN ('Onboarded', 'Inactive') AND linkedUserId IS NULL
+    ORDER BY firstName, lastName`).all()
     .map((r) => ({
       kind: 'roster',
       id: r.id,
@@ -2903,6 +2911,62 @@ function attendanceRoster(eventType) {
       inactive: r.status === 'Inactive',
     }));
   return [...users, ...contacts];
+}
+
+// Attendance ids arrive as untrusted JSON. Number() alone is far too permissive
+// here: Number(true) === 1 and Number([2]) === 2 would forge a mark against a
+// member nobody named, while Number('abc') === NaN binds as SQL NULL and writes
+// a record that belongs to no one (invisible on the roster, yet still counted in
+// the event's present/marked tallies). Only a real positive integer is an id.
+function toMemberId(v) {
+  if (typeof v === 'number') return Number.isSafeInteger(v) && v > 0 ? v : null;
+  if (typeof v === 'string' && /^[1-9]\d*$/.test(v.trim())) {
+    const n = Number(v.trim());
+    return Number.isSafeInteger(n) ? n : null;
+  }
+  return null;
+}
+
+// A YYYY-MM-DD that is also a date that exists — the bare regex happily accepts
+// '2026-13-45', which would sort into the roll-call list as a real meeting.
+function isRealDate(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const [y, m, d] = s.split('-').map(Number);
+  if (y < 1970 || y > 2999 || m < 1 || m > 12 || d < 1) return false;
+  return d <= new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+
+// Resolve one attendee against the roster the event actually has. Marking is
+// only meaningful for someone who appears on that event's roll-call list, so a
+// club-only contact can't be recorded at a board meeting (and vice versa), and
+// an unknown id fails as a 400 here instead of surfacing as a FOREIGN KEY 500.
+// Returns { userId, rosterId } or { error }.
+function resolveAttendee(event, raw) {
+  const hasUser = raw.userId !== undefined && raw.userId !== null;
+  const hasRoster = raw.rosterId !== undefined && raw.rosterId !== null;
+  if (hasUser && hasRoster) return { error: 'Provide either userId or rosterId, not both' };
+  if (!hasUser && !hasRoster) return { error: 'userId or rosterId required' };
+
+  if (hasUser) {
+    const userId = toMemberId(raw.userId);
+    if (!userId) return { error: `Invalid userId: ${JSON.stringify(raw.userId)}` };
+    const u = db.prepare("SELECT id FROM users WHERE id = ? AND username != 'logistics'").get(userId);
+    if (!u) return { error: `No board member with id ${userId}` };
+    return { userId, rosterId: null };
+  }
+
+  const rosterId = toMemberId(raw.rosterId);
+  if (!rosterId) return { error: `Invalid rosterId: ${JSON.stringify(raw.rosterId)}` };
+  // Only club events carry non-account contacts on their roster.
+  if (event.eventType !== 'club') {
+    return { error: 'Board meetings only take board members (userId), not roster contacts' };
+  }
+  // linkedUserId IS NULL mirrors attendanceRoster(): a board member's roster
+  // mirror is not a separate attendee, so they must be marked via their userId.
+  const r = db.prepare(`SELECT id FROM roster_members
+    WHERE id = ? AND status IN ('Onboarded', 'Inactive') AND linkedUserId IS NULL`).get(rosterId);
+  if (!r) return { error: `No club member with id ${rosterId} on this event's roster` };
+  return { userId: null, rosterId };
 }
 
 // Upsert a single attendance record keyed by user or roster contact.
@@ -3006,7 +3070,7 @@ app.post('/api/attendance', (req, res) => {
   if (!canManageAttendance(req.user)) return res.status(403).json({ error: 'Not allowed' });
   const { title, eventDate, location, notes, eventType } = req.body || {};
   if (!title || !String(title).trim()) return res.status(400).json({ error: 'Title required' });
-  if (!eventDate || !String(eventDate).match(/^\d{4}-\d{2}-\d{2}$/)) return res.status(400).json({ error: 'Valid event date required (YYYY-MM-DD)' });
+  if (!isRealDate(eventDate)) return res.status(400).json({ error: 'Valid event date required (YYYY-MM-DD)' });
   const safeType = eventType === 'board' ? 'board' : 'club';
   const info = db.prepare(`INSERT INTO attendance_events (title, eventDate, location, notes, eventType, sourceType, createdById)
     VALUES (?, ?, ?, ?, ?, 'manual', ?)`).run(
@@ -3034,44 +3098,76 @@ app.post('/api/attendance/:id/mark', (req, res) => {
   if (!canManageAttendance(req.user)) return res.status(403).json({ error: 'Not allowed' });
   const event = db.prepare('SELECT * FROM attendance_events WHERE id = ?').get(Number(req.params.id));
   if (!event) return res.status(404).json({ error: 'Event not found' });
-  const { userId, rosterId, status } = req.body || {};
-  if (!userId && !rosterId) return res.status(400).json({ error: 'userId or rosterId required' });
-  const safeStatus = ATTENDANCE_STATUSES.includes(status) ? status : 'present';
-  markAttendanceRecord(event.id, {
-    userId: userId ? Number(userId) : null,
-    rosterId: !userId && rosterId ? Number(rosterId) : null,
-    status: safeStatus,
-    markedById: req.user.id,
-  });
-  res.json({ ok: true, status: safeStatus });
+  const { status } = req.body || {};
+  // Never coerce an unrecognised status: silently falling back to 'present'
+  // turns a typo into a false attendance record for someone who wasn't there.
+  if (!ATTENDANCE_STATUSES.includes(status)) {
+    return res.status(400).json({ error: `status must be one of: ${ATTENDANCE_STATUSES.join(', ')}` });
+  }
+  const who = resolveAttendee(event, req.body || {});
+  if (who.error) return res.status(400).json({ error: who.error });
+  markAttendanceRecord(event.id, { ...who, status, markedById: req.user.id });
+  res.json({ ok: true, status });
 });
 
 app.delete('/api/attendance/:id', (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admins only' });
-  db.prepare('DELETE FROM attendance_events WHERE id = ?').run(Number(req.params.id));
-  res.json({ ok: true });
-});
-
-app.post('/api/attendance/:id/roll-call', (req, res) => {
-  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
-  const event = db.prepare('SELECT id FROM attendance_events WHERE id = ?').get(Number(req.params.id));
-  if (!event) return res.status(404).json({ error: 'Event not found' });
-  const { records } = req.body || {};
-  if (!Array.isArray(records) || records.length === 0) return res.status(400).json({ error: 'records array required' });
+  const eventId = Number(req.params.id);
+  if (!Number.isSafeInteger(eventId)) return res.status(400).json({ error: 'Invalid event id' });
+  // absenceAlertEventId is a plain column, not an FK, so the cascade that clears
+  // the attendance records leaves it pointing at an event that no longer exists.
+  // That pins the "Absent 2 meetings in a row" banner on the roster with no way
+  // to clear it, and the "only alert once per absence" guard then suppresses the
+  // member's next real alert. Drop the flag with the event it referred to.
   const tx = db.transaction(() => {
-    for (const r of records) {
-      if (!ATTENDANCE_STATUSES.includes(r.status)) continue;
-      if (!r.userId && !r.rosterId) continue;
-      markAttendanceRecord(event.id, {
-        userId: r.userId ? Number(r.userId) : null,
-        rosterId: !r.userId && r.rosterId ? Number(r.rosterId) : null,
-        status: r.status,
-        markedById: req.user.id,
-      });
-    }
+    db.prepare(`UPDATE roster_members SET absenceAlertEventId = NULL, absenceContactedAt = NULL
+      WHERE absenceAlertEventId = ?`).run(eventId);
+    db.prepare('DELETE FROM attendance_events WHERE id = ?').run(eventId);
   });
   tx();
   res.json({ ok: true });
+});
+
+// One roll-call submission covers a whole meeting, so it is all-or-nothing:
+// every entry is validated up front and a single bad row rejects the batch.
+// Skipping unparseable entries (the old behaviour) reported success while
+// quietly leaving members unmarked — the worst possible failure for a register.
+const ROLL_CALL_MAX = 500;
+app.post('/api/attendance/:id/roll-call', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') return res.status(403).json({ error: 'Not allowed' });
+  const event = db.prepare('SELECT * FROM attendance_events WHERE id = ?').get(Number(req.params.id));
+  if (!event) return res.status(404).json({ error: 'Event not found' });
+  const { records } = req.body || {};
+  if (!Array.isArray(records) || records.length === 0) return res.status(400).json({ error: 'records array required' });
+  if (records.length > ROLL_CALL_MAX) {
+    return res.status(400).json({ error: `Too many records (max ${ROLL_CALL_MAX})` });
+  }
+
+  const resolved = [];
+  const errors = [];
+  const seen = new Set();
+  records.forEach((r, index) => {
+    if (!r || typeof r !== 'object' || Array.isArray(r)) { errors.push({ index, error: 'Each record must be an object' }); return; }
+    if (!ATTENDANCE_STATUSES.includes(r.status)) {
+      errors.push({ index, error: `status must be one of: ${ATTENDANCE_STATUSES.join(', ')}` });
+      return;
+    }
+    const who = resolveAttendee(event, r);
+    if (who.error) { errors.push({ index, error: who.error }); return; }
+    // A member listed twice with conflicting statuses is an ambiguous register,
+    // not something to silently resolve by taking whichever row happens to be last.
+    const key = who.userId != null ? `user:${who.userId}` : `roster:${who.rosterId}`;
+    if (seen.has(key)) { errors.push({ index, error: 'Duplicate entry for the same member' }); return; }
+    seen.add(key);
+    resolved.push({ ...who, status: r.status });
+  });
+  if (errors.length) return res.status(400).json({ error: 'Roll call rejected — no changes were saved', details: errors.slice(0, 20) });
+
+  const tx = db.transaction(() => {
+    for (const r of resolved) markAttendanceRecord(event.id, { ...r, markedById: req.user.id });
+  });
+  tx();
+  res.json({ ok: true, marked: resolved.length });
 });
 
 // ---- Budget Overview (privileged users) -------------------------------------
@@ -5253,6 +5349,15 @@ app.get('*', (req, res) => {
 app.use((err, req, res, next) => {
   console.error('Request error:', err);
   if (res.headersSent) return next(err);
+  // Bad input from the caller is a 4xx, not a server fault. Reporting these as
+  // 500 hides real breakage in the logs and tells the client to retry something
+  // that can never succeed.
+  if (err && err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request too large' });
+  }
+  if (err instanceof SyntaxError && 'body' in err) {
+    return res.status(400).json({ error: 'Malformed JSON body' });
+  }
   res.status(500).json({ error: 'Something went wrong' });
 });
 
