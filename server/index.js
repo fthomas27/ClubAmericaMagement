@@ -1996,24 +1996,13 @@ function findClubMemberByPhone(phone) {
   return null;
 }
 
-app.get('/api/roster', (req, res) => {
-  if (!canViewRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
-  const { grade, status } = req.query;
-  let sql = `SELECT r.*, u.displayName as claimedByName, ref.displayName as referredByName
-    FROM roster_members r
-    LEFT JOIN users u ON u.id = r.claimedByUserId
-    LEFT JOIN users ref ON ref.id = r.referredByUserId
-    WHERE 1=1`;
-  const params = [];
-  if (grade) { sql += ' AND r.grade = ?'; params.push(Number(grade)); }
-  if (status) { sql += ' AND r.status = ?'; params.push(status); }
-  sql += ' ORDER BY r.createdAt DESC';
-  res.json({ members: db.prepare(sql).all(...params), myGrade: req.user.managedGrade || null });
-});
-
-// Import all portal users (board members) as Onboarded roster entries, skipping duplicates.
-app.post('/api/roster/import-board', (req, res) => {
-  if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+// Keep every portal account (board member) mirrored onto the roster as a
+// 'Board Member' entry with linkedUserId set, so board-meeting attendance
+// (which is recorded against users.id, not roster_members.id) resolves back
+// to a roster row and shows up under that person's "View Activity" panel.
+// Idempotent: only inserts users who don't already have a roster row (matched
+// by email, falling back to name) and never touches existing rows.
+function syncBoardRoster() {
   const users = db.prepare('SELECT * FROM users').all();
   const existing = db.prepare('SELECT email, firstName, lastName FROM roster_members').all();
   const existingEmails = new Set(existing.map((r) => r.email?.toLowerCase()).filter(Boolean));
@@ -2026,6 +2015,7 @@ app.post('/api/roster/import-board', (req, res) => {
   let skipped = 0;
   const importMany = db.transaction(() => {
     for (const u of users) {
+      if (u.username === 'logistics') continue;
       const email = (u.email || '').trim().toLowerCase();
       const nameKey = `${(u.firstName || '').toLowerCase()}|${(u.lastName || '').toLowerCase()}`;
       if ((email && existingEmails.has(email)) || existingNames.has(nameKey)) {
@@ -2042,7 +2032,30 @@ app.post('/api/roster/import-board', (req, res) => {
     }
   });
   importMany();
-  res.json({ imported, skipped });
+  return { imported, skipped };
+}
+
+app.get('/api/roster', (req, res) => {
+  if (!canViewRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  try { syncBoardRoster(); } catch (e) { console.error('[roster] board sync failed:', e.message); }
+  const { grade, status } = req.query;
+  let sql = `SELECT r.*, u.displayName as claimedByName, ref.displayName as referredByName
+    FROM roster_members r
+    LEFT JOIN users u ON u.id = r.claimedByUserId
+    LEFT JOIN users ref ON ref.id = r.referredByUserId
+    WHERE 1=1`;
+  const params = [];
+  if (grade) { sql += ' AND r.grade = ?'; params.push(Number(grade)); }
+  if (status) { sql += ' AND r.status = ?'; params.push(status); }
+  sql += ' ORDER BY r.createdAt DESC';
+  res.json({ members: db.prepare(sql).all(...params), myGrade: req.user.managedGrade || null });
+});
+
+// Manual re-trigger, kept for admins who want to force a sync without reloading
+// the roster page (GET /api/roster already runs this automatically).
+app.post('/api/roster/import-board', (req, res) => {
+  if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
+  res.json(syncBoardRoster());
 });
 
 // Add-to-roster form. Open to EVERY authenticated member: roster managers add
@@ -2976,6 +2989,7 @@ function purgeInactiveRosterMembers() {
 }
 purgeInactiveRosterMembers();
 setInterval(purgeInactiveRosterMembers, 24 * 60 * 60 * 1000);
+try { syncBoardRoster(); } catch (e) { console.error('[roster] board sync failed:', e.message); }
 
 app.get('/api/attendance', async (req, res) => {
   if (!canManageAttendance(req.user)) return res.status(403).json({ error: 'Not allowed' });
