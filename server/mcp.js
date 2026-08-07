@@ -163,6 +163,45 @@ function buildServer(helpers) {
       return { created: db.prepare('SELECT * FROM tasks WHERE id = ?').get(info.lastInsertRowid) };
     });
 
+  tool('bulk_create_tasks',
+    'Create and directly assign many tasks in a single call (assigned as the site\'s admin, so no approval step). Prefer this over calling create_task repeatedly — it\'s one round trip instead of many, and each assignee gets a single summary notification instead of one per task.',
+    {
+      tasks: z.array(z.object({
+        assigneeUserId: id('users.id of the board member this task is for'),
+        name: z.string().min(1).max(300).describe('Short, actionable task title'),
+        description: z.string().max(5000).optional().describe('All supporting detail: contacts, amounts, context'),
+        dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Due date YYYY-MM-DD'),
+      })).min(1).max(200).describe('Up to 200 tasks to create in one call'),
+    },
+    ({ tasks }) => {
+      const actor = resolveActor();
+      const created = [];
+      const errors = [];
+      const byAssignee = new Map();
+      db.transaction(() => {
+        tasks.forEach((t, index) => {
+          const owner = getUser(t.assigneeUserId);
+          if (!owner) { errors.push({ index, name: t.name, error: `No user with id ${t.assigneeUserId} — call list_board_members for valid ids` }); return; }
+          const info = db.prepare(`INSERT INTO tasks (userId, name, description, dueDate, status, assignedById, approvalStatus)
+                                   VALUES (?, ?, ?, ?, 'Not Started', ?, 'approved')`)
+            .run(owner.id, t.name.trim(), (t.description || '').trim(), t.dueDate || null, actor ? actor.id : null);
+          created.push(db.prepare('SELECT * FROM tasks WHERE id = ?').get(info.lastInsertRowid));
+          if (!actor || owner.id !== actor.id) {
+            if (!byAssignee.has(owner.id)) byAssignee.set(owner.id, { owner, names: [] });
+            byAssignee.get(owner.id).names.push(t.name.trim());
+          }
+        });
+      })();
+      for (const { owner, names } of byAssignee.values()) {
+        const who = actor ? actor.displayName : 'Claude Assistant';
+        const msg = names.length === 1
+          ? `${who} assigned you a task: "${names[0]}"`
+          : `${who} assigned you ${names.length} new tasks: ${names.slice(0, 5).join(', ')}${names.length > 5 ? `, +${names.length - 5} more` : ''}`;
+        pushNotification(owner.id, msg, 'tasks', 'task');
+      }
+      return { createdCount: created.length, created, errors };
+    });
+
   tool('update_task',
     'Update a task\'s title, description, status, or due date.',
     {
@@ -190,6 +229,23 @@ function buildServer(helpers) {
       if (!t) reject(`Task ${taskId} not found`);
       db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
       return { deleted: t };
+    });
+
+  tool('bulk_delete_tasks',
+    'Permanently delete many tasks in a single call (and their comments/subtask links). Prefer this over calling delete_task repeatedly — it\'s one round trip instead of many.',
+    { taskIds: z.array(id('tasks.id')).min(1).max(500).describe('Up to 500 task ids to delete in one call') },
+    ({ taskIds }) => {
+      const deleted = [];
+      const notFound = [];
+      db.transaction(() => {
+        for (const taskId of taskIds) {
+          const t = db.prepare('SELECT id, name FROM tasks WHERE id = ?').get(taskId);
+          if (!t) { notFound.push(taskId); continue; }
+          db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
+          deleted.push(t);
+        }
+      })();
+      return { deletedCount: deleted.length, deleted, notFound };
     });
 
   tool('list_pending_approvals',
