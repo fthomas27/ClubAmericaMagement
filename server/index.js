@@ -4483,7 +4483,7 @@ app.get('/api/directory', (req, res) => {
 });
 
 // ---- Home feed / summary card -----------------------------------------------
-app.get('/api/me/summary', (req, res) => {
+app.get('/api/me/summary', async (req, res) => {
   const userId = req.user.id;
   const today = new Date().toISOString().slice(0, 10);
   const in7 = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
@@ -4501,10 +4501,30 @@ app.get('/api/me/summary', (req, res) => {
     checkinSubmitted = !!row;
   }
 
-  // All upcoming meetings
-  const upcomingMeetings = db.prepare(
+  // All upcoming meetings from the internal tracker...
+  const trackedMeetings = db.prepare(
     "SELECT id, title, meetingDate FROM meetings WHERE meetingDate >= ? ORDER BY meetingDate ASC"
   ).all(today);
+
+  // ...merged with the club's connected event calendar (the same feed Club
+  // Home shows), so board members see every event, not just tracked meetings.
+  let calendarEvents = [];
+  const calRow = db.prepare('SELECT calendarUrl FROM site_settings WHERE id = 1').get();
+  if (calRow && calRow.calendarUrl) {
+    try {
+      calendarEvents = (await fetchUpcoming(calRow.calendarUrl, 50)).map((e) => ({
+        id: 'cal-' + (e.uid || e.title + e.start.toISOString()),
+        title: e.title,
+        meetingDate: e.start.toISOString().slice(0, 10),
+      }));
+    } catch (_) {}
+  }
+  // De-dupe: a tracked meeting and a calendar entry for the same event share
+  // a title and date, so keep the tracked one (it links to agenda/minutes).
+  const trackedKeys = new Set(trackedMeetings.map((m) => (m.title || '').trim().toLowerCase() + '|' + m.meetingDate));
+  const upcomingMeetings = trackedMeetings
+    .concat(calendarEvents.filter((e) => !trackedKeys.has((e.title || '').trim().toLowerCase() + '|' + e.meetingDate)))
+    .sort((a, b) => a.meetingDate.localeCompare(b.meetingDate));
 
   // Open polls the user hasn't voted on yet
   const openPolls = db.prepare(
