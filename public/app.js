@@ -8315,7 +8315,7 @@ function HomeSummaryCard({ me, onNavigate }) {
         )}
         <button onClick={() => onNavigate({ type: 'meetings' })}
           className="border border-sky-500/30 bg-sky-500/5 rounded-xl p-3 text-left hover:brightness-110 transition-all active:scale-95">
-          <div className="text-cream/50 text-[10px] uppercase tracking-wide mb-1">Next Meeting</div>
+          <div className="text-cream/50 text-[10px] uppercase tracking-wide mb-1">Next Event</div>
           <div className="text-sm font-medium text-sky-300 truncate">
             {upcomingMeetings[0] ? upcomingMeetings[0].title : 'None scheduled'}
           </div>
