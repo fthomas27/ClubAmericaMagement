@@ -1012,17 +1012,104 @@ function TaskCard({ task, canEdit, onChange, onDelete, onOpenDetail }) {
 
 function TaskDetailModal({ task, onClose, canEdit, onChange, onDelete, me, users }) {
   const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState(null);
+  const [editError, setEditError] = useState('');
   useEffect(() => {
-    const fn = (e) => { if (e.key === 'Escape') onClose(); };
+    // Escape closes the modal, but while editing it should back out of the form
+    // first — otherwise a stray keypress silently discards everything typed.
+    const fn = (e) => {
+      if (e.key !== 'Escape') return;
+      if (editing) { setEditing(false); setEditError(''); } else onClose();
+    };
     document.addEventListener('keydown', fn);
     return () => document.removeEventListener('keydown', fn);
-  }, [onClose]);
+  }, [onClose, editing]);
   if (!task) return null;
   const recurringDays = task.isRecurring && task.recurringDays
     ? String(task.recurringDays).split(',').map(Number).filter((d) => d >= 0 && d <= 6).map((d) => DAY_LABELS[d]).join(', ')
     : null;
   const safeDocUrl = task.docUrl ? (task.docUrl.startsWith('http://') || task.docUrl.startsWith('https://') ? task.docUrl : 'https://' + task.docUrl) : '';
   const reports = (users || []).filter((u) => u.managerId === me?.id);
+
+  // Mirrors the server rule in PATCH /api/tasks/:id — admins and managers may
+  // rewrite a task, as may whoever assigned it (which covers a task you created
+  // for yourself). Everyone else may only move the status, so showing them an
+  // Edit button would just earn a 403. The server additionally scopes managers
+  // to their own reports via canViewTasksOf, but a task outside that scope never
+  // loads into this modal in the first place.
+  const canEditContent = !!me && (me.role === 'admin' || me.role === 'manager' || task.assignedById === me.id);
+
+  function startEditing() {
+    setForm({
+      name: task.name || '',
+      description: task.description || '',
+      dueDate: task.dueDate ? String(task.dueDate).slice(0, 10) : '',
+      docUrl: task.docUrl || '',
+      recurringDays: task.isRecurring && task.recurringDays
+        ? String(task.recurringDays).split(',').map(Number).filter((d) => d >= 0 && d <= 6)
+        : [],
+    });
+    setEditError('');
+    setEditing(true);
+  }
+
+  async function saveEdits(e) {
+    e.preventDefault();
+    if (!form.name.trim()) { setEditError('Task name cannot be blank.'); return; }
+    setSaving(true); setEditError('');
+    try {
+      await onChange(task, {
+        name: form.name.trim(),
+        description: form.description.trim(),
+        // null clears the date; '' would be stored as an empty due date.
+        dueDate: form.dueDate || null,
+        docUrl: form.docUrl.trim(),
+        isRecurring: form.recurringDays.length > 0 ? 1 : 0,
+        recurringDays: form.recurringDays.join(','),
+      });
+      setEditing(false);
+    } catch (err) { setEditError(err.message || 'Could not save changes.'); }
+    finally { setSaving(false); }
+  }
+
+  if (editing && form) {
+    return (
+      <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+        <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-lg w-full p-6 relative max-h-[85vh] overflow-y-auto ca-scale-in">
+          <h2 className="font-display text-2xl text-cream leading-tight mb-4">Edit Task</h2>
+          <form onSubmit={saveEdits} className="space-y-3">
+            <Field label="Task Name">
+              <input className={inputCls} value={form.name} autoFocus
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+            </Field>
+            <Field label="Description">
+              <textarea className={inputCls} rows="3" value={form.description}
+                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+            </Field>
+            <Field label="Due Date">
+              <input type="date" className={inputCls} value={form.dueDate}
+                onChange={(e) => setForm((f) => ({ ...f, dueDate: e.target.value }))} />
+            </Field>
+            <Field label="Document URL (optional)">
+              <input className={inputCls} value={form.docUrl} placeholder="https://docs.google.com/…"
+                onChange={(e) => setForm((f) => ({ ...f, docUrl: e.target.value }))} />
+            </Field>
+            <RecurringDaysPicker value={form.recurringDays}
+              onChange={(days) => setForm((f) => ({ ...f, recurringDays: days }))} />
+            {editError && <div className="text-red text-sm">{editError}</div>}
+            <div className="flex gap-2">
+              <Button type="submit" variant="gold" disabled={saving || !form.name.trim()}>
+                {saving ? <span className="flex items-center gap-2"><Spinner /> Saving…</span> : 'Save Changes'}
+              </Button>
+              <Button variant="ghost" onClick={() => { setEditing(false); setEditError(''); }} disabled={saving}>Cancel</Button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
       <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-lg w-full p-6 relative max-h-[85vh] overflow-y-auto ca-scale-in">
@@ -1064,11 +1151,23 @@ function TaskDetailModal({ task, onClose, canEdit, onChange, onDelete, me, users
               <option>Complete</option>
             </select>
             {saving && <span className="flex items-center gap-1 text-xs text-cream/40"><Spinner className="w-3 h-3" /> Saving…</span>}
-            {onDelete && (
-              <button onClick={() => onDelete(task)} className="text-xs text-red/80 hover:text-red ml-auto">
-                Delete
-              </button>
-            )}
+            <div className="ml-auto flex items-center gap-3">
+              {canEditContent && (
+                <button onClick={startEditing} className="text-xs text-gold/80 hover:text-gold">Edit</button>
+              )}
+              {onDelete && (
+                <button onClick={() => onDelete(task)} className="text-xs text-red/80 hover:text-red">
+                  Delete
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+        {/* A task still waiting on approval has no status control, but its
+            wording and dates are exactly what may need correcting first. */}
+        {canEdit && canEditContent && task.approvalStatus !== 'approved' && (
+          <div className="mt-4">
+            <button onClick={startEditing} className="text-xs text-gold/80 hover:text-gold">Edit</button>
           </div>
         )}
         {me && task.userId === me.id && task.approvalStatus === 'approved' && reports.length > 0 && (

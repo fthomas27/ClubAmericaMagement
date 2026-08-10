@@ -2682,13 +2682,15 @@ app.patch('/api/tasks/:id', (req, res) => {
   if (!canViewTasksOf(req.user, task.userId)) return res.status(403).json({ error: 'Not allowed' });
 
   const body = req.body || {};
-  const { status, name, description, dueDate, docUrl } = body;
+  const { status, name, description, dueDate, docUrl, isRecurring, recurringDays } = body;
   if (status && !STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status' });
   if (name !== undefined && !String(name).trim()) return res.status(400).json({ error: 'Task name cannot be blank' });
   const isOwnSelfCreated = task.userId === req.user.id && task.assignedById === req.user.id;
   const canEditContent = req.user.role === 'admin' || req.user.role === 'manager' ||
     task.assignedById === req.user.id || isOwnSelfCreated;
-  if (!canEditContent && (name !== undefined || description !== undefined || dueDate !== undefined || docUrl !== undefined)) {
+  const editsContent = name !== undefined || description !== undefined || dueDate !== undefined ||
+    docUrl !== undefined || isRecurring !== undefined || recurringDays !== undefined;
+  if (!canEditContent && editsContent) {
     return res.status(403).json({ error: 'You can only update the status of assigned tasks' });
   }
   const hasDueDate = 'dueDate' in body ? 1 : 0;
@@ -2697,15 +2699,27 @@ app.patch('/api/tasks/:id', (req, res) => {
     safeDocUrl = String(docUrl).trim().slice(0, 500);
     if (safeDocUrl && !/^https?:\/\//i.test(safeDocUrl)) safeDocUrl = '';
   }
+  // Repeat schedule, sanitised exactly as it is on create. Sent as a pair so
+  // turning recurrence off also clears the days that drove it — otherwise a
+  // task switched off keeps stale days and starts repeating again the moment
+  // anyone turns it back on.
+  const hasRecurring = 'isRecurring' in body ? 1 : 0;
+  const recurringFlag = isRecurring ? 1 : 0;
+  const safeRecurDays = recurringFlag
+    ? String(recurringDays || '').replace(/[^0-6,]/g, '').slice(0, 20)
+    : '';
 
   db.prepare(`UPDATE tasks SET
-       status      = COALESCE(?, status),
-       name        = COALESCE(?, name),
-       description = COALESCE(?, description),
-       dueDate     = CASE WHEN ? = 1 THEN ? ELSE dueDate END,
-       docUrl      = COALESCE(?, docUrl)
+       status        = COALESCE(?, status),
+       name          = COALESCE(?, name),
+       description   = COALESCE(?, description),
+       dueDate       = CASE WHEN ? = 1 THEN ? ELSE dueDate END,
+       docUrl        = COALESCE(?, docUrl),
+       isRecurring   = CASE WHEN ? = 1 THEN ? ELSE isRecurring END,
+       recurringDays = CASE WHEN ? = 1 THEN ? ELSE recurringDays END
      WHERE id = ?`)
-    .run(status || null, name || null, description ?? null, hasDueDate, dueDate ?? null, safeDocUrl, task.id);
+    .run(status || null, name || null, description ?? null, hasDueDate, dueDate ?? null, safeDocUrl,
+         hasRecurring, recurringFlag, hasRecurring, safeRecurDays, task.id);
 
   // When a recurring task is newly marked complete, automatically spawn the
   // next instance. Guard on the previous status so re-saving an already
