@@ -5332,6 +5332,23 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
           {member.claimedByName && (
             <div className="text-xs text-cream/40 mt-1">Managed by {member.claimedByName}</div>
           )}
+          {/* Approving a duplicate is the expensive mistake here, so the warning
+              sits above the Approve button rather than in the fine print. */}
+          {member.duplicateFlags && member.duplicateFlags.length > 0 && (
+            <div className="mt-2 bg-amber-500/10 border border-amber-400/40 rounded-lg px-3 py-2">
+              <div className="text-xs text-amber-300 font-medium flex items-center gap-1.5">
+                <AppIcon name="pin" size={13} />
+                Possible duplicate — already in the app
+              </div>
+              <ul className="mt-1 space-y-0.5">
+                {member.duplicateFlags.map((f, i) => (
+                  <li key={i} className={`text-xs ${f.severity === 'high' ? 'text-amber-200/90' : 'text-cream/55'}`}>
+                    • {f.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {member.referredByName && member.status === 'Pending' ? (
             // On a submission waiting to be approved, who gets the point is the
             // whole decision — say it in full instead of as fine print.

@@ -246,6 +246,25 @@ function init() {
     CREATE INDEX IF NOT EXISTS idx_ai_chat_session
       ON ai_chat_messages(userId, sessionId, createdAt);
 
+    -- Outstanding "approve this sign-up?" questions sent over Telegram, one row
+    -- per person asked. messageId is the DM we sent, so a Telegram reply to it
+    -- resolves to the right sign-up even when several are in flight at once.
+    -- Rows are kept after answering so a second approver gets told who acted.
+    CREATE TABLE IF NOT EXISTS roster_approval_requests (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      rosterId   INTEGER NOT NULL REFERENCES roster_members(id) ON DELETE CASCADE,
+      userId     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      chatId     TEXT NOT NULL,
+      messageId  TEXT NOT NULL DEFAULT '',
+      answer     TEXT NOT NULL DEFAULT '',
+      answeredAt TEXT,
+      createdAt  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_roster_approval_chat
+      ON roster_approval_requests(chatId, answer);
+    CREATE INDEX IF NOT EXISTS idx_roster_approval_roster
+      ON roster_approval_requests(rosterId);
+
     -- In-app notifications (delivered regardless of whether email is configured).
     CREATE TABLE IF NOT EXISTS notifications (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -96,6 +96,30 @@ function sendTelegram(chatId, text) {
     .catch((e) => console.warn('[telegram] send error:', e.message));
 }
 
+// Same send, but resolves to the sent message's id (or '' on any failure).
+// Asking a question needs that id: a Telegram reply carries the id of the
+// message it answers, which is what tells a bare "yes" which sign-up it means
+// when several are awaiting an answer at once.
+async function sendTelegramAsking(chatId, text) {
+  if (!TELEGRAM_BOT_TOKEN || !chatId || !text) return '';
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: String(text).slice(0, 4000), disable_web_page_preview: true }),
+    });
+    if (!r.ok) {
+      console.warn('[telegram] ask failed:', r.status, (await r.text()).slice(0, 200));
+      return '';
+    }
+    const j = await r.json();
+    return String((j && j.result && j.result.message_id) || '');
+  } catch (e) {
+    console.warn('[telegram] ask error:', e.message);
+    return '';
+  }
+}
+
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1); // behind Railway's proxy
@@ -663,8 +687,52 @@ app.post('/api/roster/self-submit', rateLimit({ windowMs: 60 * 60 * 1000, max: 3
       `${name} signed up through your referral link — it counts once the Secretary approves it.`,
       'referrals', 'info');
   }
+  // Ask the President and VP to approve it over Telegram, duplicates flagged.
+  // Deliberately not awaited: a slow or failing Telegram API must never make the
+  // student's sign-up appear to fail — the entry is already saved and still
+  // reviewable on the roster screen either way.
+  askApproversOverTelegram(Number(info.lastInsertRowid))
+    .catch((e) => console.warn('[signup] telegram approval request failed:', e.message));
   res.status(201).json({ ok: true, id: info.lastInsertRowid });
 });
+
+// DM each approver the new sign-up with any duplicate flags, and remember the
+// message we sent so their reply can be matched back to this person.
+async function askApproversOverTelegram(rosterId) {
+  if (!telegramEnabled()) return;
+  const m = db.prepare('SELECT * FROM roster_members WHERE id = ?').get(rosterId);
+  if (!m || m.status !== 'Pending') return;
+
+  const flags = duplicateFlagsFor({
+    firstName: m.firstName, lastName: m.lastName, phone: m.phone, email: m.email, excludeId: m.id,
+  });
+  const who = `${m.firstName || ''} ${m.lastName || ''}`.trim() || 'Someone';
+  const referrer = m.referredByUserId ? getUser(m.referredByUserId) : null;
+
+  const lines = [`🆕 New sign-up: ${who}`];
+  if (m.grade) lines.push(`Grade ${m.grade}`);
+  if (m.phone) lines.push(`Phone: ${m.phone}`);
+  if (m.email) lines.push(`Email: ${m.email}`);
+  if (referrer) lines.push(`Referred by: ${referrer.displayName}`);
+  if (m.notes) lines.push(`Notes: ${String(m.notes).slice(0, 300)}`);
+  if (flags.length) {
+    lines.push('', `⚠️ ${flags.length} possible duplicate${flags.length > 1 ? 's' : ''}:`);
+    for (const f of flags.slice(0, 6)) lines.push(`• ${f.message}`);
+  } else {
+    lines.push('', '✅ No duplicates found.');
+  }
+  lines.push('', `Approve them? Reply "yes" or "no" (or "yes ${m.id}" / "no ${m.id}").`);
+  const text = lines.join('\n');
+
+  const record = db.prepare(`INSERT INTO roster_approval_requests (rosterId, userId, chatId, messageId)
+    VALUES (?, ?, ?, ?)`);
+  for (const a of signupApprovers()) {
+    if (!a.telegramChatId) continue;
+    const messageId = await sendTelegramAsking(a.telegramChatId, text);
+    try { record.run(rosterId, a.id, String(a.telegramChatId), messageId); }
+    catch (e) { console.warn('[signup] recording approval request failed:', e.message); }
+  }
+}
 
 // Public click tracking — no auth required (visitors haven't logged in).
 app.post('/api/track', rateLimit({ windowMs: 60 * 1000, max: 120, name: 'track' }), (req, res) => {
@@ -1465,6 +1533,83 @@ app.post('/api/public/speaker-apply', rateLimit({ windowMs: 60 * 60 * 1000, max:
 // only thing gating it, so it must match TELEGRAM_WEBHOOK_SECRET. We only care
 // about the "/start <code>" a member sends when they tap their Connect link,
 // and "/stop" to unlink. Always answer 200 so Telegram doesn't retry.
+// A "yes"/"no" sent back to the bot approves or declines a pending sign-up.
+//
+// Authority comes from the account the chat is linked to, re-checked here on
+// every reply — never from the fact that we once sent this chat a question. If
+// someone loses roster rights (or the chat is relinked to a different account)
+// their old questions stop working immediately.
+function handleSignupReply(chatId, text, replyToMessageId) {
+  const m = String(text).trim().match(/^(yes|y|approve|approved|no|n|decline|declined|reject)\b\s*#?(\d+)?\s*$/i);
+  if (!m) return false;
+  const approve = /^(yes|y|approve|approved)$/i.test(m[1]);
+  const explicitId = m[2] ? Number(m[2]) : null;
+
+  const user = db.prepare("SELECT * FROM users WHERE telegramChatId = ? AND telegramChatId != ''").get(chatId);
+  if (!user) return false; // Unlinked chat — nothing to answer, stay silent.
+
+  const open = db.prepare("SELECT * FROM roster_approval_requests WHERE chatId = ? AND answer = '' ORDER BY id").all(chatId);
+  if (!open.length) {
+    sendTelegram(chatId, 'There\'s nothing waiting on your approval right now.');
+    return true;
+  }
+
+  // Which sign-up did they mean? An explicit id wins, then a Telegram reply to
+  // the specific question, and only then "the one outstanding question".
+  let target = null;
+  if (explicitId) {
+    target = open.find((r) => r.rosterId === explicitId);
+    if (!target) {
+      sendTelegram(chatId, `You don't have a pending question about #${explicitId}.`);
+      return true;
+    }
+  } else if (replyToMessageId) {
+    target = open.find((r) => r.messageId && r.messageId === replyToMessageId);
+  }
+  if (!target) {
+    if (open.length === 1) {
+      target = open[0];
+    } else {
+      // Guessing between several would silently approve the wrong student.
+      const list = open.map((r) => {
+        const p = db.prepare('SELECT firstName, lastName FROM roster_members WHERE id = ?').get(r.rosterId);
+        return `• ${(p ? `${p.firstName || ''} ${p.lastName || ''}`.trim() : 'Unknown')} — reply "${approve ? 'yes' : 'no'} ${r.rosterId}"`;
+      });
+      sendTelegram(chatId, `You have ${open.length} sign-ups waiting. Which one?\n${list.join('\n')}`);
+      return true;
+    }
+  }
+
+  const member = db.prepare('SELECT * FROM roster_members WHERE id = ?').get(target.rosterId);
+  const who = member ? `${member.firstName || ''} ${member.lastName || ''}`.trim() || 'That sign-up' : 'That sign-up';
+  if (!member) {
+    db.prepare("UPDATE roster_approval_requests SET answer = 'gone', answeredAt = datetime('now') WHERE id = ?").run(target.id);
+    sendTelegram(chatId, 'That sign-up no longer exists.');
+    return true;
+  }
+  if (!canWriteRoster(user)) {
+    sendTelegram(chatId, 'You no longer have permission to approve sign-ups.');
+    return true;
+  }
+  if (member.status !== 'Pending') {
+    closeApprovalRequests(member.id, user.id, approve ? 'yes' : 'no');
+    sendTelegram(chatId, `${who} was already handled (currently ${member.status}).`);
+    return true;
+  }
+
+  if (approve) {
+    approveRosterSubmission(member);
+    sendTelegram(chatId, `✅ Approved — ${who} is on the roster.`);
+  } else {
+    declineRosterSubmission(member.id);
+    sendTelegram(chatId, `🚫 Declined — ${who} was not added.`);
+  }
+  closeApprovalRequests(member.id, user.id, approve ? 'yes' : 'no');
+  notifyRosterManagers(
+    `${who} was ${approve ? 'approved' : 'declined'} by ${user.displayName} over Telegram.`, 'roster', 'info');
+  return true;
+}
+
 app.post('/api/telegram/webhook/:secret', (req, res) => {
   if (!telegramEnabled() || req.params.secret !== TELEGRAM_WEBHOOK_SECRET) {
     return res.status(404).json({ error: 'Not found' });
@@ -1489,6 +1634,9 @@ app.post('/api/telegram/webhook/:secret', (req, res) => {
       } else if (/^\/stop\b/i.test(text)) {
         db.prepare("UPDATE users SET telegramChatId = '' WHERE telegramChatId = ?").run(String(chatId));
         sendTelegram(chatId, '🔕 Done — you won\'t get Club America updates here anymore. Reconnect any time from your profile in the portal.');
+      } else {
+        const replyToId = msg.reply_to_message && msg.reply_to_message.message_id;
+        handleSignupReply(String(chatId), text, replyToId ? String(replyToId) : '');
       }
     }
   } catch (e) {
@@ -1996,6 +2144,75 @@ function findClubMemberByPhone(phone) {
   return null;
 }
 
+// Does this sign-up look like someone the club already has? Checked at review
+// time rather than stored, so a flag can't go stale as the roster changes around
+// it. Phone and email are near-certain matches; a name match is only a prompt to
+// look, since two students can share a name.
+//
+// excludeId keeps a submission from flagging itself once it is a roster row.
+function duplicateFlagsFor({ firstName, lastName, phone, email, excludeId = null }) {
+  const flags = [];
+  const digits = normalizePhone(phone);
+  const mail = String(email || '').trim().toLowerCase();
+  const fullName = `${String(firstName || '').trim()} ${String(lastName || '').trim()}`.trim().toLowerCase();
+
+  const label = (r) => `${r.firstName || ''} ${r.lastName || ''}`.trim() || 'a roster entry';
+  const roster = db.prepare('SELECT id, firstName, lastName, phone, email, status FROM roster_members').all()
+    .filter((r) => r.id !== excludeId);
+  const users = db.prepare("SELECT id, displayName, phone, email FROM users WHERE username != 'logistics'").all();
+
+  if (digits) {
+    for (const r of roster) {
+      if (normalizePhone(r.phone) === digits) {
+        flags.push({ kind: 'phone', severity: 'high', where: 'roster', id: r.id,
+          message: `Same phone number as ${label(r)} (${r.status}) already on the roster` });
+      }
+    }
+    for (const u of users) {
+      if (normalizePhone(u.phone) === digits) {
+        flags.push({ kind: 'phone', severity: 'high', where: 'board', id: u.id,
+          message: `Same phone number as board member ${u.displayName}` });
+      }
+    }
+  }
+  if (mail) {
+    for (const r of roster) {
+      if (String(r.email || '').trim().toLowerCase() === mail) {
+        flags.push({ kind: 'email', severity: 'high', where: 'roster', id: r.id,
+          message: `Same email as ${label(r)} (${r.status}) already on the roster` });
+      }
+    }
+    for (const u of users) {
+      if (String(u.email || '').trim().toLowerCase() === mail) {
+        flags.push({ kind: 'email', severity: 'high', where: 'board', id: u.id,
+          message: `Same email as board member ${u.displayName}` });
+      }
+    }
+  }
+  if (fullName) {
+    for (const r of roster) {
+      if (label(r).toLowerCase() === fullName) {
+        flags.push({ kind: 'name', severity: 'medium', where: 'roster', id: r.id,
+          message: `Same name as ${label(r)} (${r.status}) already on the roster` });
+      }
+    }
+    for (const u of users) {
+      if (String(u.displayName || '').trim().toLowerCase() === fullName) {
+        flags.push({ kind: 'name', severity: 'medium', where: 'board', id: u.id,
+          message: `Same name as board member ${u.displayName}` });
+      }
+    }
+  }
+  // One person matching on several fields is one duplicate, not three warnings.
+  const seen = new Set();
+  return flags.filter((f) => {
+    const key = `${f.kind}:${f.where}:${f.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 // Keep every portal account (board member) mirrored onto the roster as a
 // 'Board Member' entry with linkedUserId set, so board-meeting attendance
 // (which is recorded against users.id, not roster_members.id) resolves back
@@ -2048,7 +2265,15 @@ app.get('/api/roster', (req, res) => {
   if (grade) { sql += ' AND r.grade = ?'; params.push(Number(grade)); }
   if (status) { sql += ' AND r.status = ?'; params.push(status); }
   sql += ' ORDER BY r.createdAt DESC';
-  res.json({ members: db.prepare(sql).all(...params), myGrade: req.user.managedGrade || null });
+  const members = db.prepare(sql).all(...params).map((m) => (
+    // Only sign-ups still awaiting a decision carry flags — that is the moment
+    // the duplicate matters, and it keeps this off the whole-roster path.
+    m.status === 'Pending'
+      ? { ...m, duplicateFlags: duplicateFlagsFor({
+          firstName: m.firstName, lastName: m.lastName, phone: m.phone, email: m.email, excludeId: m.id }) }
+      : m
+  ));
+  res.json({ members, myGrade: req.user.managedGrade || null });
 });
 
 // Manual re-trigger, kept for admins who want to force a sync without reloading
@@ -2166,9 +2391,70 @@ app.post('/api/roster/:id/convert', (req, res) => {
   res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id) });
 });
 
+// The people asked to approve a sign-up: the President and VP by title, since
+// that is the club's actual approval authority. Falling back to admins keeps the
+// question reaching someone if those titles are ever renamed.
+function signupApprovers() {
+  const byTitle = db.prepare(
+    "SELECT id, displayName, telegramChatId FROM users WHERE title IN ('President', 'Vice President') AND username != 'logistics'"
+  ).all();
+  if (byTitle.length) return byTitle;
+  return db.prepare("SELECT id, displayName, telegramChatId FROM users WHERE role = 'admin' AND username != 'logistics'").all();
+}
+
+// Mark every outstanding Telegram question about this sign-up as answered, and
+// tell the other approver who handled it so two people don't both act on it.
+function closeApprovalRequests(rosterId, actorUserId, answer) {
+  let open = [];
+  try {
+    open = db.prepare("SELECT * FROM roster_approval_requests WHERE rosterId = ? AND answer = ''").all(rosterId);
+    if (!open.length) return;
+    db.prepare(`UPDATE roster_approval_requests SET answer = ?, answeredAt = datetime('now')
+      WHERE rosterId = ? AND answer = ''`).run(answer, rosterId);
+  } catch (e) {
+    console.warn('[signup] closing approval requests failed:', e.message);
+    return;
+  }
+  const actor = actorUserId ? getUser(actorUserId) : null;
+  const m = db.prepare('SELECT firstName, lastName FROM roster_members WHERE id = ?').get(rosterId);
+  const who = `${(m && m.firstName) || ''} ${(m && m.lastName) || ''}`.trim() || 'that sign-up';
+  const verdict = answer === 'yes' ? 'approved' : 'declined';
+  for (const r of open) {
+    // The person who acted already knows; only the others need telling.
+    if (actor && r.userId === actor.id) continue;
+    sendTelegram(r.chatId, `ℹ️ ${who} was ${verdict}${actor ? ` by ${actor.displayName}` : ''} — no reply needed.`);
+  }
+}
+
+// Approving and declining happen from two places now — the roster screen and a
+// Telegram reply — so the actual state changes live here and both callers go
+// through them. Anything else and the two paths drift: one awards the referral
+// point, the other quietly doesn't.
+function approveRosterSubmission(m, { grade, roleDescription } = {}) {
+  const awardsReferral = m.referredByUserId && m.referralStatus === 'pending';
+  db.prepare(`UPDATE roster_members SET status='Onboarded', convertedAt=datetime('now'),
+    grade=COALESCE(?,grade), roleDescription=COALESCE(?,roleDescription),
+    referralStatus=CASE WHEN ? THEN 'approved' ELSE referralStatus END, updatedAt=datetime('now')
+    WHERE id=?`).run(grade || null, roleDescription || null, awardsReferral ? 1 : 0, m.id);
+  if (awardsReferral) {
+    const name = `${m.firstName} ${m.lastName}`.trim();
+    pushNotification(m.referredByUserId, `Your referral of ${name} was approved — you earned a referral point!`, 'referrals', 'info');
+    sendReferralStandings(m.referredByUserId);
+  }
+  return db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id);
+}
+
+function declineRosterSubmission(rosterId) {
+  db.prepare(`UPDATE roster_members SET status='Declined', updatedAt=datetime('now') WHERE id=?`).run(rosterId);
+  return db.prepare('SELECT * FROM roster_members WHERE id=?').get(rosterId);
+}
+
 app.post('/api/roster/:id/decline', (req, res) => {
   if (!canWriteRoster(req.user)) return res.status(403).json({ error: 'Not allowed' });
-  db.prepare(`UPDATE roster_members SET status='Declined', updatedAt=datetime('now') WHERE id=?`).run(Number(req.params.id));
+  const id = Number(req.params.id);
+  declineRosterSubmission(id);
+  // Someone answered on the website, so stop asking about it over Telegram.
+  closeApprovalRequests(id, req.user.id, 'no');
   res.json({ ok: true });
 });
 
@@ -2184,19 +2470,9 @@ app.post('/api/roster/:id/approve', (req, res) => {
   if (grade != null && grade !== '' && !GRADES.includes(String(grade))) {
     return res.status(400).json({ error: 'Grade must be 9, 10, 11, or 12' });
   }
-  // Awarding the referral: a pending referral becomes 'approved' (counts on the
-  // leaderboard) and the referrer is notified they earned a point.
-  const awardsReferral = m.referredByUserId && m.referralStatus === 'pending';
-  db.prepare(`UPDATE roster_members SET status='Onboarded', convertedAt=datetime('now'),
-    grade=COALESCE(?,grade), roleDescription=COALESCE(?,roleDescription),
-    referralStatus=CASE WHEN ? THEN 'approved' ELSE referralStatus END, updatedAt=datetime('now')
-    WHERE id=?`).run(grade || null, roleDescription || null, awardsReferral ? 1 : 0, m.id);
-  if (awardsReferral) {
-    const name = `${m.firstName} ${m.lastName}`.trim();
-    pushNotification(m.referredByUserId, `Your referral of ${name} was approved — you earned a referral point!`, 'referrals', 'info');
-    sendReferralStandings(m.referredByUserId);
-  }
-  res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id) });
+  const member = approveRosterSubmission(m, { grade, roleDescription });
+  closeApprovalRequests(m.id, req.user.id, 'yes');
+  res.json({ member });
 });
 
 // Absence follow-up — "Remove": mark the member Inactive (they stay on the
