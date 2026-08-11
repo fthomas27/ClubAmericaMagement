@@ -5180,6 +5180,24 @@ app.delete('/api/volunteer-signups/:id', requireManagerOrAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// Manually resolve a "needs review" sign-up: link it to an existing roster
+// member (rosterId set) when the auto phone/email match missed, or dismiss
+// the flag with no link when it's confirmed to be a new person.
+app.patch('/api/volunteer-signups/:id/review', requireManagerOrAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const signup = db.prepare('SELECT id FROM volunteer_signups WHERE id = ?').get(id);
+  if (!signup) return res.status(404).json({ error: 'Not found' });
+  const { rosterId } = req.body || {};
+  if (rosterId != null) {
+    const member = db.prepare('SELECT id FROM roster_members WHERE id = ?').get(Number(rosterId));
+    if (!member) return res.status(400).json({ error: 'Roster member not found' });
+    db.prepare('UPDATE volunteer_signups SET matchedRosterId = ?, needsReview = 0 WHERE id = ?').run(Number(rosterId), id);
+  } else {
+    db.prepare('UPDATE volunteer_signups SET matchedRosterId = NULL, needsReview = 0 WHERE id = ?').run(id);
+  }
+  res.json({ ok: true });
+});
+
 // Roster cross-reference: volunteer events this roster member actually showed
 // up to. Signing up alone doesn't count — a volunteer manager has to check
 // them in at the event (attendedAt set) before it lands here.
