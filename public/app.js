@@ -956,6 +956,55 @@ function DelegateSubtask({ parentTask, reports }) {
   );
 }
 
+// Lets a manager move a task from one direct report to another, from the
+// task detail view on that report's task page (reached via My Team). Server
+// re-checks that the caller manages both the current and new owner.
+function TransferTaskControl({ task, teammates, onReassign }) {
+  const [open, setOpen] = useState(false);
+  const [targetUserId, setTargetUserId] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  if (!teammates || teammates.length === 0) return null;
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!targetUserId) return;
+    setLoading(true);
+    try { await onReassign(task, Number(targetUserId)); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="mt-3 pt-3 border-t border-cream/10">
+      {!open ? (
+        <button
+          onClick={() => setOpen(true)}
+          className="inline-flex items-center gap-1 text-xs font-medium text-sky-300 hover:text-sky-200 bg-sky-400/10 hover:bg-sky-400/20 border border-sky-400/30 rounded px-2.5 py-1 transition-colors"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3l4 4-4 4"/><path d="M21 7H7a4 4 0 0 0-4 4v1"/><path d="M7 21l-4-4 4-4"/><path d="M3 17h14a4 4 0 0 0 4-4v-1"/></svg>
+          Transfer to teammate
+        </button>
+      ) : (
+        <form onSubmit={submit} className="bg-navy border border-sky-400/30 rounded-lg p-3 space-y-2.5 ca-slide-up">
+          <div className="text-sm font-medium text-sky-300">Transfer this task</div>
+          <Field label="To">
+            <select className={inputCls} value={targetUserId} autoFocus onChange={(e) => setTargetUserId(e.target.value)}>
+              <option value="">Select a team member…</option>
+              {teammates.map((u) => <option key={u.id} value={u.id}>{u.displayName} — {u.title || roleLabel(u.role)}</option>)}
+            </select>
+          </Field>
+          <div className="flex gap-2">
+            <Button type="submit" variant="gold" disabled={loading || !targetUserId}>
+              {loading ? <span className="flex items-center gap-2"><Spinner /> Transferring…</span> : 'Transfer'}
+            </Button>
+            <Button variant="ghost" onClick={() => { setOpen(false); setTargetUserId(''); }} disabled={loading}>Cancel</Button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
 // Compact by design: full description, doc link, delegate control, and
 // comments live in TaskDetailModal (opened via the title). Keeping those out
 // of the card is what lets a whole list of tasks fit on a small screen
@@ -1010,7 +1059,7 @@ function TaskCard({ task, canEdit, onChange, onDelete, onOpenDetail }) {
   );
 }
 
-function TaskDetailModal({ task, onClose, canEdit, onChange, onDelete, me, users }) {
+function TaskDetailModal({ task, onClose, canEdit, onChange, onDelete, me, users, teammates, onReassign }) {
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(null);
@@ -1173,6 +1222,11 @@ function TaskDetailModal({ task, onClose, canEdit, onChange, onDelete, me, users
         {me && task.userId === me.id && task.approvalStatus === 'approved' && reports.length > 0 && (
           <div className="mt-4">
             <DelegateSubtask parentTask={task} reports={reports} />
+          </div>
+        )}
+        {task.approvalStatus === 'approved' && teammates && teammates.length > 0 && (
+          <div className="mt-4">
+            <TransferTaskControl task={task} teammates={teammates} onReassign={onReassign} />
           </div>
         )}
         {me && (
@@ -1729,6 +1783,9 @@ function TaskPage({ me, userId, users, refreshSignal, onNavigate }) {
   const [detailTask, setDetailTask] = useState(null);
   const isSelf = userId === me.id;
   const canManagePage = !isSelf && (me.role === 'admin' || me.role === 'manager');
+  // Other people this manager could hand a task off to, from this report's
+  // page — the "transfer" control under My Team.
+  const teammates = canManagePage ? (users || []).filter((u) => u.managerId === me.id && u.id !== userId) : [];
 
   const load = useCallback(async () => {
     setError('');
@@ -1759,6 +1816,13 @@ function TaskPage({ me, userId, users, refreshSignal, onNavigate }) {
       load();
       return true;
     } catch (err) { setError(err.message); return false; }
+  }
+  async function reassignTask(task, newOwnerId) {
+    try {
+      await api(`/tasks/${task.id}`, { method: 'PATCH', body: { reassignToId: newOwnerId } });
+      setDetailTask(null);
+      load();
+    } catch (err) { setError(err.message); }
   }
 
   function reloadSettings(newSettings) {
@@ -1878,6 +1942,8 @@ function TaskPage({ me, userId, users, refreshSignal, onNavigate }) {
           onDelete={async (t) => { if (await deleteTask(t)) setDetailTask(null); }}
           me={me}
           users={users}
+          teammates={teammates}
+          onReassign={reassignTask}
         />
       )}
 
