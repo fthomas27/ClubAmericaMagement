@@ -1783,9 +1783,15 @@ function TaskPage({ me, userId, users, refreshSignal, onNavigate }) {
   const [detailTask, setDetailTask] = useState(null);
   const isSelf = userId === me.id;
   const canManagePage = !isSelf && (me.role === 'admin' || me.role === 'manager');
-  // Other people this manager could hand a task off to, from this report's
-  // page — the "transfer" control under My Team.
-  const teammates = canManagePage ? (users || []).filter((u) => u.managerId === me.id && u.id !== userId) : [];
+  // Other people this task could be handed off to, from this report's page —
+  // the "transfer" control under My Team. Mirrors the server rule in
+  // PATCH /api/tasks/:id: an admin may move a task to anyone, while a manager
+  // is limited to their own direct reports. Admins see the whole board under
+  // My Team, so limiting them to their own reports would leave the President —
+  // who has a single direct report — with nobody to transfer to.
+  const teammates = !canManagePage ? [] : (users || []).filter(
+    (u) => u.id !== userId && (me.role === 'admin' || u.managerId === me.id)
+  );
 
   const load = useCallback(async () => {
     setError('');
