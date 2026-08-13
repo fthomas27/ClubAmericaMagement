@@ -9340,6 +9340,9 @@ function VolunteerManagerPage({ me }) {
   const [newRoleName, setNewRoleName] = useState('');
   const [newRoleCap, setNewRoleCap] = useState('');
   const [copied, setCopied] = useState(null);
+  const [reviewingId, setReviewingId] = useState(null);
+  const [rosterQuery, setRosterQuery] = useState('');
+  const [rosterList, setRosterList] = useState(null);
   const { loading, error, setError, run } = useAction();
 
   const loadAll = useCallback(async () => {
@@ -9424,6 +9427,32 @@ function VolunteerManagerPage({ me }) {
     navigator.clipboard.writeText(url).catch(() => {});
     setCopied(id);
     setTimeout(() => setCopied(null), 2000);
+  }
+
+  async function openReview(signupId) {
+    if (reviewingId === signupId) { setReviewingId(null); return; }
+    setReviewingId(signupId);
+    setRosterQuery('');
+    if (rosterList === null) {
+      try { const d = await api('/roster'); setRosterList(d.members || []); }
+      catch (e) { setError(e.message); setRosterList([]); }
+    }
+  }
+
+  async function linkToRoster(signupId, eventId, rosterId) {
+    await run(async () => {
+      await api('/volunteer-signups/' + signupId + '/review', { method: 'PATCH', body: { rosterId } });
+      setReviewingId(null);
+      await loadSignups(eventId);
+    });
+  }
+
+  async function dismissReview(signupId, eventId) {
+    await run(async () => {
+      await api('/volunteer-signups/' + signupId + '/review', { method: 'PATCH', body: { rosterId: null } });
+      setReviewingId(null);
+      await loadSignups(eventId);
+    });
   }
 
   const managedById = {};
@@ -9559,7 +9588,8 @@ function VolunteerManagerPage({ me }) {
                           {signups[ev.id].length} Sign-up{signups[ev.id].length !== 1 ? 's' : ''}
                         </div>
                         {signups[ev.id].map((s) => (
-                          <div key={s.id} className="flex items-start gap-3 text-sm border-b border-cream/5 pb-2">
+                          <React.Fragment key={s.id}>
+                          <div className="flex items-start gap-3 text-sm border-b border-cream/5 pb-2">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="font-medium text-cream text-sm">{s.name}</span>
@@ -9573,9 +9603,10 @@ function VolunteerManagerPage({ me }) {
                                   </span>
                                 )}
                                 {s.needsReview ? (
-                                  <span className="text-xs text-orange-400 bg-orange-500/10 border border-orange-500/20 rounded-full px-1.5 py-0.5">
+                                  <button onClick={() => openReview(s.id)}
+                                    className="text-xs text-orange-400 bg-orange-500/10 border border-orange-500/20 hover:border-orange-500/50 rounded-full px-1.5 py-0.5 transition-colors">
                                     Needs Review
-                                  </span>
+                                  </button>
                                 ) : null}
                                 {s.attendedAt && (
                                   <span className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-full px-1.5 py-0.5">
@@ -9600,9 +9631,47 @@ function VolunteerManagerPage({ me }) {
                                 }`}>
                                 {s.attendedAt ? 'Undo Present' : 'Mark Present'}
                               </button>
+                              {s.needsReview && (
+                                <button onClick={() => openReview(s.id)} className="text-xs text-orange-400/70 hover:text-orange-300">
+                                  {reviewingId === s.id ? 'Close' : 'Review'}
+                                </button>
+                              )}
                               <button onClick={() => removeSignup(s.id, ev.id)} className="text-xs text-red/40 hover:text-red">Remove</button>
                             </div>
                           </div>
+                          {reviewingId === s.id && (
+                            <div className="bg-navy3 border border-orange-500/20 rounded-lg p-3 -mt-1 mb-1 space-y-2">
+                              <div className="text-xs text-cream/50">
+                                No phone/email match was found on the roster for <span className="text-cream/80 font-medium">{s.name}</span>. Link this sign-up to an existing member, or confirm they're not on the roster.
+                              </div>
+                              <input value={rosterQuery} onChange={(e) => setRosterQuery(e.target.value)} placeholder="Search roster by name…"
+                                className="w-full bg-navy2 border border-cream/20 rounded px-2 py-1.5 text-xs text-cream placeholder-cream/30 focus:outline-none focus:border-gold/40" />
+                              <div className="max-h-40 overflow-y-auto space-y-1">
+                                {rosterList === null && <div className="text-xs text-cream/30">Loading roster…</div>}
+                                {rosterList !== null && rosterQuery.trim() && rosterList
+                                  .filter((m) => `${m.firstName} ${m.lastName}`.toLowerCase().includes(rosterQuery.trim().toLowerCase()))
+                                  .slice(0, 8)
+                                  .map((m) => (
+                                    <button key={m.id} onClick={() => linkToRoster(s.id, ev.id, m.id)} disabled={loading}
+                                      className="w-full text-left text-xs bg-navy2 hover:bg-navy border border-cream/10 hover:border-gold/30 rounded px-2 py-1.5 transition-colors disabled:opacity-40">
+                                      <span className="text-cream">{m.firstName} {m.lastName}</span>
+                                      <span className="text-cream/40 ml-2">{m.grade ? `Grade ${m.grade}` : ''} {m.phone || m.email || ''}</span>
+                                    </button>
+                                  ))}
+                                {rosterList !== null && rosterQuery.trim() &&
+                                  rosterList.filter((m) => `${m.firstName} ${m.lastName}`.toLowerCase().includes(rosterQuery.trim().toLowerCase())).length === 0 && (
+                                  <div className="text-xs text-cream/30">No roster members match "{rosterQuery.trim()}".</div>
+                                )}
+                              </div>
+                              <div className="flex justify-end">
+                                <button onClick={() => dismissReview(s.id, ev.id)} disabled={loading}
+                                  className="text-xs text-cream/40 hover:text-cream disabled:opacity-40">
+                                  Not on roster — dismiss
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          </React.Fragment>
                         ))}
                       </div>
                     )}
