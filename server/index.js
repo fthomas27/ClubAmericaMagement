@@ -2958,7 +2958,7 @@ app.patch('/api/tasks/:id', (req, res) => {
   if (!canViewTasksOf(req.user, task.userId)) return res.status(403).json({ error: 'Not allowed' });
 
   const body = req.body || {};
-  const { status, name, description, dueDate, docUrl, isRecurring, recurringDays } = body;
+  const { status, name, description, dueDate, docUrl, isRecurring, recurringDays, reassignToId } = body;
   if (status && !STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status' });
   if (name !== undefined && !String(name).trim()) return res.status(400).json({ error: 'Task name cannot be blank' });
   const isOwnSelfCreated = task.userId === req.user.id && task.assignedById === req.user.id;
@@ -2968,6 +2968,22 @@ app.patch('/api/tasks/:id', (req, res) => {
     docUrl !== undefined || isRecurring !== undefined || recurringDays !== undefined;
   if (!canEditContent && editsContent) {
     return res.status(403).json({ error: 'You can only update the status of assigned tasks' });
+  }
+
+  // Transferring a task to someone else: only a manager common to both the
+  // current and new owner (or an admin) may move it — this is what backs the
+  // "transfer" control on a report's task page under My Team.
+  let newOwner = null;
+  if (reassignToId !== undefined && reassignToId !== null && reassignToId !== '') {
+    const newOwnerId = Number(reassignToId);
+    if (!Number.isInteger(newOwnerId)) return res.status(400).json({ error: 'Invalid assignee' });
+    if (newOwnerId !== task.userId) {
+      newOwner = getUser(newOwnerId);
+      if (!newOwner) return res.status(404).json({ error: 'New assignee not found' });
+      const canReassign = req.user.role === 'admin' ||
+        (isManagerOf(req.user, task.userId) && isManagerOf(req.user, newOwnerId));
+      if (!canReassign) return res.status(403).json({ error: 'Not allowed to transfer this task' });
+    }
   }
   const hasDueDate = 'dueDate' in body ? 1 : 0;
   let safeDocUrl = null;
@@ -2992,10 +3008,11 @@ app.patch('/api/tasks/:id', (req, res) => {
        dueDate       = CASE WHEN ? = 1 THEN ? ELSE dueDate END,
        docUrl        = COALESCE(?, docUrl),
        isRecurring   = CASE WHEN ? = 1 THEN ? ELSE isRecurring END,
-       recurringDays = CASE WHEN ? = 1 THEN ? ELSE recurringDays END
+       recurringDays = CASE WHEN ? = 1 THEN ? ELSE recurringDays END,
+       userId        = COALESCE(?, userId)
      WHERE id = ?`)
     .run(status || null, name || null, description ?? null, hasDueDate, dueDate ?? null, safeDocUrl,
-         hasRecurring, recurringFlag, hasRecurring, safeRecurDays, task.id);
+         hasRecurring, recurringFlag, hasRecurring, safeRecurDays, newOwner ? newOwner.id : null, task.id);
 
   // When a recurring task is newly marked complete, automatically spawn the
   // next instance. Guard on the previous status so re-saving an already
@@ -3007,6 +3024,17 @@ app.patch('/api/tasks/:id', (req, res) => {
                 VALUES (?, ?, ?, ?, 'Not Started', ?, 'approved', ?, ?, 1, ?)`)
       .run(updatedTask.userId, updatedTask.name, updatedTask.description, nextDate,
            updatedTask.assignedById, updatedTask.approverId, updatedTask.docUrl || '', updatedTask.recurringDays);
+  }
+
+  if (newOwner) {
+    const prevOwner = getUser(task.userId);
+    notify(newOwner.email, 'A task was transferred to you', 'Task transferred to you',
+      `<b>${escHtml(req.user.displayName)}</b> transferred the task <b>${escHtml(updatedTask.name)}</b> to you` +
+      (prevOwner ? ` from <b>${escHtml(prevOwner.displayName)}</b>.` : '.'));
+    pushNotification(newOwner.id, `${req.user.displayName} transferred a task to you: "${updatedTask.name}"`, 'tasks', 'task');
+    if (prevOwner && prevOwner.id !== req.user.id) {
+      pushNotification(prevOwner.id, `${req.user.displayName} transferred your task "${updatedTask.name}" to ${newOwner.displayName}`, 'tasks', 'task');
+    }
   }
 
   res.json({ task: taskWithNames(updatedTask) });
