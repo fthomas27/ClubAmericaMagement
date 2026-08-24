@@ -907,6 +907,14 @@ function init() {
       WHERE trim(email) != '' AND email IS NOT NULL`);
   } catch (_) {}
 
+  // Backfill: onboarded roster members predate the roster->newsletter autofill
+  // and were never enrolled — catch them up the same way new ones are now.
+  try {
+    db.exec(`INSERT OR IGNORE INTO newsletter_subscribers (email, name, source)
+      SELECT lower(trim(email)), trim(firstName || ' ' || lastName), 'auto' FROM roster_members
+      WHERE status = 'Onboarded' AND trim(email) != '' AND email IS NOT NULL`);
+  } catch (_) {}
+
   // Remove the old dedicated logistics observer account — the dashboard is now
   // accessible to admins directly and via the canViewLogistics permission.
   db.prepare("DELETE FROM users WHERE username = 'logistics'").run();
