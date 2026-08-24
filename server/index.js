@@ -2243,7 +2243,10 @@ function syncBoardRoster() {
         u.firstName || u.displayName, u.lastName || '',
         u.email || '', u.grade ? String(u.grade) : null, u.id
       );
-      if (email) existingEmails.add(email);
+      if (email) {
+        existingEmails.add(email);
+        newsletterEnroll(u.email, u.displayName || `${u.firstName || ''} ${u.lastName || ''}`.trim(), 'auto');
+      }
       existingNames.add(nameKey);
       imported++;
     }
@@ -2328,7 +2331,9 @@ app.post('/api/roster', (req, res) => {
     // so they already know, and nobody else needs a ping about a new sign-up.
     notifySecretary(`${req.user.displayName} referred ${name} — approve it in the roster to award the referral.`, 'roster', 'submission');
   }
-  res.status(201).json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(info.lastInsertRowid) });
+  const created = db.prepare('SELECT * FROM roster_members WHERE id=?').get(info.lastInsertRowid);
+  syncRosterNewsletter(created);
+  res.status(201).json({ member: created });
 });
 
 app.patch('/api/roster/:id', (req, res) => {
@@ -2355,7 +2360,9 @@ app.patch('/api/roster/:id', (req, res) => {
     gender??null, roleDescription??null, status??null, notes??null,
     parentFormCollected !== undefined ? (parentFormCollected ? 1 : 0) : null, m.id
   );
-  res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id) });
+  const updated = db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id);
+  syncRosterNewsletter(updated);
+  res.json({ member: updated });
 });
 
 app.delete('/api/roster/:id', (req, res) => {
@@ -2388,7 +2395,9 @@ app.post('/api/roster/:id/convert', (req, res) => {
   db.prepare(`UPDATE roster_members SET status='Onboarded', convertedAt=datetime('now'),
     grade=COALESCE(?,grade), roleDescription=COALESCE(?,roleDescription), updatedAt=datetime('now')
     WHERE id=?`).run(grade||null, roleDescription||null, m.id);
-  res.json({ member: db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id) });
+  const converted = db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id);
+  syncRosterNewsletter(converted);
+  res.json({ member: converted });
 });
 
 // The people asked to approve a sign-up: the President and VP by title, since
@@ -2441,7 +2450,9 @@ function approveRosterSubmission(m, { grade, roleDescription } = {}) {
     pushNotification(m.referredByUserId, `Your referral of ${name} was approved — you earned a referral point!`, 'referrals', 'info');
     sendReferralStandings(m.referredByUserId);
   }
-  return db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id);
+  const updated = db.prepare('SELECT * FROM roster_members WHERE id=?').get(m.id);
+  syncRosterNewsletter(updated);
+  return updated;
 }
 
 function declineRosterSubmission(rosterId) {
@@ -5435,6 +5446,15 @@ function newsletterEnroll(email, name, source = 'auto') {
       "INSERT OR IGNORE INTO newsletter_subscribers (email, name, source) VALUES (?, ?, ?)"
     ).run(e, n, source);
   } catch (_) {}
+}
+
+// Keep the newsletter list in sync with the roster: once someone is an actual
+// (Onboarded) member and has an email on file, they should be subscribed
+// automatically — nobody should have to remember to add them by hand.
+// newsletterEnroll is INSERT OR IGNORE, so calling this repeatedly is safe.
+function syncRosterNewsletter(member) {
+  if (!member || member.status !== 'Onboarded' || !member.email) return;
+  newsletterEnroll(member.email, `${member.firstName} ${member.lastName || ''}`.trim(), 'auto');
 }
 
 // NOTE: the public newsletter signup route (POST /api/newsletter/subscribe)

@@ -37,6 +37,20 @@ function getUser(id) {
   return db.prepare('SELECT * FROM users WHERE id = ?').get(Number(id));
 }
 
+// Mirrors index.js's syncRosterNewsletter: once a roster member is Onboarded
+// and has an email on file, keep them subscribed to the newsletter automatically.
+function syncRosterNewsletter(member) {
+  if (!member || member.status !== 'Onboarded') return;
+  const email = String(member.email || '').trim().toLowerCase();
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return;
+  const name = `${member.firstName || ''} ${member.lastName || ''}`.trim().slice(0, 120);
+  try {
+    db.prepare(
+      "INSERT OR IGNORE INTO newsletter_subscribers (email, name, source) VALUES (?, ?, 'auto')"
+    ).run(email, name);
+  } catch (_) {}
+}
+
 // The board account MCP actions run as. Assignments, approvals, and audit-log
 // entries carry this user's name so the rest of the app reads naturally.
 function resolveActor() {
@@ -727,7 +741,9 @@ function buildServer(helpers) {
                                VALUES (?, ?, ?, ?, ?, ?, ?)`)
         .run(firstName.trim(), (lastName || '').trim(), (phone || '').trim(), (email || '').trim(),
              grade ? Number(grade) : null, status || 'Prospect', (notes || '').trim());
-      return { created: db.prepare('SELECT * FROM roster_members WHERE id = ?').get(info.lastInsertRowid) };
+      const created = db.prepare('SELECT * FROM roster_members WHERE id = ?').get(info.lastInsertRowid);
+      syncRosterNewsletter(created);
+      return { created };
     });
 
   tool('update_roster_member',
@@ -756,7 +772,9 @@ function buildServer(helpers) {
         notes = COALESCE(?, notes), updatedAt = datetime('now') WHERE id = ?`)
         .run(firstName ?? null, lastName ?? null, phone ?? null, email ?? null,
              grade ? Number(grade) : null, status ?? null, notes ?? null, memberId);
-      return { updated: db.prepare('SELECT * FROM roster_members WHERE id = ?').get(memberId) };
+      const updated = db.prepare('SELECT * FROM roster_members WHERE id = ?').get(memberId);
+      syncRosterNewsletter(updated);
+      return { updated };
     });
 
   // ---- Funding, reimbursements, grants -------------------------------------
