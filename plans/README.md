@@ -11,12 +11,64 @@ otherwise.
 
 | # | Title | Severity | Category | Files | Status |
 |---|---|---|---|---|---|
-| [001](001-motion-tokens.md) | Introduce easing and duration tokens | HIGH | Easing / Cohesion | `index.html` | TODO |
-| [002](002-replace-transition-all.md) | Replace `transition-all` with explicit property lists | HIGH | Performance | `app.js` | TODO |
+| [001](001-motion-tokens.md) | Introduce easing and duration tokens | HIGH | Easing / Cohesion | `index.html` | **DONE** |
+| [002](002-replace-transition-all.md) | Replace `transition-all` with explicit property lists | HIGH | Performance | `app.js` | **DONE** |
+| [003](003-reduced-motion-coverage.md) | Close the `prefers-reduced-motion` coverage gap | HIGH | Accessibility | `index.html` | **DONE** |
+| [004](004-progress-bars-scalex.md) | Drive progress bars with `scaleX()` instead of `width` | MEDIUM | Performance | `app.js` | **DONE (modified)** |
+| [005](005-gate-hover-motion.md) | Gate hover motion behind `@media (hover: hover)` | MEDIUM | Accessibility | `index.html` | **DONE** |
 
-| [003](003-reduced-motion-coverage.md) | Close the `prefers-reduced-motion` coverage gap | HIGH | Accessibility | `index.html` | TODO |
-| [004](004-progress-bars-scalex.md) | Drive progress bars with `scaleX()` instead of `width` | MEDIUM | Performance | `app.js` | TODO |
-| [005](005-gate-hover-motion.md) | Gate hover motion behind `@media (hover: hover)` | MEDIUM | Accessibility | `index.html` | TODO |
+## Execution record
+
+All five plans were applied. Two deviations, both deliberate:
+
+**Plan 004 — did not convert to `scaleX()`.** The seven progress bars now use
+`transition-[width] duration-500 ease-out` instead. `scaleX` scales an element's
+border-radius along with it, turning the `rounded-full` fills into distorted
+ellipses, and the fix for that (dropping the fill's rounding and relying on the
+track's clip) squares off the right edge — clearly visible on the `h-5` bar at
+`app.js:7574`. That is a real visual regression traded for an imperceptible
+performance gain on bars that animate once per data load, not per frame. The
+explicit property list achieves the actual goal — no element watches *all*
+properties any more — at zero risk. Plan 004's own "Honest scoping" section
+anticipated this outcome.
+
+**The stagger finding was wrong and was dropped.** The audit listed "no stagger
+on card grids" as a missed opportunity. It is incorrect: `TileGrid`
+(`app.js:10041`) already staggers its tiles with an inline
+`animationDelay: ${i * 28}ms`, and the only other entrance-animated element in a
+list position (`app.js:3951`) is a single carousel item, not a grid. A
+`.ca-stagger` utility was written and then removed rather than shipped unused.
+Its one useful side effect was kept: reduced motion now zeroes those inline
+delays, which it previously did not.
+
+**Added beyond the plans** — the modal backdrop fade from the "missed
+opportunities" list, since it is the only change in this batch that a sighted
+desktop user will actually notice. `.ca-backdrop` is applied to all 13 modal
+scrims, so the dark overlay now fades in over 260ms alongside the panel's
+scale-in instead of hard-cutting behind it.
+
+### Verification performed
+
+The app itself cannot render in the authoring sandbox — React, Tailwind and
+Babel all load from CDNs that are unreachable there — so the CSS was extracted
+into a standalone harness and driven in real Chromium via Playwright:
+
+- All six referenced tokens resolve in-browser to their intended values; no
+  console errors; entrances render and settle correctly.
+- Under `prefers-reduced-motion: reduce`: `.ca-scale-in` re-points to the
+  opacity-only `ca-fade-in` keyframe, inline stagger delays zero out, and both
+  the hover lift and the `group-hover` icon zoom compute to `transform: none`.
+- Under touch emulation: `(hover: hover)` correctly reports false, and both
+  transforms compute to `none` — while on desktop the same elements keep their
+  lift, confirming the gate does not over-apply.
+- The `app.js` diff is 73 changed line pairs (51 + 2 + 7 + 13, matching the
+  plans exactly) and every quote, backtick, brace and paren count is preserved
+  on every edited line, so no JSX string was structurally altered.
+
+**Not verified, and needs a human:** the real UI. Nobody has seen these changes
+in the actual app. The feel checks in each plan — modal backdrops fading, the
+snappier entrance curves, carousel dots stretching rather than snapping — still
+need running against a browser that can reach the CDNs.
 
 ## Recommended execution order
 

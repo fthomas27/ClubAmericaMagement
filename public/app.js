@@ -99,7 +99,7 @@ function Badge({ children, tone = 'gold' }) {
     blue: 'bg-sky-500/15 text-sky-300 border-sky-500/40',
   };
   return (
-    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border transition-all duration-200 ${tones[tone] || tones.slate}`}>
+    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border transition duration-200 ${tones[tone] || tones.slate}`}>
       {children}
     </span>
   );
@@ -186,7 +186,7 @@ function Button({ children, onClick, variant = 'primary', type = 'button', class
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className={`px-4 py-2 rounded-md text-sm transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 ${variants[variant]} ${className}`}
+      className={`px-4 py-2 rounded-md text-sm transition duration-150 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 ${variants[variant]} ${className}`}
     >
       {children}
     </button>
@@ -270,7 +270,7 @@ function SuccessMark({ className = '' }) {
 //   if (await confirm({ message: '…', danger: true })) { … }
 function ConfirmDialog({ title = 'Are you sure?', message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false, onConfirm, onCancel }) {
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onCancel}>
+    <div className="ca-backdrop fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onCancel}>
       <div className="bg-navy2 border border-cream/15 rounded-xl p-5 max-w-sm w-full ca-scale-in" onClick={(e) => e.stopPropagation()}>
         <div className="font-display text-lg text-gold mb-1">{title}</div>
         {message && <p className="text-sm text-cream/70 mb-4 whitespace-pre-wrap">{message}</p>}
@@ -647,7 +647,7 @@ function CropModal({ src, onCrop, onCancel }) {
 
   const HS = 14;
   return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
+    <div className="ca-backdrop fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
       onMouseMove={onMove} onMouseUp={() => setDrag(null)} onMouseLeave={() => setDrag(null)}>
       <div className="bg-navy2 border border-cream/10 rounded-xl p-5 max-w-2xl w-full ca-scale-in">
         <div className="font-display text-xl text-gold mb-1">Crop Photo</div>
@@ -1124,7 +1124,7 @@ function TaskDetailModal({ task, onClose, canEdit, onChange, onDelete, me, users
 
   if (editing && form) {
     return (
-      <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+      <div onClick={onClose} className="ca-backdrop fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
         <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-lg w-full p-6 relative max-h-[85vh] overflow-y-auto ca-scale-in">
           <h2 className="font-display text-2xl text-cream leading-tight mb-4">Edit Task</h2>
           <form onSubmit={saveEdits} className="space-y-3">
@@ -1160,7 +1160,7 @@ function TaskDetailModal({ task, onClose, canEdit, onChange, onDelete, me, users
   }
 
   return (
-    <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+    <div onClick={onClose} className="ca-backdrop fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
       <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-lg w-full p-6 relative max-h-[85vh] overflow-y-auto ca-scale-in">
         <button onClick={onClose} aria-label="Close" className="absolute top-2 right-4 text-cream/60 hover:text-cream text-3xl leading-none">×</button>
         <div className="flex items-start justify-between gap-3 pr-6">
@@ -1251,7 +1251,7 @@ function RecurringDaysPicker({ value, onChange }) {
       <div className="flex gap-1.5 flex-wrap">
         {DAY_LABELS.map((label, d) => (
           <button key={d} type="button" onClick={() => toggle(d)}
-            className={`px-2.5 py-1 rounded text-xs font-medium transition-all duration-150 ${days.includes(d) ? 'bg-gold text-navy' : 'bg-navy border border-cream/20 text-cream/60 hover:border-gold/50 hover:text-gold'}`}>
+            className={`px-2.5 py-1 rounded text-xs font-medium transition duration-150 ${days.includes(d) ? 'bg-gold text-navy' : 'bg-navy border border-cream/20 text-cream/60 hover:border-gold/50 hover:text-gold'}`}>
             {label}
           </button>
         ))}
@@ -1369,9 +1369,9 @@ function Toggle({ enabled, onChange, disabled }) {
       onClick={onChange}
       disabled={disabled}
       aria-pressed={!!enabled}
-      className={`relative w-12 h-7 rounded-full transition-all duration-200 disabled:opacity-50 shrink-0 ${enabled ? 'bg-emerald-500 shadow-md shadow-emerald-500/30' : 'bg-cream/20'}`}
+      className={`relative w-12 h-7 rounded-full transition duration-200 disabled:opacity-50 shrink-0 ${enabled ? 'bg-emerald-500 shadow-md shadow-emerald-500/30' : 'bg-cream/20'}`}
     >
-      <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-all duration-200 ${enabled ? 'translate-x-5' : ''}`} />
+      <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition duration-200 ${enabled ? 'translate-x-5' : ''}`} />
     </button>
   );
 }
@@ -1383,7 +1383,7 @@ function BannerLink({ title, url }) {
       href={safeUrl || '#'}
       target={safeUrl && safeUrl !== '#' ? '_blank' : undefined}
       rel="noopener noreferrer"
-      className="block w-full bg-gold/15 border border-gold/40 rounded-xl px-6 py-5 text-center font-display text-2xl text-gold hover:bg-gold/25 hover:border-gold/70 hover:shadow-md hover:shadow-gold/10 transition-all duration-200 active:scale-[0.99]"
+      className="block w-full bg-gold/15 border border-gold/40 rounded-xl px-6 py-5 text-center font-display text-2xl text-gold hover:bg-gold/25 hover:border-gold/70 hover:shadow-md hover:shadow-gold/10 transition duration-200 active:scale-[0.99]"
     >
       {title || 'Click Here →'}
     </a>
@@ -1520,7 +1520,7 @@ function PageAdminControls({ targetUser, onUpdated }) {
     <div className="mb-4">
       <button
         onClick={() => setOpen(true)}
-        className="text-sm text-gold/60 hover:text-gold flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gold/20 hover:border-gold/50 transition-all duration-150 active:scale-95"
+        className="text-sm text-gold/60 hover:text-gold flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-gold/20 hover:border-gold/50 transition duration-150 active:scale-95"
       >
         Page Settings
       </button>
@@ -1562,7 +1562,7 @@ function PageAdminControls({ targetUser, onUpdated }) {
                         // focused input's onBlur can fire a save and disable this button.
                         onMouseDown={(e) => { e.preventDefault(); removeBannerLink(i); }}
                         disabled={busy}
-                        className="text-red/70 hover:text-red text-sm px-2 py-0.5 rounded border border-red/20 hover:border-red/50 transition-all disabled:opacity-40"
+                        className="text-red/70 hover:text-red text-sm px-2 py-0.5 rounded border border-red/20 hover:border-red/50 transition disabled:opacity-40"
                       >
                         Remove
                       </button>
@@ -1589,7 +1589,7 @@ function PageAdminControls({ targetUser, onUpdated }) {
                   // flips `busy` and disables this button.
                   onMouseDown={(e) => { e.preventDefault(); addBannerLink(); }}
                   disabled={busy}
-                  className="text-sm text-gold/70 hover:text-gold px-3 py-1.5 rounded-md border border-gold/20 hover:border-gold/50 transition-all disabled:opacity-40"
+                  className="text-sm text-gold/70 hover:text-gold px-3 py-1.5 rounded-md border border-gold/20 hover:border-gold/50 transition disabled:opacity-40"
                 >
                   + Add banner link
                 </button>
@@ -2057,7 +2057,7 @@ function Approvals({ onChanged, refreshSignal }) {
       )}
       <div className="space-y-3">
         {(items || []).map((t) => (
-          <div key={t.id} className="bg-navy2 border border-gold/30 rounded-lg p-4 hover:border-gold/50 hover:shadow-md hover:shadow-black/20 transition-all duration-200">
+          <div key={t.id} className="bg-navy2 border border-gold/30 rounded-lg p-4 hover:border-gold/50 hover:shadow-md hover:shadow-black/20 transition duration-200">
             <div className="font-medium text-cream">{t.name}</div>
             {t.description && <div className="text-sm text-cream/60 mt-1">{t.description}</div>}
             <div className="text-xs text-cream/50 mt-2">
@@ -2118,7 +2118,7 @@ function SubmissionsInbox({ onChanged, refreshSignal }) {
       )}
       <div className="space-y-3">
         {(items || []).map((s) => (
-          <div key={s.id} className={`bg-navy2 border rounded-lg p-4 transition-all duration-200 hover:shadow-md hover:shadow-black/20 ${s.handled ? 'border-cream/10 opacity-70' : 'border-gold/30 hover:border-gold/50'}`}>
+          <div key={s.id} className={`bg-navy2 border rounded-lg p-4 transition duration-200 hover:shadow-md hover:shadow-black/20 ${s.handled ? 'border-cream/10 opacity-70' : 'border-gold/30 hover:border-gold/50'}`}>
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div className="font-medium text-cream">{s.name} <span className="text-cream/40 text-sm">· {s.email}</span></div>
               <div className="flex gap-2 flex-wrap">
@@ -2151,7 +2151,7 @@ function OrgNode({ title, name, tone = 'gold', children }) {
   const titleColor = tone === 'red' ? 'text-red' : 'text-gold';
   return (
     <div className="flex flex-col items-center">
-      <div className={`bg-navy2 border-2 ${ring} rounded-xl px-5 py-3 text-center min-w-[160px] sm:min-w-[200px] shadow-xl hover:shadow-2xl hover:-translate-y-0.5 transition-all duration-200`}>
+      <div className={`bg-navy2 border-2 ${ring} rounded-xl px-5 py-3 text-center min-w-[160px] sm:min-w-[200px] shadow-xl hover:shadow-2xl hover:-translate-y-0.5 transition duration-200`}>
         <div className={`font-display text-lg sm:text-xl ${titleColor} leading-tight font-bold`}>{title}</div>
         {name && <div className="text-sm sm:text-base text-cream/90 mt-0.5 font-medium">{name}</div>}
       </div>
@@ -2364,7 +2364,7 @@ function EditMemberModal({ user, onSaved, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="ca-backdrop fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <form onSubmit={save} onClick={(e) => e.stopPropagation()}
         className="bg-navy2 border border-gold/30 rounded-xl p-6 max-w-md w-full space-y-4 ca-scale-in">
         <div className="font-display text-2xl text-gold">Edit Profile</div>
@@ -2720,7 +2720,7 @@ function AdminPanel({ users, reload }) {
                               <button key={type} disabled={saving}
                                 onClick={() => toggleTab(u, type)}
                                 title={isHidden ? `Show "${label}"` : `Hide "${label}"`}
-                                className={`px-2.5 py-0.5 rounded-full text-[11px] border transition-all disabled:opacity-40 ${
+                                className={`px-2.5 py-0.5 rounded-full text-[11px] border transition disabled:opacity-40 ${
                                   isHidden
                                     ? 'bg-transparent border-cream/15 text-cream/25 line-through'
                                     : 'bg-gold/10 border-gold/30 text-gold/80 hover:bg-gold/20'
@@ -2911,7 +2911,7 @@ function MeetingCard({ home, events, volunteerEvents = [] }) {
   volunteerEvents.forEach((v) => { volMap[v.icalUid] = v; });
   const origin = window.location.origin;
   return (
-    <section className="h-full bg-navy2 border border-gold/30 rounded-2xl p-6 hover:border-gold/50 hover:shadow-lg hover:shadow-black/20 transition-all duration-200">
+    <section className="h-full bg-navy2 border border-gold/30 rounded-2xl p-6 hover:border-gold/50 hover:shadow-lg hover:shadow-black/20 transition duration-200">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-3xl text-gold">{hasEvents ? 'Upcoming Events' : 'Next Meeting'}</h2>
         <span className="text-gold/50"><AppIcon name="calendar" size={22} /></span>
@@ -2963,7 +2963,7 @@ function MeetingCard({ home, events, volunteerEvents = [] }) {
 function PodcastCard({ home }) {
   const id = ytId(home.podcastUrl);
   return (
-    <section className="h-full bg-navy2 border border-red/30 rounded-2xl p-6 hover:border-red/50 hover:shadow-lg hover:shadow-black/20 transition-all duration-200">
+    <section className="h-full bg-navy2 border border-red/30 rounded-2xl p-6 hover:border-red/50 hover:shadow-lg hover:shadow-black/20 transition duration-200">
       <div className="flex items-center justify-between">
         <h2 className="font-display text-3xl text-red">The Podcast</h2>
         <span className="text-red/60"><AppIcon name="speaker" size={22} /></span>
@@ -3140,7 +3140,7 @@ function GetInvolved() {
 
   const TabBtn = ({ id, children }) => (
     <button type="button" onClick={() => { setTab(id); setDone(false); setError(''); }}
-      className={`px-4 py-2 rounded-md text-sm transition-all duration-150 active:scale-95 ${tab === id ? 'bg-red text-cream shadow-md shadow-red/20' : 'bg-navy border border-cream/20 text-cream/70 hover:border-gold hover:text-cream/90'}`}>
+      className={`px-4 py-2 rounded-md text-sm transition duration-150 active:scale-95 ${tab === id ? 'bg-red text-cream shadow-md shadow-red/20' : 'bg-navy border border-cream/20 text-cream/70 hover:border-gold hover:text-cream/90'}`}>
       {children}
     </button>
   );
@@ -3226,7 +3226,7 @@ function SpeakerQuestionInput({ q, value, onChange }) {
       <div className="flex gap-2">
         {['Yes', 'No'].map((opt) => (
           <button key={opt} type="button" onClick={() => onChange(opt)}
-            className={`px-6 py-2 rounded-md text-sm transition-all active:scale-95 ${value === opt
+            className={`px-6 py-2 rounded-md text-sm transition active:scale-95 ${value === opt
               ? 'bg-red text-cream shadow-md shadow-red/20'
               : 'bg-navy border border-cream/20 text-cream/70 hover:border-gold hover:text-cream/90'}`}>
             {opt}
@@ -3432,7 +3432,7 @@ function ValuesSection() {
       {values.map((v, i) => (
         <Reveal key={v.title} delay={i * 140} className="h-full">
           <Card3D maxTilt={5} className="h-full">
-            <div className={`h-full bg-navy2 border rounded-2xl p-6 text-center space-y-3 hover:-translate-y-1 hover:shadow-lg hover:shadow-black/25 transition-all duration-200 ${v.cardCls}`}>
+            <div className={`h-full bg-navy2 border rounded-2xl p-6 text-center space-y-3 hover:-translate-y-1 hover:shadow-lg hover:shadow-black/25 transition duration-200 ${v.cardCls}`}>
               <h3 className={`font-display text-2xl ${v.titleCls}`}>{v.title}</h3>
               <p className="text-cream/60 text-sm leading-relaxed">{v.text}</p>
             </div>
@@ -3556,7 +3556,7 @@ function ShopPage() {
 // Stripe confirms it, so don't claim payment was received.
 function CheckoutSuccessModal({ result, onClose }) {
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
+    <div className="ca-backdrop fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
       <div className="bg-navy2 border border-cream/15 rounded-xl p-6 max-w-md w-full ca-scale-in text-center space-y-3" onClick={(e) => e.stopPropagation()}>
         <div className="text-4xl">{result.processing ? '⏳' : result.deliveryMethod === 'digital' ? '❤️' : '🎉'}</div>
         <div className="font-display text-xl text-gold">
@@ -3677,7 +3677,7 @@ function OrderModal({ item, config, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
+    <div className="ca-backdrop fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
       <div className="bg-navy2 border border-cream/15 rounded-xl p-6 max-w-md w-full ca-scale-in max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
@@ -3891,7 +3891,7 @@ function EventPhotos() {
       )}
 
       {lightbox && (
-        <div onClick={() => setLightbox(null)} className="fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4">
+        <div onClick={() => setLightbox(null)} className="ca-backdrop fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4">
           <div onClick={(e) => e.stopPropagation()} className="max-w-3xl w-full ca-scale-in">
             <button onClick={() => setLightbox(null)} aria-label="Close" className="block ml-auto mb-2 text-cream/70 hover:text-cream text-4xl leading-none">×</button>
             <img src={`/api/event-photos/${lightbox.id}/image`} alt={lightbox.caption || 'Event photo'}
@@ -3968,7 +3968,7 @@ function InstagramFeed({ home }) {
             <div className="flex justify-center gap-1.5 mt-3">
               {items.map((_, i) => (
                 <button key={i} onClick={() => setIdx(i)} aria-label={`Go to ${i + 1}`}
-                  className={`h-2 rounded-full transition-all ${i === safeIdx ? 'w-5 bg-gold' : 'w-2 bg-cream/25 hover:bg-cream/50'}`} />
+                  className={`h-2 rounded-full transition-[width,background-color] duration-200 ease-out ${i === safeIdx ? 'w-5 bg-gold' : 'w-2 bg-cream/25 hover:bg-cream/50'}`} />
               ))}
             </div>
           </>
@@ -4251,7 +4251,7 @@ function BoardModal({ member, onClose, me, onNavigate }) {
   }, [onClose]);
   const isMe = !!(me && me.id === member.id);
   return (
-    <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+    <div onClick={onClose} className="ca-backdrop fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
       <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-md w-full p-6 relative max-h-[85vh] overflow-y-auto ca-scale-in">
         <button onClick={onClose} aria-label="Close" className="absolute top-2 right-4 text-cream/60 hover:text-cream text-3xl leading-none">×</button>
         <div className="flex items-center gap-4">
@@ -4305,7 +4305,7 @@ function MeetTheBoard({ me, onNavigate }) {
   const MemberCard = (m) => (
     <Card3D maxTilt={7}>
       <button onClick={() => { setSel(m); track('board_profile', m.displayName); }}
-        className={`bg-navy2 border rounded-xl px-4 py-3 flex flex-col items-center gap-2 w-36 hover:-translate-y-1 hover:shadow-md hover:shadow-black/30 transition-all duration-200 ${m.bigBoard ? 'border-red/70 hover:border-red' : 'border-cream/15 hover:border-gold'}`}>
+        className={`bg-navy2 border rounded-xl px-4 py-3 flex flex-col items-center gap-2 w-36 hover:-translate-y-1 hover:shadow-md hover:shadow-black/30 transition duration-200 ${m.bigBoard ? 'border-red/70 hover:border-red' : 'border-cream/15 hover:border-gold'}`}>
         <Avatar member={m} size={56} />
         <div className="text-cream text-sm font-medium text-center leading-tight">{m.displayName}</div>
         <div className="text-gold/80 text-xs text-center leading-tight">{m.title || roleLabel(m.role)}</div>
@@ -4986,16 +4986,16 @@ function PublicHomePage({ home, cards, onNavigate }) {
             <div className="mt-9 flex flex-wrap gap-3 justify-center items-center ca-fade-in"
               style={{ animationDelay: '950ms', animationDuration: '0.8s', transform: 'translateZ(50px)' }}>
               <button onClick={() => onNavigate('involved')}
-                className="px-8 py-3.5 bg-red hover:bg-red/85 text-cream font-semibold rounded-lg transition-all shadow-lg shadow-red/25 text-sm active:scale-95 hover:shadow-xl hover:shadow-red/35 hover:-translate-y-0.5">
+                className="px-8 py-3.5 bg-red hover:bg-red/85 text-cream font-semibold rounded-lg transition shadow-lg shadow-red/25 text-sm active:scale-95 hover:shadow-xl hover:shadow-red/35 hover:-translate-y-0.5">
                 Get Involved →
               </button>
               <button onClick={() => onNavigate('board')}
-                className="px-8 py-3.5 border border-gold/50 text-gold hover:bg-gold/10 rounded-lg transition-all text-sm font-medium active:scale-95 hover:-translate-y-0.5">
+                className="px-8 py-3.5 border border-gold/50 text-gold hover:bg-gold/10 rounded-lg transition text-sm font-medium active:scale-95 hover:-translate-y-0.5">
                 Meet the Board
               </button>
               {home.donationUrl && (
                 <a href={ensureHttps(home.donationUrl)} target="_blank" rel="noopener"
-                  className="px-8 py-3.5 bg-gold hover:bg-gold/90 text-navy font-semibold rounded-lg transition-all shadow-lg shadow-gold/25 text-sm active:scale-95 hover:shadow-xl hover:shadow-gold/35 hover:-translate-y-0.5 flex items-center gap-2">
+                  className="px-8 py-3.5 bg-gold hover:bg-gold/90 text-navy font-semibold rounded-lg transition shadow-lg shadow-gold/25 text-sm active:scale-95 hover:shadow-xl hover:shadow-gold/35 hover:-translate-y-0.5 flex items-center gap-2">
                   <span aria-hidden="true">♥</span> Donate
                 </a>
               )}
@@ -5389,7 +5389,7 @@ function RosterMemberRow({ member, me, onAction, onEdit, canDelete }) {
     : null;
 
   return (
-    <div className="bg-navy2 border border-cream/10 rounded-lg p-4 hover:border-cream/20 transition-all duration-200">
+    <div className="bg-navy2 border border-cream/10 rounded-lg p-4 hover:border-cream/20 transition duration-200">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="min-w-0">
           <div className="font-medium text-cream">{member.firstName} {member.lastName}</div>
@@ -5698,7 +5698,7 @@ function EditRosterMemberModal({ member, onSaved, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+    <div className="ca-backdrop fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
       <form onSubmit={submit} className="w-full max-w-lg bg-navy2 border border-cream/10 rounded-xl p-5 space-y-3 max-h-screen overflow-y-auto ca-scale-in">
         <div className="flex items-center justify-between">
           <div className="font-display text-xl text-gold">Edit Member</div>
@@ -5799,7 +5799,7 @@ function ReferralLeaderboard({ me, refreshSignal }) {
             const isLeader = i === 0 && rep.count > 0;
             return (
               <div key={rep.id}
-                className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 ${
+                className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition duration-200 ${
                   isLeader ? 'bg-gold/15 border border-gold/40 hover:border-gold/60' :
                   isMe ? 'bg-navy border border-cream/20 hover:border-cream/30' : 'bg-navy/40 hover:bg-navy/60'
                 }`}>
@@ -6345,7 +6345,7 @@ function RosterPage({ me }) {
         <div className="flex gap-1 mb-5 flex-wrap">
           {tabs.map((t) => (
             <button key={t.key} onClick={() => setTab(t.key)}
-              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-150 active:scale-95 ${tab === t.key ? 'bg-red text-cream shadow-md shadow-red/20' : 'bg-navy2 border border-cream/15 text-cream/70 hover:border-cream/30'}`}>
+              className={`px-4 py-1.5 rounded-full text-sm font-medium transition duration-150 active:scale-95 ${tab === t.key ? 'bg-red text-cream shadow-md shadow-red/20' : 'bg-navy2 border border-cream/15 text-cream/70 hover:border-cream/30'}`}>
               {t.label} <span className="text-xs opacity-60">({counts[t.key]})</span>
             </button>
           ))}
@@ -6601,7 +6601,7 @@ function FundingRequestPage({ me }) {
       )}
       <div className="space-y-3">
         {(requests || []).map((r) => (
-          <div key={r.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-all duration-200">
+          <div key={r.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition duration-200">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
                 <div className="font-medium text-cream">{r.title}</div>
@@ -6730,7 +6730,7 @@ function BoardApplicationsPage({ me }) {
       )}
       <div className="space-y-3">
         {(apps || []).map((a) => (
-          <div key={a.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition-all duration-200">
+          <div key={a.id} className="bg-navy2 border border-cream/10 rounded-xl p-4 hover:border-cream/20 transition duration-200">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
                 <div className="font-medium text-cream">{a.positionTitle}</div>
@@ -6872,7 +6872,7 @@ function AdminDashboardPage({ me }) {
       <div className="flex gap-1 bg-navy2 border border-cream/10 rounded-lg p-1 w-fit">
         {[['overview','Overview'],['teamtasks','Team Tasks']].map(([t,label]) => (
           <button key={t} onClick={() => { setActiveTab(t); if (t === 'teamtasks' && !teamTasks) loadTeamTasks(); }}
-            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-150 ${activeTab === t ? 'bg-gold text-navy' : 'text-cream/60 hover:text-cream'}`}>
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition duration-150 ${activeTab === t ? 'bg-gold text-navy' : 'text-cream/60 hover:text-cream'}`}>
             {label}
           </button>
         ))}
@@ -6980,7 +6980,7 @@ function AdminDashboardPage({ me }) {
           { label: 'Pending Task Approvals', count: counts.tasks, color: 'text-red' },
           ...(checkinEnabled ? [{ label: 'Missing Check-Ins', count: counts.missingCheckins || 0, color: 'text-orange-300' }] : []),
         ].map(({ label, count, color }) => (
-          <div key={label} className="bg-navy2 border border-cream/10 rounded-xl p-5 text-center hover:border-cream/20 hover:-translate-y-0.5 hover:shadow-md hover:shadow-black/20 transition-all duration-200">
+          <div key={label} className="bg-navy2 border border-cream/10 rounded-xl p-5 text-center hover:border-cream/20 hover:-translate-y-0.5 hover:shadow-md hover:shadow-black/20 transition duration-200">
             <div className={`font-display text-4xl ${color}`}>{count}</div>
             <div className="text-cream/60 text-sm mt-1">{label}</div>
           </div>
@@ -7014,7 +7014,7 @@ function AdminDashboardPage({ me }) {
         {pendingFunding.length === 0 && <div className="text-cream/40">None pending.</div>}
         <div className="space-y-3">
           {pendingFunding.map((r) => (
-            <div key={r.id} className="bg-navy2 border border-gold/20 rounded-xl p-4 hover:border-gold/35 transition-all duration-200">
+            <div key={r.id} className="bg-navy2 border border-gold/20 rounded-xl p-4 hover:border-gold/35 transition duration-200">
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div>
                   <div className="font-medium text-cream">{r.title}</div>
@@ -7206,7 +7206,7 @@ function LogisticsPage() {
   const TabBtn = ({ id, label }) => (
     <button
       onClick={() => setTab(id)}
-      className={`text-sm px-4 py-2 border-b-2 transition-all duration-150 ${
+      className={`text-sm px-4 py-2 border-b-2 transition duration-150 ${
         tab === id ? 'border-gold text-gold' : 'border-transparent text-cream/50 hover:text-cream/80'
       }`}
     >
@@ -7429,7 +7429,7 @@ function LogisticsPage() {
                           <span className="text-cream/50">{r.count} click{r.count !== 1 ? 's' : ''} <span className="text-cream/30">· today: {r.todayCount || 0}</span></span>
                         </div>
                         <div className="h-2 bg-navy rounded-full overflow-hidden">
-                          <div className="h-full rounded-full bg-gold transition-all" style={{ width: `${pct}%` }} />
+                          <div className="h-full rounded-full bg-gold transition-[width] duration-500 ease-out" style={{ width: `${pct}%` }} />
                         </div>
                       </div>
                     );
@@ -7515,7 +7515,7 @@ function LogisticsPage() {
                       </div>
                       <div className="h-2 bg-navy rounded-full overflow-hidden">
                         <div
-                          className={`h-full rounded-full transition-all ${colors[i % colors.length]}`}
+                          className={`h-full rounded-full transition-[width] duration-500 ease-out ${colors[i % colors.length]}`}
                           style={{ width: `${pct}%` }}
                         />
                       </div>
@@ -7571,7 +7571,7 @@ function StatBar({ label, count, total, color = 'bg-gold', leading = null }) {
         {leading}<span className="truncate">{label}</span>
       </div>
       <div className="flex-1 h-5 bg-cream/5 rounded overflow-hidden">
-        <div className={`h-full ${color} rounded transition-all duration-500`} style={{ width: `${Math.max(pct, count > 0 ? 3 : 0)}%` }} />
+        <div className={`h-full ${color} rounded transition-[width] duration-500 ease-out`} style={{ width: `${Math.max(pct, count > 0 ? 3 : 0)}%` }} />
       </div>
       <div className="w-16 shrink-0 text-right text-cream/60 text-xs tabular-nums">
         {count} <span className="text-cream/30">· {pct}%</span>
@@ -7723,7 +7723,7 @@ function SiteActivityPage({ isAdmin = false }) {
   const TabBtn = ({ id, label }) => (
     <button
       onClick={() => setTab(id)}
-      className={`text-sm px-4 py-2 border-b-2 transition-all duration-150 whitespace-nowrap ${
+      className={`text-sm px-4 py-2 border-b-2 transition duration-150 whitespace-nowrap ${
         tab === id ? 'border-gold text-gold' : 'border-transparent text-cream/50 hover:text-cream/80'
       }`}
     >
@@ -8062,7 +8062,7 @@ function AINotesPanel({ onClose, onRead }) {
   }
 
   return (
-    <div onClick={onClose} className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+    <div onClick={onClose} className="ca-backdrop fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
       <div onClick={(e) => e.stopPropagation()} className="bg-navy2 border border-gold/30 rounded-2xl max-w-lg w-full p-6 relative max-h-[80vh] overflow-y-auto ca-scale-in">
         <button onClick={onClose} aria-label="Close" className="absolute top-2 right-4 text-cream/60 hover:text-cream text-3xl leading-none">×</button>
         <div className="font-display text-2xl text-gold mb-1">AI Notes</div>
@@ -8073,7 +8073,7 @@ function AINotesPanel({ onClose, onRead }) {
         )}
         <div className="space-y-3">
           {notes.map((n) => (
-            <div key={n.id} className={`rounded-lg p-4 border transition-all duration-200 ${n.isRead ? 'border-cream/10 bg-navy hover:border-cream/20' : 'border-gold/40 bg-gold/5 hover:border-gold/60'}`}>
+            <div key={n.id} className={`rounded-lg p-4 border transition duration-200 ${n.isRead ? 'border-cream/10 bg-navy hover:border-cream/20' : 'border-gold/40 bg-gold/5 hover:border-gold/60'}`}>
               <div className="text-sm text-cream/85 whitespace-pre-wrap leading-relaxed">{n.content}</div>
               <div className="flex items-center justify-between mt-2">
                 <span className="text-xs text-cream/35">{new Date(n.createdAt).toLocaleDateString()}</span>
@@ -8488,7 +8488,7 @@ function HomeSummaryCard({ me, onNavigate }) {
       {/* Status bar */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <button onClick={() => onNavigate({ type: 'mytasks' })}
-          className={`border rounded-xl p-3 text-left hover:brightness-110 transition-all active:scale-95 ${tasksDueSoon > 0 ? 'border-gold/30 bg-gold/5' : 'border-emerald-500/30 bg-emerald-500/5'}`}>
+          className={`border rounded-xl p-3 text-left hover:brightness-110 transition active:scale-95 ${tasksDueSoon > 0 ? 'border-gold/30 bg-gold/5' : 'border-emerald-500/30 bg-emerald-500/5'}`}>
           <div className="text-cream/50 text-[10px] uppercase tracking-wide mb-1">My Tasks</div>
           <div className={`text-sm font-medium ${tasksDueSoon > 0 ? 'text-gold' : 'text-emerald-300'}`}>
             {tasksDueSoon > 0 ? tasksDueSoon + ' due soon' : myTasks.length > 0 ? myTasks.length + ' active' : 'All done ✓'}
@@ -8496,13 +8496,13 @@ function HomeSummaryCard({ me, onNavigate }) {
         </button>
         {checkinSubmitted !== null && (
           <button onClick={() => onNavigate({ type: 'checkin' })}
-            className={`border rounded-xl p-3 text-left hover:brightness-110 transition-all active:scale-95 ${checkinSubmitted ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red/30 bg-red/5'}`}>
+            className={`border rounded-xl p-3 text-left hover:brightness-110 transition active:scale-95 ${checkinSubmitted ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-red/30 bg-red/5'}`}>
             <div className="text-cream/50 text-[10px] uppercase tracking-wide mb-1">Check-In</div>
             <div className={`text-sm font-medium ${checkinSubmitted ? 'text-emerald-300' : 'text-red'}`}>{checkinSubmitted ? '✓ Submitted' : 'Not yet'}</div>
           </button>
         )}
         <button onClick={() => onNavigate({ type: 'meetings' })}
-          className="border border-sky-500/30 bg-sky-500/5 rounded-xl p-3 text-left hover:brightness-110 transition-all active:scale-95">
+          className="border border-sky-500/30 bg-sky-500/5 rounded-xl p-3 text-left hover:brightness-110 transition active:scale-95">
           <div className="text-cream/50 text-[10px] uppercase tracking-wide mb-1">Next Event</div>
           <div className="text-sm font-medium text-sky-300 truncate">
             {upcomingMeetings[0] ? upcomingMeetings[0].title : 'None scheduled'}
@@ -8510,7 +8510,7 @@ function HomeSummaryCard({ me, onNavigate }) {
           {upcomingMeetings[0] && <div className="text-xs text-cream/40 mt-0.5">{fmtShortDate(upcomingMeetings[0].meetingDate)}</div>}
         </button>
         <button onClick={() => onNavigate({ type: 'polls' })}
-          className={`border rounded-xl p-3 text-left hover:brightness-110 transition-all active:scale-95 ${openPolls.length > 0 ? 'border-gold/30 bg-gold/5' : 'border-cream/10 bg-cream/5'}`}>
+          className={`border rounded-xl p-3 text-left hover:brightness-110 transition active:scale-95 ${openPolls.length > 0 ? 'border-gold/30 bg-gold/5' : 'border-cream/10 bg-cream/5'}`}>
           <div className="text-cream/50 text-[10px] uppercase tracking-wide mb-1">Open Polls</div>
           <div className={`text-sm font-medium ${openPolls.length > 0 ? 'text-gold' : 'text-cream/50'}`}>
             {openPolls.length > 0 ? openPolls.length + ' need' + (openPolls.length === 1 ? 's' : '') + ' your vote' : 'None open'}
@@ -8904,7 +8904,7 @@ function VolunteerSignUpPage({ eventId }) {
                 const selected = selectedRole === r.id;
                 return (
                   <button key={r.id} type="button" onClick={() => setSelectedRole(selected ? null : r.id)}
-                    className={`w-full text-left rounded-xl border-2 p-3 transition-all ${selected ? (full ? 'border-amber-400 bg-amber-500/15' : 'border-gold bg-gold/15') : full ? 'border-cream/10 bg-cream/5 hover:border-amber-400/40' : 'border-cream/15 bg-navy3/50 hover:border-gold/40'}`}>
+                    className={`w-full text-left rounded-xl border-2 p-3 transition ${selected ? (full ? 'border-amber-400 bg-amber-500/15' : 'border-gold bg-gold/15') : full ? 'border-cream/10 bg-cream/5 hover:border-amber-400/40' : 'border-cream/15 bg-navy3/50 hover:border-gold/40'}`}>
                     <div className="flex items-center gap-3">
                       {/* Radio-style indicator so selection state is unmistakable */}
                       <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${selected ? (full ? 'border-amber-400 bg-amber-400' : 'border-gold bg-gold') : 'border-cream/30'}`}>
@@ -8995,7 +8995,7 @@ function ShopManagerPage({ me }) {
       <div className="flex gap-1 bg-navy2 border border-cream/10 rounded-lg p-1 w-fit">
         {[['products', 'Products'], ['orders', 'Orders']].map(([t, label]) => (
           <button key={t} onClick={() => setTab(t)}
-            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all duration-150 ${tab === t ? 'bg-gold text-navy' : 'text-cream/60 hover:text-cream'}`}>
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition duration-150 ${tab === t ? 'bg-gold text-navy' : 'text-cream/60 hover:text-cream'}`}>
             {label}
           </button>
         ))}
@@ -9333,7 +9333,7 @@ function ShopOrdersTab() {
       <div className="flex gap-1 bg-navy2 border border-cream/10 rounded-lg p-1 w-fit">
         {[['', 'All'], ['pending', 'Pending'], ['needs_review', 'Needs Review'], ['fulfilled', 'Fulfilled'], ['cancelled', 'Cancelled']].map(([v, label]) => (
           <button key={v} onClick={() => setFilter(v)}
-            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${filter === v ? 'bg-gold text-navy' : 'text-cream/60 hover:text-cream'}`}>
+            className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${filter === v ? 'bg-gold text-navy' : 'text-cream/60 hover:text-cream'}`}>
             {label}
           </button>
         ))}
@@ -9860,7 +9860,7 @@ function AppTile({ label, icon, badge, onClick, style }) {
   const tone = TILE_TONES[icon] || { icon: 'text-cream/60', bg: 'bg-cream/5' };
   return (
     <button onClick={onClick} style={style}
-      className="ca-fade-in group relative bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/40 rounded-2xl p-5 flex flex-col items-center gap-3 transition-all duration-200 active:scale-95 w-full hover:-translate-y-1 hover:shadow-lg hover:shadow-black/30">
+      className="ca-fade-in group relative bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/40 rounded-2xl p-5 flex flex-col items-center gap-3 transition duration-200 active:scale-95 w-full hover:-translate-y-1 hover:shadow-lg hover:shadow-black/30">
       <div className="relative">
         <div className={`w-14 h-14 rounded-2xl ${tone.bg} flex items-center justify-center transition-transform duration-200 group-hover:scale-110`}>
           <AppIcon name={icon} className={`${tone.icon} transition-colors duration-150`} />
@@ -10178,7 +10178,7 @@ function TelegramComposeModal({ title, subtitle, sendLabel = 'Send', onSend, onC
   }
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
+    <div className="ca-backdrop fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={onClose}>
       <div className="bg-navy2 border border-cream/15 rounded-xl p-5 max-w-md w-full ca-scale-in" onClick={(e) => e.stopPropagation()}>
         <div className="font-display text-lg text-gold mb-1">{title}</div>
         {subtitle && <p className="text-sm text-cream/60 mb-3">{subtitle}</p>}
@@ -10233,7 +10233,7 @@ function MyTeamView({ me, reports, onNavigate }) {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 w-full">
           {reports.map(r => (
             <div key={r.id}
-              className="group relative bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/30 rounded-xl p-5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md hover:shadow-black/25">
+              className="group relative bg-navy2 hover:bg-navy3 border border-cream/10 hover:border-gold/30 rounded-xl p-5 transition duration-200 hover:-translate-y-0.5 hover:shadow-md hover:shadow-black/25">
               <button onClick={() => onNavigate({ type: 'person', userId: r.id })}
                 className="flex items-center gap-4 text-left w-full active:scale-95 transition-transform">
                 <div className="w-12 h-12 rounded-full bg-navy3 flex items-center justify-center text-cream/70 text-lg font-semibold shrink-0">
@@ -10345,7 +10345,7 @@ function NotificationBell({ onNavigate, refreshSignal }) {
               <div className="px-4 py-10 text-center text-cream/40 text-sm">You're all caught up.</div>
             ) : items.map((n) => (
               <button key={n.id} onClick={() => openItem(n)}
-                className={`block w-full text-left px-4 py-3 border-b border-cream/5 hover:bg-navy3 transition-all duration-150 ${n.isRead ? '' : 'bg-gold/5'}`}>
+                className={`block w-full text-left px-4 py-3 border-b border-cream/5 hover:bg-navy3 transition duration-150 ${n.isRead ? '' : 'bg-gold/5'}`}>
                 <div className="flex gap-2">
                   <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${n.isRead ? 'bg-transparent' : 'bg-gold'}`} />
                   <div>
@@ -11335,7 +11335,7 @@ function SpeakerEventsPage({ me }) {
 
   const TabBtn = ({ id, children }) => (
     <button type="button" onClick={() => setTab(id)}
-      className={`px-4 py-2 rounded-md text-sm transition-all duration-150 active:scale-95 ${tab === id
+      className={`px-4 py-2 rounded-md text-sm transition duration-150 active:scale-95 ${tab === id
         ? 'bg-red text-cream shadow-md shadow-red/20'
         : 'bg-navy border border-cream/20 text-cream/70 hover:border-gold hover:text-cream/90'}`}>
       {children}
@@ -11411,7 +11411,7 @@ function SpeakerEventsPage({ me }) {
                     </div>
                     <div className="mt-2 flex items-center gap-2">
                       <div className="flex-1 bg-navy rounded-full h-1.5">
-                        <div className="bg-gold h-1.5 rounded-full transition-all" style={{ width: `${(done/CHECKLIST.length)*100}%` }} />
+                        <div className="bg-gold h-1.5 rounded-full transition-[width] duration-500 ease-out" style={{ width: `${(done/CHECKLIST.length)*100}%` }} />
                       </div>
                       <span className="text-xs text-cream/40">{done}/{CHECKLIST.length} checklist</span>
                     </div>
@@ -11871,7 +11871,7 @@ function SocialTrackerPage({ me }) {
             <div className="flex gap-2 flex-wrap">
               {SOCIAL_PLATFORMS.map((p) => (
                 <button key={p} type="button" onClick={() => setPlatform(p)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${platform === p ? 'bg-gold text-navy' : 'bg-navy border border-cream/20 text-cream/60 hover:border-gold/50'}`}>
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${platform === p ? 'bg-gold text-navy' : 'bg-navy border border-cream/20 text-cream/60 hover:border-gold/50'}`}>
                   {p}
                 </button>
               ))}
@@ -12107,7 +12107,7 @@ function SearchModal({ me, reports = [], tiles = [], onNavigate, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/75 z-50 flex items-start justify-center pt-16 px-4" onClick={onClose}>
+    <div className="ca-backdrop fixed inset-0 bg-black/75 z-50 flex items-start justify-center pt-16 px-4" onClick={onClose}>
       <div className="bg-navy2 border border-cream/15 rounded-2xl w-full max-w-2xl shadow-2xl ca-scale-in" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 px-4 py-3 border-b border-cream/10">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-cream/40 shrink-0"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -12303,7 +12303,7 @@ function GradePipelinePage({ me }) {
             <span className="text-cream text-sm font-medium">{counts.onboarded} / {goalForGrade}</span>
           </div>
           <div className="h-2.5 bg-navy rounded-full overflow-hidden">
-            <div className="h-full bg-gold rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
+            <div className="h-full bg-gold rounded-full transition-[width] duration-500 ease-out" style={{ width: `${pct}%` }} />
           </div>
           <div className="text-xs text-cream/40 mt-1">{pct}% of goal reached</div>
         </div>
@@ -12346,7 +12346,7 @@ function GradePipelinePage({ me }) {
                 const days = daysSince(p.createdAt);
                 const stale = days > 14;
                 return (
-                  <div key={p.id} className={`bg-navy2 border rounded-xl p-4 transition-all duration-150 ${stale ? 'border-red/30' : 'border-cream/10'}`}>
+                  <div key={p.id} className={`bg-navy2 border rounded-xl p-4 transition duration-150 ${stale ? 'border-red/30' : 'border-cream/10'}`}>
                     <div className="flex items-start justify-between gap-3 flex-wrap">
                       <div>
                         <div className="font-medium text-cream">{p.firstName} {p.lastName}</div>
@@ -12694,7 +12694,7 @@ function RollCallModal({ eventId, onClose, onDone }) {
               <div className="flex gap-2 shrink-0">
                 {[['present','P','bg-emerald-500/80'],['absent','A','bg-red/80'],['excused','E','bg-sky-500/80']].map(([val, label, activeClass]) => (
                   <button key={val} onClick={() => toggle(key, val)}
-                    className={`w-9 h-9 rounded-lg text-sm font-bold transition-all duration-150 ${
+                    className={`w-9 h-9 rounded-lg text-sm font-bold transition duration-150 ${
                       s === val ? `${activeClass} text-white` : 'bg-navy border border-cream/15 text-cream/50 hover:border-cream/30'
                     }`}>
                     {label}
@@ -12827,7 +12827,7 @@ function AttendancePage({ me }) {
             <EmptyState icon="calendar" title="No events yet" hint="Create an event to start tracking attendance." />
           )}
           {(events || []).map((ev) => (
-            <div key={ev.id} className={`bg-navy2 border rounded-xl transition-all duration-150 ${activeEvent === ev.id ? 'border-gold/60 bg-navy3' : 'border-cream/10'}`}>
+            <div key={ev.id} className={`bg-navy2 border rounded-xl transition duration-150 ${activeEvent === ev.id ? 'border-gold/60 bg-navy3' : 'border-cream/10'}`}>
               <button
                 onClick={() => setActiveEvent(ev.id === activeEvent ? null : ev.id)}
                 className="w-full text-left px-4 py-3 hover:bg-navy3/50 transition-colors rounded-t-xl">
@@ -12901,7 +12901,7 @@ function AttendancePage({ me }) {
                       <div className="flex gap-1.5 shrink-0">
                         {ATTENDANCE_STATUSES.map((s) => (
                           <button key={s} onClick={() => markAttendance(member, s)}
-                            className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all duration-150 ${
+                            className={`px-2.5 py-1 rounded-md text-xs font-medium transition duration-150 ${
                               status === s
                                 ? s === 'present' ? 'bg-emerald-500/80 text-white' : s === 'absent' ? 'bg-red/80 text-white' : 'bg-sky-500/80 text-white'
                                 : 'bg-navy border border-cream/15 text-cream/50 hover:border-cream/30'
@@ -12988,7 +12988,7 @@ function BudgetDashboardPage({ me }) {
                     <span className="text-cream/60 text-xs">{fmt(row.approvedAmount)} approved / {fmt(row.totalAmount)} requested</span>
                   </div>
                   <div className="h-2 bg-navy rounded-full overflow-hidden">
-                    <div className="h-full bg-gold/60 rounded-full transition-all"
+                    <div className="h-full bg-gold/60 rounded-full transition-[width] duration-500 ease-out"
                       style={{ width: `${totals.totalAmount > 0 ? Math.min(100, (row.totalAmount / totals.totalAmount) * 100) : 0}%` }} />
                   </div>
                 </div>
@@ -13126,7 +13126,7 @@ function PollsPage({ me }) {
           const isClosed = poll.status === 'closed';
           const showResults = hasVoted || isClosed || canCreate;
           return (
-            <div key={poll.id} className={`bg-navy2 border rounded-xl p-5 ${isClosed ? 'border-cream/10' : 'border-gold/20 hover:border-gold/40'} transition-all duration-200`}>
+            <div key={poll.id} className={`bg-navy2 border rounded-xl p-5 ${isClosed ? 'border-cream/10' : 'border-gold/20 hover:border-gold/40'} transition duration-200`}>
               <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
                 <div className="min-w-0">
                   <div className="text-cream font-medium">{poll.question}</div>
@@ -13146,7 +13146,7 @@ function PollsPage({ me }) {
                     <button key={i}
                       disabled={hasVoted || isClosed || busy}
                       onClick={() => vote(poll.id, i)}
-                      className={`w-full text-left rounded-lg px-4 py-2.5 border transition-all duration-150 ${
+                      className={`w-full text-left rounded-lg px-4 py-2.5 border transition duration-150 ${
                         isMyVote
                           ? 'border-gold/60 bg-gold/10 text-cream'
                           : hasVoted || isClosed
@@ -13195,7 +13195,7 @@ function PollResults({ pollId }) {
               <span className="text-cream/50">{pct}% ({o.count})</span>
             </div>
             <div className="h-1.5 bg-navy rounded-full overflow-hidden">
-              <div className="h-full bg-gold/70 rounded-full transition-all" style={{ width: `${pct}%` }} />
+              <div className="h-full bg-gold/70 rounded-full transition-[width] duration-500 ease-out" style={{ width: `${pct}%` }} />
             </div>
           </div>
         );
@@ -13383,7 +13383,7 @@ function TestimonialsCarousel({ onNavigate }) {
           <div className="flex items-center gap-2">
             {items.map((_, i) => (
               <button key={i} onClick={() => go(i)} aria-label={`Go to testimonial ${i + 1}`}
-                className={`h-2 rounded-full transition-all ${i === idx ? 'w-6 bg-gold' : 'w-2 bg-cream/25 hover:bg-cream/40'}`} />
+                className={`h-2 rounded-full transition-[width,background-color] duration-200 ease-out ${i === idx ? 'w-6 bg-gold' : 'w-2 bg-cream/25 hover:bg-cream/40'}`} />
             ))}
           </div>
           <button onClick={() => go(idx + 1)} aria-label="Next testimonial"

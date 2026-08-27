@@ -56,6 +56,22 @@
     onerror="(window.__cdnErrors=window.__cdnErrors||[]).push('Babel')"></script>
 
   <style>
+    /* ── Motion tokens ──
+       One place for every curve and duration. Built-in CSS easings are too weak
+       for deliberate UI motion, so entrances use a strong custom ease-out that
+       front-loads the movement and decelerates hard into place. */
+    :root {
+      --ease-out:    cubic-bezier(0.23, 1, 0.32, 1);      /* entrances, exits, default */
+      --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);     /* movement across the screen */
+      --ease-spring: cubic-bezier(0.34, 1.15, 0.64, 1);   /* subtle overshoot — modals */
+
+      --dur-press:  140ms;   /* button press feedback */
+      --dur-fast:   160ms;   /* dropdowns, small popovers */
+      --dur-base:   220ms;   /* cards, panels, standard entrances */
+      --dur-modal:  260ms;   /* modal panel + backdrop */
+      --dur-reveal: 600ms;   /* homepage scroll reveals (marketing budget) */
+    }
+
     body { background-color: #0A1628; color: #F5F0E8; font-family: "DM Sans", sans-serif; }
     h1,h2,h3,.font-display { letter-spacing: 0.04em; }
     ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -89,7 +105,7 @@
       50%       { transform: scale(1.15); }
     }
 
-    .ca-fade-in  { animation: ca-fade-in  0.22s ease-out both; }
+    .ca-fade-in  { animation: ca-fade-in  var(--dur-base) var(--ease-out) both; }
     /* backwards (not "both"): once these entrance animations finish, they must not
        leave a lingering `transform` on the element. Any transform value — even the
        resting translateY(0)/scale(1) the "to" keyframe ends on — makes the browser
@@ -99,10 +115,18 @@
        modals appear off-screen and need scrolling to reach. "backwards" keeps the
        pre-animation state applied during any animation-delay (no flash-in), while
        still releasing the transform the instant the animation completes. */
-    .ca-slide-up { animation: ca-slide-up 0.22s ease-out backwards; }
-    .ca-scale-in { animation: ca-scale-in 0.2s cubic-bezier(0.34, 1.15, 0.64, 1) backwards; }
-    .ca-slide-down { animation: ca-slide-down 0.16s ease-out backwards; }
+    .ca-slide-up { animation: ca-slide-up var(--dur-base) var(--ease-out) backwards; }
+    .ca-scale-in { animation: ca-scale-in var(--dur-modal) var(--ease-spring) backwards; }
+    .ca-slide-down { animation: ca-slide-down var(--dur-fast) var(--ease-out) backwards; }
     .ca-pulse { animation: ca-pulse-badge 1.2s ease-in-out 3; }
+
+    /* Modal scrim. The panel already scales in; without this the dark backdrop
+       hard-cuts in behind it, which is the jarring half of the transition. */
+    .ca-backdrop { animation: ca-fade-in var(--dur-modal) var(--ease-out) both; }
+
+    /* Note: the app tile grid already staggers its own entrance via an inline
+       animationDelay in TileGrid (app.js), so no stagger utility is needed here.
+       That inline delay is neutralized under reduced motion below. */
 
     /* ── Immersive homepage ──
        Principle: ambient (always-on) motion is limited to a soft star twinkle;
@@ -121,7 +145,7 @@
       from { opacity: 0; transform: translateZ(var(--ca-z, 0px)) translateY(28px) scale(0.98); letter-spacing: 0.12em; }
       to   { opacity: 1; transform: translateZ(var(--ca-z, 0px)) translateY(0) scale(1); letter-spacing: 0.04em; }
     }
-    .ca-hero-title { animation: ca-hero-title 0.9s cubic-bezier(0.22, 1, 0.36, 1) both; }
+    .ca-hero-title { animation: ca-hero-title 0.9s var(--ease-out) both; }
     @keyframes ca-scroll-cue {
       0%, 100% { transform: translateY(0); opacity: 0.45; }
       50%      { transform: translateY(7px); opacity: 0.9; }
@@ -129,12 +153,13 @@
     .ca-scroll-cue { animation: ca-scroll-cue 2s ease-in-out infinite; }
     .ca-reveal {
       opacity: 0; transform: translateY(22px);
-      transition: opacity 0.6s ease-out, transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+      transition: opacity var(--dur-reveal) var(--ease-out),
+                  transform var(--dur-reveal) var(--ease-out);
     }
     .ca-reveal.is-visible { opacity: 1; transform: translateY(0); }
 
     /* ── 3D depth (hero tilt + card hover) ── */
-    .ca-card3d { transition: transform 0.18s ease-out; will-change: transform; }
+    .ca-card3d { transition: transform var(--dur-fast) var(--ease-out); will-change: transform; }
 
     /* Flag stripes — a static texture that fades out toward the top of the hero. */
     .ca-stripes {
@@ -146,10 +171,55 @@
       -webkit-mask-image: linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0.5) 45%, transparent 100%);
       mask-image: linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0.5) 45%, transparent 100%);
     }
+    /* Touch devices fire a sticky synthetic :hover on tap — a card tapped once
+       would lift and stay lifted. Movement on hover is for real pointers only;
+       colour, border and shadow feedback still apply everywhere. */
+    @media not all and (hover: hover) {
+      [class*="hover:-translate-y"]:hover,
+      [class*="hover:translate-y"]:hover,
+      [class*="hover:scale-"]:hover,
+      .group:hover [class*="group-hover:scale-"] {
+        transform: none !important;
+      }
+    }
+
     @media (prefers-reduced-motion: reduce) {
+      /* Ambient motion: off entirely. */
       .ca-star-twinkle, .ca-scroll-cue, .ca-pulse { animation: none; }
-      .ca-reveal { opacity: 1; transform: none; transition: none; }
       .ca-card3d { transform: none !important; transition: none; }
+
+      /* Entrances: keep the fade, drop the movement. Re-pointing these at the
+         opacity-only ca-fade-in keyframe preserves the "appears" beat without
+         any translate or scale. */
+      .ca-slide-up,
+      .ca-slide-down,
+      .ca-scale-in,
+      .ca-hero-title {
+        animation-name: ca-fade-in;
+        animation-duration: var(--dur-fast);
+        animation-timing-function: var(--ease-out);
+      }
+
+      /* Scroll reveals: show immediately, no travel. */
+      .ca-reveal { opacity: 1; transform: none; transition: none; }
+
+      /* Tailwind transform utilities across app.js. The last selector is
+         load-bearing: two icons are scaled by a hover on their parent .group,
+         so an element-targeted selector would miss them. */
+      [class*="hover:-translate-y"]:hover,
+      [class*="hover:translate-y"]:hover,
+      [class*="hover:scale-"]:hover,
+      [class*="active:scale-"]:active,
+      .group:hover [class*="group-hover:scale-"] {
+        transform: none !important;
+      }
+
+      /* Nothing waits its turn. This overrides the inline animationDelay that
+         TileGrid sets per tile, so a grid of app tiles fades in at once instead
+         of rippling across 300ms+. */
+      .ca-fade-in, .ca-slide-up, .ca-slide-down, .ca-scale-in, .ca-hero-title {
+        animation-delay: 0ms !important;
+      }
     }
   </style>
 </head>
