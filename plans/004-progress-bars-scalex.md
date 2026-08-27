@@ -82,8 +82,9 @@ to drop rounding from the fill and let the track's existing
   For that site only, either accept the square edge or leave the bar on `width`
   and skip it. State which you chose in your report.
 
-Track elements at lines 7431, 7517, 12305, 12990, 13197 already have
-`overflow-hidden`. The track at **`public/app.js:11413`** does not:
+Track elements at lines **7431, 7516, 7573, 12305, 12990, 13197** already have
+`overflow-hidden` (six tracks, one per bar except the checklist bar below).
+The track at **`public/app.js:11413`** does not:
 
 ```jsx
 /* public/app.js:11413 — current */

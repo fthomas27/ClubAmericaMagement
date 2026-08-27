@@ -70,11 +70,21 @@ removes movement:
   [class*="hover:-translate-y"]:hover,
   [class*="hover:translate-y"]:hover,
   [class*="hover:scale-"]:hover,
-  [class*="active:scale-"]:active {
+  [class*="active:scale-"]:active,
+  .group:hover [class*="group-hover:scale-"] {
     transform: none !important;
   }
 }
 ```
+
+The final selector is load-bearing and easy to omit. Two elements —
+`public/app.js:3884` (`group-hover:scale-105`) and `public/app.js:9865`
+(`group-hover:scale-110`) — are scaled by a hover on their *parent* `.group`,
+not on themselves. `[class*="hover:scale-"]:hover` does match their class
+attribute by substring, but only fires when the cursor is directly over the
+child, so it would miss the common case of hovering the card anywhere else.
+Without the descendant selector, those two icons keep zooming under reduced
+motion.
 
 The entrance rules work by **re-pointing** the four moving animations at the
 existing `ca-fade-in` keyframe, which only touches `opacity`. The keyframe
@@ -135,6 +145,10 @@ already exists at `index.html:69–72`; no new keyframes are needed.
     shadow but **does not lift**.
   - Pressing any `Btn` (`public/app.js:189`) still dims/recolors but **does not
     shrink**.
+  - Hovering a gallery thumbnail (`public/app.js:3884`) and a dashboard shortcut
+    card (`public/app.js:9863`) — with the cursor over the *card*, not over the
+    icon itself — leaves the inner icon (`public/app.js:9865`) at its normal
+    size. If it zooms, the `.group:hover` descendant selector is missing.
   - The homepage hero title fades in without travelling or letter-spacing drift.
   - Stars do not twinkle and the scroll cue does not bob.
   - Then set the emulation back to `no-preference` and confirm every one of those

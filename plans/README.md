@@ -13,6 +13,7 @@ otherwise.
 |---|---|---|---|---|---|
 | [001](001-motion-tokens.md) | Introduce easing and duration tokens | HIGH | Easing / Cohesion | `index.html` | TODO |
 | [002](002-replace-transition-all.md) | Replace `transition-all` with explicit property lists | HIGH | Performance | `app.js` | TODO |
+
 | [003](003-reduced-motion-coverage.md) | Close the `prefers-reduced-motion` coverage gap | HIGH | Accessibility | `index.html` | TODO |
 | [004](004-progress-bars-scalex.md) | Drive progress bars with `scaleX()` instead of `width` | MEDIUM | Performance | `app.js` | TODO |
 | [005](005-gate-hover-motion.md) | Gate hover motion behind `@media (hover: hover)` | MEDIUM | Accessibility | `index.html` | TODO |
@@ -39,6 +40,38 @@ The two tracks are independent and touch different files, so 001→003→005 and
 | 003 | **001** | Consumes `var(--dur-fast)` and `var(--ease-out)`. Has a documented literal fallback if run first |
 | 004 | **002** | 002 deliberately skips the seven progress bars; 004 finishes them. Running 004 first leaves 002's verification count wrong |
 | 005 | **003** | Inserts a media block positioned relative to the reduced-motion block, and instructs the executor to STOP if it is absent |
+
+## Verification record
+
+All five plans were re-verified against the working tree at commit `26c1b2f`
+after they were written. Checks performed, all now passing:
+
+- Every line number cited across all five plans resolves to the code the plan
+  quotes (60 `transition-all` sites, 11 hover-transform sites, 7 progress bars,
+  11 `index.html` rules).
+- The `transition-all` partition is exhaustive and disjoint: 51 plain swaps + 2
+  special-cased + 7 skipped = 60, the file's actual total, with no line in two
+  categories and none omitted.
+- Plans 001, 003 and 005 were applied to a scratch copy of `index.html` and the
+  result parses with balanced braces (54/54) and no unresolved `var()`
+  references.
+- The installed skills in `.claude/skills/` are byte-identical to upstream, all
+  12 have valid frontmatter whose `name` matches its directory, and every
+  companion-file link resolves.
+
+Four defects were found and fixed in this pass:
+
+| Plan | Defect | Fix |
+|---|---|---|
+| 002 | Claimed 55 edits; the real count is 53 | Corrected, with an explicit arithmetic check |
+| 002 | **Would have caused a visual regression** — `app.js:3971` and `:13386` are carousel dots whose active state is wider, so they animate `width`. Plain `transition` excludes `width` and the dots would have snapped. The feel check only inspected *hover*, so it would have passed while the regression shipped | Both lines special-cased to `transition-[width,background-color]`; a click-driven feel check added |
+| 003 | Reduced-motion selectors missed `group-hover:scale-*` on `app.js:3884` and `:9865`, which are driven by a hover on the *parent* | Added `.group:hover [class*="group-hover:scale-"]` and a feel check for it |
+| 004 | Track line cited as 7517 (actually 7516); track 7573 omitted | Both corrected |
+
+One claim could not be verified in the authoring sandbox: `cdn.tailwindcss.com`
+is unreachable there, so the exact Tailwind version served by the unpinned Play
+CDN at `index.html:22` is unconfirmed. The property list plan 002 depends on is
+identical in v3 and v4, so this is not expected to matter; plan 002 documents it.
 
 ## Not planned
 
