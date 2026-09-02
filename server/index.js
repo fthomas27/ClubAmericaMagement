@@ -5125,7 +5125,10 @@ app.post('/api/volunteer-events', requireManagerOrAdmin, (req, res) => {
   title     = String(title     || '').trim().slice(0, 200);
   location  = String(location  || '').trim().slice(0, 200);
   startDate = String(startDate || '').trim().slice(0, 30);
-  if (!icalUid || !title || !startDate) return res.status(400).json({ error: 'icalUid, title, and startDate are required' });
+  if (!title || !startDate) return res.status(400).json({ error: 'title and startDate are required' });
+  // Manually created events (not tied to a calendar entry) get a synthetic
+  // uid so the icalUid column can stay NOT NULL UNIQUE.
+  if (!icalUid) icalUid = 'manual-' + crypto.randomUUID();
   try {
     const info = db.prepare(
       'INSERT INTO volunteer_events (icalUid, title, location, startDate, createdById) VALUES (?, ?, ?, ?, ?)'
@@ -5185,6 +5188,36 @@ app.patch('/api/volunteer-roles/:id', requireManagerOrAdmin, (req, res) => {
 app.delete('/api/volunteer-roles/:id', requireManagerOrAdmin, (req, res) => {
   db.prepare('DELETE FROM volunteer_roles WHERE id = ?').run(Number(req.params.id));
   res.json({ ok: true });
+});
+
+// Manually add a roster member as a confirmed sign-up (e.g. someone who
+// volunteered in person or over the phone rather than through the public
+// form). Follows the same role-cap/waitlist rule as public sign-ups.
+app.post('/api/volunteer-events/:id/roster-signups', requireManagerOrAdmin, (req, res) => {
+  const eventId = Number(req.params.id);
+  const ev = db.prepare('SELECT id FROM volunteer_events WHERE id = ?').get(eventId);
+  if (!ev) return res.status(404).json({ error: 'Event not found' });
+  const rosterId = Number((req.body || {}).rosterId);
+  let roleId = (req.body || {}).roleId;
+  const member = db.prepare('SELECT id, firstName, lastName, phone, email, grade FROM roster_members WHERE id = ?').get(rosterId);
+  if (!member) return res.status(400).json({ error: 'Roster member not found' });
+  const dup = db.prepare('SELECT id FROM volunteer_signups WHERE eventId = ? AND matchedRosterId = ?').get(eventId, rosterId);
+  if (dup) return res.status(409).json({ error: 'This roster member is already signed up for this event' });
+  roleId = roleId ? Number(roleId) : null;
+  let status = 'confirmed';
+  if (roleId) {
+    const role = db.prepare('SELECT id, cap FROM volunteer_roles WHERE id = ? AND eventId = ?').get(roleId, eventId);
+    if (!role) return res.status(400).json({ error: 'Invalid role' });
+    if (role.cap > 0) {
+      const confirmed = db.prepare("SELECT COUNT(*) AS n FROM volunteer_signups WHERE roleId = ? AND status = 'confirmed'").get(roleId).n;
+      if (confirmed >= role.cap) status = 'waitlisted';
+    }
+  }
+  const name = `${member.firstName} ${member.lastName}`.trim();
+  const info = db.prepare(
+    'INSERT INTO volunteer_signups (eventId, roleId, name, phone, email, grade, status, matchedRosterId, needsReview) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)'
+  ).run(eventId, roleId, name, member.phone || '', member.email || '', member.grade != null ? String(member.grade) : '', status, rosterId);
+  res.status(201).json({ ok: true, id: info.lastInsertRowid, status });
 });
 
 app.get('/api/volunteer-events/:id/signups', requireManagerOrAdmin, (req, res) => {

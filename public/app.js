@@ -9415,6 +9415,13 @@ function VolunteerManagerPage({ me }) {
   const [reviewingId, setReviewingId] = useState(null);
   const [rosterQuery, setRosterQuery] = useState('');
   const [rosterList, setRosterList] = useState(null);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
+  const [newLocation, setNewLocation] = useState('');
+  const [newStart, setNewStart] = useState('');
+  const [addingToId, setAddingToId] = useState(null);
+  const [addRoleId, setAddRoleId] = useState('');
+  const [addRosterQuery, setAddRosterQuery] = useState('');
   const { loading, error, setError, run } = useAction();
 
   const loadAll = useCallback(async () => {
@@ -9436,6 +9443,19 @@ function VolunteerManagerPage({ me }) {
         location: icalEvent.location || '',
         startDate: icalEvent.start,
       }});
+      await loadAll();
+    });
+  }
+
+  async function createManualEvent() {
+    if (!newTitle.trim() || !newStart) return;
+    await run(async () => {
+      await api('/volunteer-events', { method: 'POST', body: {
+        title: newTitle.trim(),
+        location: newLocation.trim(),
+        startDate: newStart,
+      }});
+      setNewTitle(''); setNewLocation(''); setNewStart(''); setShowCreateForm(false);
       await loadAll();
     });
   }
@@ -9501,6 +9521,28 @@ function VolunteerManagerPage({ me }) {
     setTimeout(() => setCopied(null), 2000);
   }
 
+  async function openAddFromRoster(eventId) {
+    if (addingToId === eventId) { setAddingToId(null); return; }
+    setAddingToId(eventId);
+    setAddRoleId('');
+    setAddRosterQuery('');
+    if (rosterList === null) {
+      try { const d = await api('/roster'); setRosterList(d.members || []); }
+      catch (e) { setError(e.message); setRosterList([]); }
+    }
+  }
+
+  async function addFromRoster(eventId, rosterId) {
+    await run(async () => {
+      await api('/volunteer-events/' + eventId + '/roster-signups', {
+        method: 'POST', body: { rosterId, roleId: addRoleId || null },
+      });
+      setAddRosterQuery('');
+      await loadSignups(eventId);
+      await loadAll();
+    });
+  }
+
   async function openReview(signupId) {
     if (reviewingId === signupId) { setReviewingId(null); return; }
     setReviewingId(signupId);
@@ -9532,10 +9574,35 @@ function VolunteerManagerPage({ me }) {
 
   return (
     <div className="max-w-3xl mx-auto space-y-8">
-      <div>
-        <h2 className="font-display text-3xl text-cream mb-1">Volunteer Manager</h2>
-        <p className="text-sm text-cream/50">Enable volunteer sign-ups on upcoming calendar events, set up roles, and manage who signed up.</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="font-display text-3xl text-cream mb-1">Volunteer Manager</h2>
+          <p className="text-sm text-cream/50">Enable volunteer sign-ups on upcoming calendar events, set up roles, and manage who signed up.</p>
+        </div>
+        <button onClick={() => setShowCreateForm((v) => !v)}
+          className="shrink-0 text-xs bg-gold/10 hover:bg-gold/20 text-gold border border-gold/30 rounded px-3 py-1.5 transition-colors">
+          {showCreateForm ? 'Cancel' : '+ Create Event'}
+        </button>
       </div>
+
+      {showCreateForm && (
+        <div className="bg-navy2 border border-cream/10 rounded-xl p-4 space-y-3">
+          <div className="text-xs font-semibold text-cream/50 uppercase tracking-wide">New Volunteer Event</div>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="Event title"
+              className="bg-navy3 border border-cream/20 rounded px-3 py-2 text-sm text-cream placeholder-cream/30 focus:outline-none focus:border-gold/40" />
+            <input value={newLocation} onChange={(e) => setNewLocation(e.target.value)} placeholder="Location (optional)"
+              className="bg-navy3 border border-cream/20 rounded px-3 py-2 text-sm text-cream placeholder-cream/30 focus:outline-none focus:border-gold/40" />
+            <input value={newStart} onChange={(e) => setNewStart(e.target.value)} type="datetime-local"
+              className="bg-navy3 border border-cream/20 rounded px-3 py-2 text-sm text-cream placeholder-cream/30 focus:outline-none focus:border-gold/40" />
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={createManualEvent} disabled={loading || !newTitle.trim() || !newStart} className="text-xs px-4 py-1.5">
+              Create Event
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Upcoming calendar events */}
       <div>
@@ -9650,6 +9717,42 @@ function VolunteerManagerPage({ me }) {
                 </div>
                 {expandedId === ev.id && (
                   <div className="border-t border-cream/10 p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <button onClick={() => openAddFromRoster(ev.id)}
+                        className="text-xs text-gold/70 hover:text-gold border border-gold/30 hover:border-gold/50 rounded px-2 py-1 transition-colors">
+                        {addingToId === ev.id ? 'Close' : '+ Add from Roster'}
+                      </button>
+                    </div>
+                    {addingToId === ev.id && (
+                      <div className="bg-navy3 border border-gold/20 rounded-lg p-3 mb-3 space-y-2">
+                        {ev.roles.length > 0 && (
+                          <select value={addRoleId} onChange={(e) => setAddRoleId(e.target.value)}
+                            className="w-full bg-navy2 border border-cream/20 rounded px-2 py-1.5 text-xs text-cream focus:outline-none focus:border-gold/40">
+                            <option value="">No specific role</option>
+                            {ev.roles.map((r) => <option key={r.id} value={r.id}>{r.roleName}</option>)}
+                          </select>
+                        )}
+                        <input value={addRosterQuery} onChange={(e) => setAddRosterQuery(e.target.value)} placeholder="Search roster by name…"
+                          className="w-full bg-navy2 border border-cream/20 rounded px-2 py-1.5 text-xs text-cream placeholder-cream/30 focus:outline-none focus:border-gold/40" />
+                        <div className="max-h-40 overflow-y-auto space-y-1">
+                          {rosterList === null && <div className="text-xs text-cream/30">Loading roster…</div>}
+                          {rosterList !== null && addRosterQuery.trim() && rosterList
+                            .filter((m) => `${m.firstName} ${m.lastName}`.toLowerCase().includes(addRosterQuery.trim().toLowerCase()))
+                            .slice(0, 8)
+                            .map((m) => (
+                              <button key={m.id} onClick={() => addFromRoster(ev.id, m.id)} disabled={loading}
+                                className="w-full text-left text-xs bg-navy2 hover:bg-navy border border-cream/10 hover:border-gold/30 rounded px-2 py-1.5 transition-colors disabled:opacity-40">
+                                <span className="text-cream">{m.firstName} {m.lastName}</span>
+                                <span className="text-cream/40 ml-2">{m.grade ? `Grade ${m.grade}` : ''} {m.phone || m.email || ''}</span>
+                              </button>
+                            ))}
+                          {rosterList !== null && addRosterQuery.trim() &&
+                            rosterList.filter((m) => `${m.firstName} ${m.lastName}`.toLowerCase().includes(addRosterQuery.trim().toLowerCase())).length === 0 && (
+                            <div className="text-xs text-cream/30">No roster members match "{addRosterQuery.trim()}".</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     {!signups[ev.id] ? (
                       <div className="text-xs text-cream/40">Loading…</div>
                     ) : signups[ev.id].length === 0 ? (
