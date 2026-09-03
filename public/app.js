@@ -6215,14 +6215,12 @@ function RosterPage({ me }) {
   const [loaded, setLoaded] = useState(false);
   const [myGrade, setMyGrade] = useState(null);
   const isPrivileged = me.role === 'admin' || me.role === 'manager';
-  const PAGE = 25;
 
   const [gradeFilter, setGradeFilter] = useState(!isPrivileged && me.managedGrade ? String(me.managedGrade) : '');
   const [statusFilter, setStatusFilter] = useState('');
   const [tab, setTab] = useState('all');
   const [editing, setEditing] = useState(null);
   const [error, setError] = useState('');
-  const [visible, setVisible] = useState(25);
   const [confirmEl, confirm] = useConfirm();
 
   const load = useCallback(async () => {
@@ -6279,9 +6277,6 @@ function RosterPage({ me }) {
       (a.firstName || '').localeCompare(b.firstName || '', undefined, { sensitivity: 'base' }) ||
       (a.lastName || '').localeCompare(b.lastName || '', undefined, { sensitivity: 'base' }));
   }, [members, tab]);
-
-  // Reset visible count when the view changes.
-  useEffect(() => { setVisible(PAGE); }, [tab, gradeFilter, statusFilter]);
 
   const counts = useMemo(() => ({
     all: members.filter((m) => m.status !== 'Pending').length,
@@ -6365,19 +6360,12 @@ function RosterPage({ me }) {
                   : 'Prospects you add or claim will show up here.'}
               />
             )}
-            {tabFilteredMembers.slice(0, visible).map((m) => (
+            {tabFilteredMembers.map((m) => (
               <RosterMemberRow key={m.id} member={m} me={me}
                 onAction={handleAction}
                 onEdit={isPrivileged ? (m) => setEditing(m) : null}
                 canDelete={isPrivileged} />
             ))}
-            {tabFilteredMembers.length > visible && (
-              <div className="text-center pt-2">
-                <Button variant="ghost" onClick={() => setVisible((v) => v + PAGE)}>
-                  Show more ({tabFilteredMembers.length - visible} remaining)
-                </Button>
-              </div>
-            )}
           </div>
 
           {(isPrivileged || !!me.canManageRoster) && (
