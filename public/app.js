@@ -10660,6 +10660,7 @@ function App() {
   const volunteerMatch = window.location.pathname.match(/^\/volunteer\/(\d+)$/);
   // Match both /testimonial-submit (universal) and /testimonial-submit/:token (pre-filled)
   const testimonialSubmitMatch = window.location.pathname.match(/^\/testimonial-submit(?:\/([a-zA-Z0-9]*))?$/);
+  const isNewsletterPath = window.location.pathname === '/newsletter';
   const bump = () => setRefreshSignal((n) => n + 1);
 
   const loadShared = useCallback(async (user) => {
@@ -10775,6 +10776,7 @@ function App() {
   if (joinMatch) return <MemberSignUpPage referrerUsername={joinMatch[1] || null} />;
   if (volunteerMatch) return <VolunteerSignUpPage eventId={Number(volunteerMatch[1])} />;
   if (testimonialSubmitMatch) return <TestimonialSubmitPage token={testimonialSubmitMatch[1] || null} />;
+  if (isNewsletterPath) return <NewsletterSubscribePage />;
   if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;
   if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); }} onBack={() => setEnterPortal(false)} />;
   if (me.firstLogin) return <ChangePassword user={me} forced onDone={(u) => { setMe(u); loadShared(u); }} onExitPortal={() => setEnterPortal(false)} />;
@@ -13561,6 +13563,76 @@ function NewsletterSignup() {
 }
 
 // ---------------------------------------------------------------------------
+// Newsletter Subscribe Page — standalone shareable link at /newsletter
+// ---------------------------------------------------------------------------
+function NewsletterSubscribePage() {
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [done, setDone] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function subscribe(e) {
+    e.preventDefault();
+    setError(''); setBusy(true);
+    try {
+      const r = await fetch('/api/newsletter/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim(), name: name.trim() }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Something went wrong');
+      setDone(true);
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  if (done) return (
+    <div className="relative min-h-screen flex items-center justify-center p-8" style={{ background: '#0d1b2e' }}>
+      <PatriotBackdrop stripes />
+      <div className="relative text-center max-w-sm">
+        <div className="mb-6"><Logo size="login" onClick={() => { window.location.href = '/'; }} /></div>
+        <SuccessMark className="mb-4" />
+        <div className="text-2xl font-semibold text-cream mb-2">You're subscribed!</div>
+        <div className="text-cream/50 text-sm">We'll keep you in the loop on Club America news and events.</div>
+        <a href="/" className="mt-6 inline-block text-gold/60 hover:text-gold text-sm underline">← Back to home</a>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="relative min-h-screen py-10 px-4" style={{ background: '#0d1b2e' }}>
+      <PatriotBackdrop />
+      <div className="relative max-w-lg mx-auto">
+        <div className="mb-4"><Logo size="nav" onClick={() => { window.location.href = '/'; }} /></div>
+        <a href="/" className="text-sm text-cream/40 hover:text-cream/70 mb-6 inline-block">← Back to home</a>
+        <div className="bg-navy2 border border-cream/10 rounded-2xl p-6">
+          <div className="text-xs text-gold/60 uppercase tracking-wider mb-1">Newsletter</div>
+          <h1 className="text-2xl font-semibold text-cream mb-1">Stay in the Loop</h1>
+          <p className="text-cream/50 text-sm mb-5">Get Club America updates, event announcements, and news straight to your inbox.</p>
+          <form onSubmit={subscribe} className="flex flex-col gap-3">
+            <input
+              className="bg-navy border border-cream/20 rounded-lg px-4 py-2.5 text-cream placeholder-cream/30 text-sm focus:outline-none focus:border-gold/50"
+              type="text" placeholder="Your name (optional)" value={name}
+              onChange={(e) => setName(e.target.value)} />
+            <input
+              className="bg-navy border border-cream/20 rounded-lg px-4 py-2.5 text-cream placeholder-cream/30 text-sm focus:outline-none focus:border-gold/50"
+              type="email" placeholder="Email address" value={email} required
+              onChange={(e) => setEmail(e.target.value)} />
+            <button type="submit" disabled={busy || !email.trim()}
+              className="px-6 py-2.5 bg-gold text-navy font-semibold rounded-lg text-sm hover:bg-gold/90 transition-colors disabled:opacity-50">
+              {busy ? 'Subscribing…' : 'Subscribe →'}
+            </button>
+          </form>
+          {error && <p className="text-red text-sm mt-3">{error}</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Testimonial Submit Page — universal at /testimonial-submit OR pre-filled at /testimonial-submit/:token
 // ---------------------------------------------------------------------------
 function TestimonialSubmitPage({ token }) {
@@ -14035,6 +14107,7 @@ function NewsletterAdminPage({ me }) {
   const [addEmail, setAddEmail] = useState('');
   const [addName, setAddName] = useState('');
   const [adding, setAdding] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [confirmEl, confirm] = useConfirm();
 
   const load = useCallback(async () => {
@@ -14053,6 +14126,13 @@ function NewsletterAdminPage({ me }) {
 
   // Copy ALL active subscribers — always ignores the search filter
   const allActive = (subscribers || []).filter((s) => s.active);
+
+  function copySignupLink() {
+    const url = window.location.origin + '/newsletter';
+    navigator.clipboard.writeText(url).catch(() => {});
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  }
 
   function copyEmails() {
     const emails = allActive.map((s) => s.email).join(', ');
@@ -14133,6 +14213,9 @@ function NewsletterAdminPage({ me }) {
           </Button>
           <Button variant="ghost" onClick={exportCSV} disabled={allActive.length === 0}>
             ↓ Export CSV
+          </Button>
+          <Button variant="ghost" onClick={copySignupLink}>
+            {linkCopied ? '✓ Copied' : 'Copy Sign-Up Link'}
           </Button>
           <p className="self-center text-cream/35 text-xs">Copy all emails → paste into Gmail BCC.</p>
         </div>
