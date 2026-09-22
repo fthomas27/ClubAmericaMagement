@@ -4654,115 +4654,80 @@ function publicPageFromPath(pathname) {
   return hit ? hit.key : 'home';
 }
 
-function PublicSite({ home, events, volunteerEvents, onEnterPortal }) {
-  const [page, setPage] = useState(() => publicPageFromPath(window.location.pathname));
-
-  // Keep in sync with the browser back/forward buttons.
+function PublicSite({ home, volunteerEvents, onEnterPortal }) {
+  // Log the visit for site-activity analytics (the old multi-page site did this
+  // per page; there is only one page now).
   useEffect(() => {
-    const onPop = () => setPage(publicPageFromPath(window.location.pathname));
-    window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
-  }, []);
-
-  // Log a page view every time the visible page changes, and report back how
-  // long the visitor spent on the previous page (site-activity analytics).
-  const visitRef = useRef({ id: null, start: 0 });
-  useEffect(() => {
-    const prev = visitRef.current;
-    if (prev.id) sendVisitDuration(prev.id, Math.round((Date.now() - prev.start) / 1000));
-    // Capture this navigation's own record so a late-arriving response can't
-    // tag whatever page the visitor has since moved on to (visitRef.current
-    // may point at a newer record by the time this resolves).
-    const rec = { id: null, start: Date.now() };
-    visitRef.current = rec;
-    const fire = () => {
-      rec.start = Date.now();
-      trackSiteVisit(window.location.pathname).then((d) => {
-        if (d && d.id) rec.id = d.id;
-      });
-    };
-    // Chrome speculatively prerenders pages the visitor may never open — hold
-    // the view until the prerendered page is actually shown.
+    const fire = () => { trackSiteVisit(window.location.pathname); };
     if (document.prerendering) {
       document.addEventListener('prerenderingchange', fire, { once: true });
       return () => document.removeEventListener('prerenderingchange', fire);
     }
     fire();
-  }, [page]);
-  useEffect(() => {
-    const flush = () => {
-      const cur = visitRef.current;
-      if (cur.id) sendVisitDuration(cur.id, Math.round((Date.now() - cur.start) / 1000));
-    };
-    const onVisibility = () => { if (document.visibilityState === 'hidden') flush(); };
-    document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('pagehide', flush);
-    return () => {
-      document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('pagehide', flush);
-    };
   }, []);
-
-  const navigate = useCallback((key) => {
-    const pg = PUBLIC_PAGES.find((p) => p.key === key);
-    if (!pg) return;
-    if (window.location.pathname !== pg.path) window.history.pushState(null, '', pg.path);
-    setPage(key);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, []);
-
-  const cards = (
-    <div className="grid md:grid-cols-2 gap-6">
-      <Card3D><MeetingCard home={home} events={events} volunteerEvents={volunteerEvents} /></Card3D>
-      <Card3D><PodcastCard home={home} /></Card3D>
-    </div>
-  );
 
   return (
     <div className="min-h-screen flex flex-col">
-      <PublicNav current={page} onNavigate={navigate} onEnterPortal={onEnterPortal} />
       <div className="flex-1">
-        {page === 'home' && <PublicHomePage home={home} cards={cards} onNavigate={navigate} />}
-
-        {page === 'about' && (
-          <PublicPageShell title="About Us" subtitle="Who we are and what we stand for.">
-            {home.aboutText && <AboutSection home={home} />}
-            <ValuesSection />
-            <CharlieKirkTribute />
-          </PublicPageShell>
-        )}
-
-        {page === 'board' && (
-          <PublicPageShell>
-            <MeetTheBoard />
-          </PublicPageShell>
-        )}
-
-        {page === 'shop' && <ShopPage />}
-
-        {page === 'testimonials' && (
-          <PublicPageShell title="What People Are Saying" subtitle="Hear from the people who make Club America what it is.">
-            <TestimonialsSection bare />
-          </PublicPageShell>
-        )}
-
-        {page === 'involved' && (
-          <PublicPageShell title="Get Involved" subtitle="Join us, follow along, and stay in the loop.">
-            <GetInvolved />
-            <EventPhotos />
-            <InstagramFeed home={home} />
-            <NewsletterSignup />
-          </PublicPageShell>
-        )}
-
-        {page === 'speak' && (
-          <PublicPageShell>
-            <SpeakerApplicationForm />
-          </PublicPageShell>
-        )}
+        <section className="relative overflow-hidden px-4 sm:px-6 pt-20 pb-12 text-center">
+          <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+            <div className="absolute -top-1/2 left-1/4 w-[60%] h-[120%] rounded-full"
+              style={{ background: 'radial-gradient(circle, rgba(204,28,46,0.12), transparent 60%)', filter: 'blur(40px)' }} />
+            <Starfield count={14} />
+          </div>
+          <div className="relative max-w-3xl mx-auto">
+            <p className="font-display text-xs tracking-[0.5em] text-gold/60 uppercase mb-3">Park City High School</p>
+            <h1 className="ca-hero-title font-display text-6xl sm:text-8xl text-cream leading-none">CLUB AMERICA</h1>
+            <StarDivider className="mt-4" />
+            <div className="mt-8 flex flex-wrap gap-3 justify-center">
+              <a href="/join"
+                className="px-8 py-3.5 bg-red hover:bg-red/85 text-cream font-semibold rounded-lg transition-colors shadow-lg shadow-red/25 text-sm">
+                Join Club America →
+              </a>
+              <button onClick={onEnterPortal}
+                className="px-8 py-3.5 border border-gold/50 text-gold hover:bg-gold/10 rounded-lg transition-colors text-sm font-medium">
+                Board Login
+              </button>
+            </div>
+          </div>
+        </section>
+        <main className="max-w-3xl mx-auto px-4 sm:px-6 pb-20">
+          <VolunteerOpportunities volunteerEvents={volunteerEvents} />
+        </main>
       </div>
       <PublicFooter home={home} onEnterPortal={onEnterPortal} />
     </div>
+  );
+}
+
+// Upcoming events that are taking volunteers, each linking to its sign-up page.
+function VolunteerOpportunities({ volunteerEvents = [] }) {
+  return (
+    <section className="bg-navy2 border border-gold/30 rounded-2xl p-6">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-3xl text-gold">Volunteer</h2>
+        <span className="text-gold/50"><AppIcon name="volunteer" size={22} /></span>
+      </div>
+      {volunteerEvents.length === 0 ? (
+        <p className="mt-4 text-cream/50 text-sm">No volunteer sign-ups are open right now. Check back soon.</p>
+      ) : (
+        <ul className="mt-4 space-y-3">
+          {volunteerEvents.map((v) => {
+            const isFull = v.totalCap > 0 && v.totalCap - v.confirmedCount <= 0;
+            return (
+              <li key={v.id} className="border-l-2 border-gold/50 pl-3">
+                <div className="text-lg text-cream font-medium leading-tight">{v.title}</div>
+                <div className="text-sm text-gold/80">{fmtEvent(v.startDate)}</div>
+                {v.location && <div className="text-sm text-cream/50">{v.location}</div>}
+                <a href={`/volunteer/${v.id}`} className="inline-block mt-1 text-sm text-teal-400 hover:text-teal-300 underline underline-offset-2 transition-colors">
+                  {isFull ? 'Join the waitlist →' : 'Sign up to volunteer →'}
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -9968,8 +9933,15 @@ function AppTile({ label, icon, badge, onClick, style }) {
 // One place that answers "can this person open this page right now?". The home
 // categories, the tabs a merged page shows and the search index all read it, so
 // the three can never disagree about who sees what.
+// The portal has been cut down to volunteer registration and recruitment
+// (roster, referrals, Get Involved sign-ups), plus the Admin Panel for managing
+// board accounts. Every other page is switched off here; its code is left in
+// place so it can be turned back on by adding it to this list.
+const ACTIVE_PORTAL_PAGES = new Set(['volunteers', 'roster', 'grades', 'referrals', 'submissions', 'admin']);
+
 function tabAllowed(type, ctx) {
   const { me, checkinEnabled, hidden } = ctx;
+  if (!ACTIVE_PORTAL_PAGES.has(type)) return false;
   const isManager = me.role === 'manager' || me.role === 'admin';
   const isAdmin = me.role === 'admin';
   if (hidden && hidden.has(type)) return false;
@@ -10066,48 +10038,16 @@ function visibleTabs(type, ctx) {
 function buildCategories(ctx) {
   const it = (type, label, icon, badge) => ({ type, label, icon, badge });
   return [
-    { key: 'tasks',       label: 'Tasks',       icon: 'person',    items: [
-      it('mytasks', 'Tasks', 'person'),
-    ] },
-    { key: 'myclub',      label: 'My Club',     icon: 'home',      items: [
-      it('home', 'Club Home', 'home'),
-      it('checkin', ctx.checkinEnabled ? 'Check-In' : 'Check-In Settings', 'calendar'),
-      it('polls', 'Polls & Voting', 'poll'),
-      it('apply', 'Apply', 'apply'),
-      it('people', 'People', 'directory'),
-      it('resources', 'Resources', 'resources'),
-      { ...it('ainotes', 'Agent Notes', 'bell', ctx.aiNotesCount), onClick: ctx.onAiNotes },
-    ] },
-    { key: 'events',      label: 'Events',      icon: 'calendar',  items: [
-      it('meetings', 'Meetings', 'meetings'),
+    { key: 'volunteers',  label: 'Volunteers',  icon: 'volunteer', items: [
       it('volunteers', 'Volunteers', 'volunteer'),
-      it('speaker', 'Speaker Events', 'speaker'),
-    ] },
-    { key: 'money',       label: 'Money',       icon: 'funding',   items: [
-      it('money-requests', 'Money Requests', 'funding'),
-      it('budget', 'Budget Overview', 'budget'),
-      it('grants', 'Grant Tracker', 'grants'),
     ] },
     { key: 'recruitment', label: 'Recruitment', icon: 'roster',    items: [
       it('roster', 'Roster', 'roster'),
       it('referrals', 'Referrals', 'trophy'),
       it('submissions', 'Get Involved', 'inbox', ctx.submissionsCount),
     ] },
-    { key: 'management',  label: 'Management',  icon: 'dashboard', items: [
-      it('approvals', 'Approvals', 'check', ctx.approvalsCount),
-      it('myteam', 'My Team', 'team'),
-      it('announce', 'Announcement', 'megaphone'),
-      it('dashboard', 'Dashboard', 'dashboard'),
-      it('ask-ai', 'Ask AI', 'ai'),
-      it('website', 'Edit Website', 'edit'),
-      it('social', 'Social Media', 'social'),
-      it('newsletter', 'Newsletter', 'newsletter'),
-      it('public-subs', 'Public Submissions', 'testimonial', ctx.pendingTestimonialsCount),
-      it('activity', 'Activity', 'activity'),
+    { key: 'admin',       label: 'Admin Panel', icon: 'admin',     items: [
       it('admin', 'Admin Panel', 'admin'),
-    ] },
-    { key: 'shop',        label: 'Shop',        icon: 'shop',      items: [
-      it('shop', 'Shop', 'shop'),
     ] },
   ]
     .map((c) => ({ ...c, items: c.items.filter((i) => viewAllowed(i.type, ctx)) }))
@@ -10245,7 +10185,6 @@ function AppHome({ me, reports, approvalsCount, submissionsCount, checkinEnabled
           <p className="text-cream/40 text-sm mt-1.5">{dateLine}</p>
           <FlagUnderline className="mt-3" />
         </div>
-        <HomeSummaryCard me={me} onNavigate={onNavigate} />
         <TileGrid items={tiles} onNavigate={onNavigate} />
       </div>
     </div>
@@ -10646,9 +10585,6 @@ function App() {
   // personal referral link, which credits them for the sign-up.
   const joinMatch = window.location.pathname.match(/^\/join(?:\/([A-Za-z0-9._-]{1,60}))?\/?$/);
   const volunteerMatch = window.location.pathname.match(/^\/volunteer\/(\d+)$/);
-  // Match both /testimonial-submit (universal) and /testimonial-submit/:token (pre-filled)
-  const testimonialSubmitMatch = window.location.pathname.match(/^\/testimonial-submit(?:\/([a-zA-Z0-9]*))?$/);
-  const isNewsletterPath = window.location.pathname === '/newsletter';
   const bump = () => setRefreshSignal((n) => n + 1);
 
   const loadShared = useCallback(async (user) => {
@@ -10763,8 +10699,6 @@ function App() {
   if (isSurveyPath) return <InterestSurvey onBack={() => { window.history.pushState(null, '', '/'); window.location.reload(); }} />;
   if (joinMatch) return <MemberSignUpPage referrerUsername={joinMatch[1] || null} />;
   if (volunteerMatch) return <VolunteerSignUpPage eventId={Number(volunteerMatch[1])} />;
-  if (testimonialSubmitMatch) return <TestimonialSubmitPage token={testimonialSubmitMatch[1] || null} />;
-  if (isNewsletterPath) return <NewsletterSubscribePage />;
   if (!enterPortal) return <Home mode="public" onEnterPortal={() => setEnterPortal(true)} />;
   if (!me) return <Login onLogin={(u) => { setMe(u); loadShared(u); }} onBack={() => setEnterPortal(false)} />;
   if (me.firstLogin) return <ChangePassword user={me} forced onDone={(u) => { setMe(u); loadShared(u); }} onExitPortal={() => setEnterPortal(false)} />;
@@ -10798,6 +10732,7 @@ function App() {
     const alias = MERGED_VIEWS[raw.type];
     const v = alias ? { ...raw, ...alias } : raw;
     if (v.type === 'ainotes') { setAiNotesOpen(true); return; }
+    if (!['apphome', 'category', 'profile', 'password'].includes(v.type) && !viewAllowed(v.type, homeCtx)) return;
     if (v.type === 'apphome') {
       // Returning home consumes the back-trap entry so the history stack stays
       // clean (one device-Back press from a sub-page lands here, not earlier).

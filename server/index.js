@@ -494,7 +494,7 @@ app.get('/api/home', async (req, res) => {
   const { calendarUrl, ...publicHome } = home;
   // Attach upcoming volunteer events (enabled, future) with per-role signup counts.
   const volunteerEvents = db.prepare(`
-    SELECT ve.id, ve.icalUid, ve.title, ve.startDate,
+    SELECT ve.id, ve.icalUid, ve.title, ve.location, ve.startDate,
       (SELECT COUNT(*) FROM volunteer_signups vs WHERE vs.eventId = ve.id AND vs.status = 'confirmed') AS confirmedCount,
       (SELECT COALESCE(SUM(vr2.cap),0) FROM volunteer_roles vr2 WHERE vr2.eventId = ve.id) AS totalCap
     FROM volunteer_events ve
